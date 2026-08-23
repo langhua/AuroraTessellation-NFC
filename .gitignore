@@ -1,0 +1,7 @@
+# local editor / environment config
+.vscode/
+__pycache__/
+*.pyc
+
+# bill of materials (local procurement data, not source)
+bom/
