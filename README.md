@@ -5,10 +5,20 @@ Aurora Tessellation NFC（NFC极光镶嵌）：一款桌面级NFC磁场可视化
 
 当前从 4×4、16 通道子板开始验证，使用 ESP32-S3 和 4×4 WS2812B 显示模块。第一阶段采用“全波整流 + TS3A44159 差分背景采样”方案，实施顺序和验收标准见 [4×4 子板验证文档](docs/phase-1-4x4-validation.md)。
 
+### Fritzing 部件进度（fritzing-parts-langhua）
+
+| 部件 | 状态 |
+|---|---|
+| NFC Coil（20mm 6 匝平面感应线圈） | ✅ 已完成并提交 |
+| coil_4x4_array（φ19mm 4×4 阵列铜层） | ✅ 已完成 |
+| BAT54S（SOT-23 双肖特基二极管） | ✅ 已完成并提交 |
+| TS3A44159（TSSOP-16 差分开关） | ⏳ 待做 |
+| CD74HC4067（24 脚 MUX） | ⏳ 待做（原型先用开发板） |
+
 ## 文档
 
 - [4×4 子板验证文档](docs/phase-1-4x4-validation.md)
-- [Fritzing 自定义部件开发指南](docs/fritzing-part-dev-guide.md)（做 BAT54S、TS3A44159 等部件前必读）
+- [Fritzing 自定义部件开发指南](../fritzing-parts-langhua/docs/part-dev-guide.md)（位于 fritzing-parts-langhua 部件库，做 BAT54S、TS3A44159 等部件前必读）
 
 ## 重要设计说明
 
