@@ -53,16 +53,16 @@ CD74HC4067 选择 `HC` 型而不是 `HCT` 型，使用 `3.3 V` 供电。规格�
 
 ### TS3A44159 PW（TSSOP-16）引脚
 
-按提供的 TI 规格书，Fritzing 中应使用以下定义：
+按 TI 规格书 SCDS225 的 "Pin Configuration and Functions"，Fritzing 中应使用以下定义（**2026-08-28 核对，13–16 脚与库内 `TS3A44159PWR.fzpz` 一致**）：
 
 ```text
 1 NO2       2 COM2      3 NC2       4 GND
 5 NO3       6 COM3      7 NC3       8 IN3-4
 9 NO4      10 COM4     11 NC4      12 VCC
-13 COM1     14 NC1     15 IN1-2    16 NO1
+13 NO1     14 COM1     15 NC1      16 IN1-2
 ```
 
-在本项目中，`VCC=3.3 V`，所有 `NC1..NC4` 接 GND，四个滤波输出接 `COM1..COM4`，四个通道输出接对应的 `NO1..NO4`。`IN1-2` 和 `IN3-4` 并联后接控制输入。
+在本项目中，`VCC=3.3 V`，所有 `NC1..NC4` 接 GND，四个滤波输出接 `COM1..COM4`，四个通道输出接对应的 `NO1..NO4`。`IN1-2`（16 脚）与 `IN3-4`（8 脚）并联后接控制输入。
 
 ### CD74HC4067（24 脚）引脚
 
