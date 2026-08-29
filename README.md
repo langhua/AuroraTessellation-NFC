@@ -12,8 +12,8 @@ Aurora Tessellation NFC（NFC极光镶嵌）：一款桌面级NFC磁场可视化
 | NFC Coil（20mm 6 匝平面感应线圈） | ✅ 已完成并提交 |
 | coil_4x4_array（φ19mm 4×4 阵列铜层） | ✅ 已完成 |
 | BAT54S（SOT-23 双肖特基二极管） | ✅ 已完成并提交 |
-| TS3A44159（TSSOP-16 差分开关） | ⏳ 待做 |
-| CD74HC4067（24 脚 MUX） | ⏳ 待做（原型先用开发板） |
+| TS3A44159（TSSOP-16 差分开关） | ✅ 已完成并提交（`TS3A44159PWR.fzpz`，引脚 13~16 已按 SCDS225 核对） |
+| CD74HC4067（24 脚 MUX） | ✅ 已完成并提交（`CD74HC4067.fzpz`，四视图 icon/schematic/breadboard/PCB 按 datasheet 绘制） |
 
 ## 文档
 

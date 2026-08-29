@@ -74,9 +74,9 @@ BR+ ---- R_CH0 10k ----+---- SENSE_CH0
 每颗 TS3A44159 负责 4 个通道。第一颗芯片的通道分配如下：
 
 ```text
-COM1 (pin 13) <- SENSE_CH0
-NO1  (pin 16) -> MUX_C0
-NC1  (pin 14) -> GND
+COM1 (pin 14) <- SENSE_CH0
+NO1  (pin 13) -> MUX_C0
+NC1  (pin 15) -> GND
 
 COM2 (pin 2)  <- SENSE_CH1
 NO2  (pin 1)  -> MUX_C1
@@ -91,12 +91,14 @@ NO4  (pin 9)  -> MUX_C3
 NC4  (pin 11) -> GND
 ```
 
+> 引脚号已按库内 `TS3A44159PWR` 元件核对（TI SCDS225，13–16 脚 = NO1/COM1/NC1/IN1-2），与 `single-channel-schematic.md` 一致。
+
 电源和控制：
 
 ```text
 U1 pin 12 VCC   -> +3V3
 U1 pin 4  GND   -> GND
-U1 pin 15 IN1-2 -> SEL_ALL
+U1 pin 16 IN1-2 -> SEL_ALL
 U1 pin 8  IN3-4 -> SEL_ALL
 ```
 
@@ -178,7 +180,7 @@ MUX 通道编号使用二进制地址，`S0` 为最低位。所有模拟信号�
 
 1. 先建立 `BAT54S`，用万用表符号检查二极管方向。
 2. 建立 `TS3A44159`，把 16 个引脚名称直接标在元件上。
-3. 建立 `CD74HC4067` 开发板符号，优先按开发板端子命名，而不是裸芯片脚号。
+3. ✅ 建立 `CD74HC4067` 元件（2026-08-29 建立、2026-08-30 完善，交付 `fzpz/CD74HC4067.fzpz`，端子 `C0~C15`/`SIG`/`S0~S3`/`EN`/`VCC`/`GND`，按开发板端子命名）。
 4. 建立实际 ESP32-S3 开发板符号，保留 USB、5V、3V3 和 GND 标识。
 5. 建立 PCB 线圈和 WS2812B 模块的连接器符号。
 6. 用这些元件画 CH0，并对照本文件做连通性检查。
