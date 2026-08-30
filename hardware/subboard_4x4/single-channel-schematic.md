@@ -1,6 +1,6 @@
 # 单通道传感原理图（M0）
 
-方案 C 信号链：线圈 → 2×BAT54S 全波桥 → RC 低通 → TS3A44159 → CD74HC4067 → ESP32-S3 ADC1
+方案 C 信号链（子板）：线圈 → 2×BAT54S 全波桥 → RC 低通 → TS3A44159 → CD74HC4067 → **J1** → ESP32 控制板 ADC1
 
 ```text
 两线线圈
@@ -8,8 +8,15 @@
   -> R=10 kΩ 串联、C=100 nF 对地低通
   -> TS3A44159 COM（NO=通道输出，NC=GND 背景采样）
   -> CD74HC4067
-  -> ESP32-S3-DevKitC-1 ADC1 (GPIO1)
+  -> J1 (8×网络标签 -> ESP32 引脚) -> ESP32 控制板 ADC1 (GPIO1/IO1)
 ```
+
+## 接线说明（两套分开）
+
+**传感器子板（无 MCU）** 与独立 **ESP32 控制板** 分开（方案 C，2026-08-30）：子板接口用 **J1（8 个网络标签，标注对应 ESP32 控制板引脚）**；控制板含 WROOM-1 + USB Type-C + CH340 + 3.3V LDO + EN/BOOT（待建）。面包板原型用开发板经 J1 引线连接。两份说明：
+
+- **面包板原型接线**（子板元件 + J1，实物搭建）：[`single-channel-breadboard-wiring.md`](single-channel-breadboard-wiring.md)
+- **原理图/PCB 接线**（子板接口网表）：[`single-channel-schematic-wiring.md`](single-channel-schematic-wiring.md)
 
 ## 元件与引脚（库内连接器名，2026-08-29 核对）
 
@@ -54,27 +61,45 @@
 | `node_RC` | TS3A44159.`COM1` (14) | 滤波输出进开关 |
 | TS3A44159.`NO1` (13) | 通道输出 → MUX 开发板 `C0`（裸芯片为 `I0`=9 脚） | 正常路径 |
 | TS3A44159.`NC1` (15) | GND | 背景采样路径 |
-| TS3A44159.`IN1-2` (16) | ESP32-S3-DevKitC-1 **GPIO2**（丝印 `2`，connector38） | 与 `IN3-4`(8) 并联后接同一 GPIO；四颗 TS3A44159 的控制线并联到同一 GPIO |
+| TS3A44159.`IN1-2` (16) | J1.`SEL` | 与 `IN3-4`(8) 并联后接同一 SEL；四颗 TS3A44159 的控制线并联 |
 | TS3A44159.`VCC` (12) | 3.3 V | |
 | TS3A44159.`GND` (4) | GND | |
 | MUX `VCC`（裸芯片 24 脚） | 3.3 V | |
 | MUX `GND`（裸芯片 12 脚） | GND | |
 | MUX `EN`（裸芯片 15 脚） | GND（低有效常开） | |
-| MUX `S0`~`S3`（裸芯片 10/11/13/14 脚） | ESP32-S3-DevKitC-1 **GPIO4~GPIO7**（丝印 `4`~`7`，connector3~6） | 通道选择，S0 为最低位 |
-| MUX `SIG`/`COM`（裸芯片 1 脚） | ESP32-S3-DevKitC-1 **GPIO1**（ADC1_CH0，丝印 `1`，connector37） | 16 路选通输出 |
+| MUX `S0`~`S3`（裸芯片 10/11/14/13 脚：S0=10、S1=11、S2=14、S3=13） | J1.`S0`~`S3` | 通道选择，S0 为最低位 |
+| MUX `SIG`/`COM`（裸芯片 1 脚） | J1.`SIG` | 16 路选通输出 → 控制板 ADC |
 
-## GPIO 分配（ESP32-S3-DevKitC-1）
+## 子板拆分：传感器子板 + ESP32 控制板（方案 C，2026-08-30）
 
-| 用途 | GPIO | 丝印 | 库内连接器 |
+审视 PCB 时发现：WROOM-1 裸模块无 USB/电源/调试电路。按**方案 C** 拆成两块板，`single-channel.fzz` 代表**传感器子板**（已删掉 ESP32，接口改为 **8 个网络标签**标注对应 ESP32 控制板引脚，EN 子板固定接地）：
+
+- **子板**：线圈 + 整流桥 + RC + TS3A44159 + CD74HC4067 + J1（8 个 Fritzing 核心 `Net Label`，标注 `ESP32-S3-DevKitC-1 IO1/IO2/3V3/IO4/IO5/IO6/IO7/GND`；无排针、无焊盘元件）。
+- **控制板**（待建）：WROOM-1 + USB Type-C（`TypeC16Pin`）+ CH340（`CH340K/X`）+ 3.3V LDO（`RT9013/RT9193`）+ EN/BOOT 按键 + 对应接口；J1 `SIG→IO1`、`SEL→IO2`、`S0~S3→IO4~IO7`、`VCC/GND`。
+- 面包板视图 = 子板原型（无 MCU）；开发板在控制板侧，经 J1 引线连接。
+- 验证：渲染无 NaN；子板网表 J1 8 路信号全部正确（`VCC`←MUX+TS3A、`GND`←全地+EN、`SIG/S0~S3`←MUX、`SEL`←TS3A IN1-2/IN3-4）。
+
+## GPIO 分配（ESP32 控制板，经 J1）
+
+| 用途 | GPIO | WROOM-1 引脚 | 库内连接器 |
 |---|---|---|---|
-| MUX `SIG`（ADC1_CH0） | GPIO1 | `1` | connector37 |
-| TS3A44159 `SEL`（IN1-2/IN3-4） | GPIO2 | `2` | connector38 |
-| MUX `S0` | GPIO4 | `4` | connector3 |
-| MUX `S1` | GPIO5 | `5` | connector4 |
-| MUX `S2` | GPIO6 | `6` | connector5 |
-| MUX `S3` | GPIO7 | `7` | connector6 |
-| WS2812B `DI`（显示） | GPIO15 | `15` | connector7 |
-| 板载 WS2812（未用） | GPIO48 | `48` | connector24 |
+| MUX `SIG`（ADC1_CH0） | GPIO1 | IO1 | connector38 |
+| TS3A44159 `SEL`（IN1-2/IN3-4） | GPIO2 | IO2 | connector37 |
+| MUX `S0` | GPIO4 | IO4 | connector3 |
+| MUX `S1` | GPIO5 | IO5 | connector4 |
+| MUX `S2` | GPIO6 | IO6 | connector5 |
+| MUX `S3` | GPIO7 | IO7 | connector6 |
+| WS2812B `DI`（显示） | GPIO15 | IO15 | connector7 |
+| 板载 WS2812（未用） | GPIO48 | IO48 | connector24 |
+
+## ESP32 改用 WROOM-1 裸模块（2026-08-30）
+
+最终产品 PCB 装的是 **ESP32-S3-WROOM-1 裸模块**（半孔焊盘，非 DevKitC-1 开发板），`single-channel.fzz` 已把 U1 从 `ESP32-S3-DevKitC-1_1` 整体换成 `ESP32-S3-WROOM-1_1`：
+
+- 原理图/PCB 显示 WROOM-1 模块，连接器为 `IO0~IO48`/`GND`/`3V3`/`EN`/`5Vin`。
+- 连接器按 GPIO 重映射：DevKitC 的 `connector37/38`（GPIO1/2）↔ WROOM 的 `connector38/37`（IO1/2）；其余 GPIO 的 connector 索引一致（IO4~IO7=connector3~6、IO15=connector7、IO48=connector24）。PCB 层从 copper0 改到 copper1（模块 SMD 顶面）。
+- ⚠️ 面包板视图：WROOM-1 是裸模块、无排针，**无法插面包板孔**。实物原型仍需用带排针的开发板（DevKitC-1 或类似）；原 DevKitC 面包板布线在换元件后已失效，需重排。
+- 同步：fzz 内嵌 5 个 WROOM-1 文件（part + 4 视图 svg）；渲染验证通过（schematic/PCB 无 NaN；网表 MUX `SIG→IO1`、`S0~S3→IO4~IO7`、TS3A `SEL→IO2` 均保留）。
 
 > ⚠️ 装配前用万用表二极管档确认 BAT54S 实物方向（pin1→pin3→pin2）。
 > ⚠️ 整流输出须 < 3.3 V（ESP32-S3 ADC 量程）；若场强过大需加钳位（如 3.3 V 齐纳）。
@@ -141,4 +166,4 @@
 
 > 备注：MUX 裸芯片通道脚 `I0~I15`（I0=9 脚）对应 SparkFun 开发板的 `C0~C15`；`COM`(1) = `SIG`。
 > MUX 必须上电：VCC(24)=3.3V、GND(12)=GND，EN(15) 低有效，S0~S3 接 GPIO。
-> ADC1 = GPIO1~GPIO10（CH0~CH9）。本设计用 ESP32-S3-DevKitC-1 的 **GPIO1（ADC1_CH0）** 接 MUX `SIG`，Arduino 里 `analogRead(1)` / `analogReadMilliVolts(1)` 读取（0~3.3V → 0~4095）。
+> ADC1 = GPIO1~GPIO10（CH0~CH9）。控制板用 WROOM-1 的 **GPIO1/IO1（ADC1_CH0，connector38）** 接 J1 `SIG`，Arduino 里 `analogRead(1)` / `analogReadMilliVolts(1)` 读取（0~3.3V → 0~4095）。
