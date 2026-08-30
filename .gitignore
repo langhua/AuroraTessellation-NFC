@@ -5,3 +5,4 @@ __pycache__/
 
 # bill of materials (local procurement data, not source)
 bom/
+**/gerber*/*.zip

@@ -1,0 +1,41 @@
+# Pick And Place List
+# Company=
+# Author=
+# eMail=
+#
+# Project=single-channel
+# Date=21:12:49
+# CreatedBy=Fritzing 1.0.3b.2024-05-30.CD-1995-0-a7811ba0
+#
+#
+# Coordinates in mils, always center of component
+# Origin 0/0=Lower left corner of PCB
+# Rotation in degree (0-360, math. pos.)
+#
+RefDes,Description,Package,X,Y,Rotation,Side,Mount
+Description: resistance;capacitance;inductance;voltage;current;power;mpn;mn;
+GND,";;;;;;;;","PAD-1.2-H0.6",1624.92,202.221,0,Bottom,SMT
+IO5,";;;;;;;;","PAD-1.2-H0.6",1624.92,438.443,0,Bottom,SMT
+U2,";;;;;;;;","TSSOP-16",1306.02,216.986,0,Bottom,SMT
+L1,";;;;;;;;","PCB",443.816,477.813,90,Top,SMT
+IO1,";;;;;;;;","PAD-1.2-H0.6",1624.92,674.666,0,Bottom,SMT
+Via5,";;;;;;;;","",916.251,438.436,0,Top,MANUAL
+C1,";100nF;;35V;;;;;","0603 [SMD, multilayer]",955.626,326.238,90,Bottom,SMT
+Via7,";;;;;;;;","",1113.1,798.113,0,Top,MANUAL
+IO7,";;;;;;;;","PAD-1.2-H0.6",1624.92,280.966,0,Bottom,SMT
+Via6,";;;;;;;;","",1113.11,202.225,0,Top,MANUAL
+IO6,";;;;;;;;","PAD-1.2-H0.6",1624.92,359.699,0,Bottom,SMT
+D1,";;;;;;;;","SOT23-3",837.521,871.512,0,Bottom,SMT
+Via2,";;;;;;;;","",994.995,202.225,0,Top,MANUAL
+R1,"220;;;;;0.25W;;;","0603 [SMD]",955.626,680.571,90,Bottom,SMT
+3V3,";;;;;;;;","PAD-1.2-H0.6",1624.92,753.399,0,Bottom,SMT
+IO4,";;;;;;;;","PAD-1.2-H0.6",1624.92,517.177,0,Bottom,SMT
+IO2,";;;;;;;;","PAD-1.2-H0.6",1624.92,595.921,0,Bottom,SMT
+Via10,";;;;;;;;","",1506.81,635.291,0,Top,MANUAL
+Via11,";;;;;;;;","",1191.85,438.436,0,Top,MANUAL
+Via3,";;;;;;;;","",994.995,438.436,0,Top,MANUAL
+Via4,";;;;;;;;","",1034.36,674.658,0,Top,MANUAL
+D2,";;;;;;;;","SOT23-3",876.887,123.478,180,Bottom,SMT
+U3,";;;;;;;;","",1314.96,658.648,0,Bottom,MANUAL
+Via8,";;;;;;;;","",1270.58,162.847,0,Top,MANUAL
+Via9,";;;;;;;;","",1065.84,162.836,0,Top,MANUAL
