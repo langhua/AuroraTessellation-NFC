@@ -31,27 +31,30 @@
 | U整流A/B | `BAT54S.fzpz` | `A1`(1) / `node`(3) / `K2`(2) |
 | **U3**（MUX） | `CD74HC4067.fzpz` | `C0~C15`(connector0..15) / `SIG`(16) / `S0~S3`(17..20) / `EN`(21) / `VCC`(22) / `GND`(23) |
 | **U2** | `TS3A44159PWR.fzpz` | `NO1`(connector12)/`COM1`(13)/`NC1`(14)、`IN1-2`(15)、`IN3-4`(7)、`VCC`(11)、`GND`(3)（NO2-4/COM2-4/NC2-4 同序） |
-| **J1**（接口） | Fritzing 核心 `Net Label` ×8 | 8 个网络标签，标注信号对应 ESP32 开发板/控制板引脚（`IO1/IO2/3V3/IO4/IO5/IO6/IO7/GND`） |
+| **J1**（接口） | 自建 `NetLabel-Pad` ×8 | 8 个网络标签，PCB 上生成 8 个实体过孔焊盘（PAD-2.0-H1.0：Ø2.0mm 焊盘 / Ø1.0mm 钻孔，2.54mm 间距），标注信号对应 ESP32 开发板/控制板引脚（`IO1/IO2/3V3/IO4/IO5/IO6/IO7/GND`） |
 | L1 | `NFC-Coil.fzpz` | `inner` / `outer` |
 | R1 / C1 | 核心元件 | 10 kΩ / 100 nF |
 
 > 注：TS3A 括号内为**库内 connector 编号**（= 物理脚 − 1，如 NO1=物理 13 脚→connector12）。
 
-## J1 接口定义（8 个网络标签，EN 子板固定接地）
+## J1 接口定义（8 个过孔焊盘，EN 子板固定接地）
 
-| 标签 | 信号 | 去向 | 对应 ESP32 控制板 |
-|---|---|---|---|
-| 1 | `VCC` | MUX VCC + TS3A VCC | 3V3 |
-| 2 | `GND` | 全子板地（MUX/TS3A/桥/RC/EN） | GND |
-| 3 | `SIG` | MUX 公共输出 | IO1（ADC1_CH0，GPIO1） |
-| 4 | `S0` | MUX 地址 0（LSB） | IO4（GPIO4） |
-| 5 | `S1` | MUX 地址 1 | IO5（GPIO5） |
-| 6 | `S2` | MUX 地址 2 | IO6（GPIO6） |
-| 7 | `S3` | MUX 地址 3（MSB） | IO7（GPIO7） |
-| 8 | `SEL` | TS3A IN1-2/IN3-4（并联） | IO2（GPIO2） |
+> 下表为**实际物理脚序**（PnP 实测，板右缘一列，上→下）：`3V3, IO1, IO2, IO4, IO5, IO6, IO7, GND`。
+> 3V3（VCC）与 GND **分居两端**（相距 7 个焊盘），不会互相短路。
+
+| 脚（上→下） | 标签 | 信号 | 去向 | 对应 ESP32 控制板 |
+|---|---|---|---|---|
+| 1（顶） | `3V3` | VCC | MUX VCC + TS3A VCC | 3V3 |
+| 2 | `IO1` | SIG | MUX 公共输出 | IO1（ADC1_CH0，GPIO1） |
+| 3 | `IO2` | SEL | TS3A IN1-2/IN3-4（并联） | IO2（GPIO2） |
+| 4 | `IO4` | S0 | MUX 地址 0（LSB） | IO4（GPIO4） |
+| 5 | `IO5` | S1 | MUX 地址 1 | IO5（GPIO5） |
+| 6 | `IO6` | S2 | MUX 地址 2 | IO6（GPIO6） |
+| 7 | `IO7` | S3 | MUX 地址 3（MSB） | IO7（GPIO7） |
+| 8（底） | `GND` | GND | 全子板地（MUX/TS3A/桥/RC/EN） | GND |
 
 > MUX `EN` 已在子板上接 GND（低有效常开），不引出。
-> 接口在原理图上用 8 个网络标签表示（无排针/无焊盘元件），标签文字标出对应 ESP32 控制板引脚（IO1/IO2/IO4~IO7/3V3/GND）；实物 PCB 的物理连接点（焊盘/排针）在 M3 布局阶段再加。
+> 接口在原理图上用 8 个网络标签表示，标签文字标出对应 ESP32 控制板引脚（IO1/IO2/IO4~IO7/3V3/GND）。这 8 个网络标签使用自建 **`NetLabel-Pad`** 元件（2026-08-30，2026-08-31 更新），**PCB 上已生成 8 个实体过孔焊盘**（**PAD-2.0-H1.0**：Ø2.0mm 焊盘 / Ø1.0mm 钻孔，**2.54mm 间距**，Bottom 面右缘一列），已实测：PnP 为 `PAD-2.0-H1.0`、drill 文件有 8×Ø0.97mm 钻孔（2026-08-31 从 PAD-1.2-H0.6 无钻孔改为现封装，焊盘环用 circle 才能生成钻孔）。**标准 2.54mm 排针可直接插入**。
 
 ## 子板网表（通道 1 为例）
 

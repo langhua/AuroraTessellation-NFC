@@ -1,0 +1,8 @@
+序号,物料,规格/型号,采购网址,数量,类别,状态,备注
+1,NFC 线圈,PCB 铜层 φ20mm / 6T / 线宽0.2mm,,1,随PCB,🔴 必买,位号 L1；两线制 inner/outer；单线圈参考 φ20（4x4 阵列用 φ19）；由 PCB 铜层生成
+2,BAT54S,SOT-23 双肖特基,https://detail.tmall.com/item.htm?id=944976706745&skuId=6016034334382,2,部分已有,🟡 待补,位号 D1/D2；2 颗组成四二极管全波桥（pin1→pin3→pin2 串联，勿简单并联）
+3,TS3A44159,TSSOP-16,https://item.taobao.com/item.htm?id=1004117394794,1,已购,✅ 已到,位号 U2；4 通道 SPDT 模拟开关；本子板仅用通道1（COM1/NO1/NC1），IN1-2/IN3-4 并联接 SEL
+4,CD74HC4067,TSSOP-24 裸芯片,https://item.taobao.com/item.htm?id=557524880337&skuId=5195814767787,1,已购,🔴 必买,位号 U3；16 通道模拟 MUX（I0~I15/SIG/EN/VCC/GND）；面包板原型可用现成开发板（4x4 BOM 第6项）代替
+5,10kΩ 电阻,603,https://item.taobao.com/item.htm?id=739043743825&skuId=5267873610238,1,已购,🔴 必买,位号 R1；整流输出串联电阻（RC 低通）
+6,100nF 电容,603,https://detail.tmall.com/item.htm?id=724280605862&skuId=5033785017978,1,已购,🔴 必买,位号 C1；RC 低通对地电容
+7,PCB 打样,单通道子板 2 层 1.6mm,https://item.taobao.com/item.htm?id=623693600774&skuId=5356662567663,1,待购,🔴 必买,正面线圈 L1 + 背面 SMD（D1/D2/R1/C1/U2/U3）+ J1 过孔焊盘（NetLabel-Pad PAD-2.0-H1.0 ×8：Ø2.0mm 焊盘 / Ø1.0mm 钻孔，2.54mm 间距，可插标准排针，已入板）；板面 43.46×23.81mm（fzz/gerber 实测）

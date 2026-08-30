@@ -26,16 +26,18 @@ BB2（左板）                          BB3（右板）
 
 > 原理图上接口用 8 个网络标签标注（`ESP32-S3-DevKitC-1 IO1/IO2/3V3/IO4/IO5/IO6/IO7/GND`）；面包板实物用跳线把各信号引到开发板。
 
-| 针 | 信号 | 去向（子板） |
+> 脚序为**实际物理顺序**（PnP 实测，上→下）：`3V3, SIG, SEL, S0, S1, S2, S3, GND`；3V3 与 GND 分居两端。
+
+| 针（上→下） | 信号 | 去向（子板） |
 |---|---|---|
-| 1 | `VCC` | MUX `VCC`、TS3A `VCC` |
-| 2 | `GND` | 全子板地 |
-| 3 | `SIG` | MUX `SIG` |
-| 4 | `S0` | MUX `S0` |
-| 5 | `S1` | MUX `S1` |
-| 6 | `S2` | MUX `S2` |
-| 7 | `S3` | MUX `S3` |
-| 8 | `SEL` | TS3A `IN1-2`/`IN3-4` |
+| 1（顶） | `3V3`（VCC） | MUX `VCC`、TS3A `VCC` |
+| 2 | `IO1`（SIG） | MUX `SIG` |
+| 3 | `IO2`（SEL） | TS3A `IN1-2`/`IN3-4` |
+| 4 | `IO4`（S0） | MUX `S0` |
+| 5 | `IO5`（S1） | MUX `S1` |
+| 6 | `IO6`（S2） | MUX `S2` |
+| 7 | `IO7`（S3） | MUX `S3` |
+| 8（底） | `GND` | 全子板地 |
 
 ## 元件插孔表（每个脚→面包板插座）
 
@@ -101,12 +103,12 @@ BB2（左板）                          BB3（右板）
 | BR-（GND） | D1 A1 `pin27F`、D2 A1 `pin34F` → GND 电源轨 | 桥负极接地 |
 | node_RC→TS3A | `BB2 pin31H`(C1 端1) ↔ `BB3 pin39C`(TS3A COM1) | 滤波输出进开关 |
 | TS3A NC1→GND | `BB3 pin38C`(NC1) → GND | 背景采样 |
-| TS3A SEL→J1 | `BB3 pin37C`(IN1-2)、`pin44F`(IN3-4) ↔ J1 pin8 `SEL` | 选通控制（两脚并联） |
-| MUX SIG→J1 | `BB2 pin47D`(SIG) ↔ J1 pin3 `SIG` | 16 路选通输出 → 控制板 ADC |
+| TS3A SEL→J1 | `BB3 pin37C`(IN1-2)、`pin44F`(IN3-4) ↔ J1 pin3 `SEL` | 选通控制（两脚并联） |
+| MUX SIG→J1 | `BB2 pin47D`(SIG) ↔ J1 pin2 `SIG` | 16 路选通输出 → 控制板 ADC |
 | MUX 地址→J1 | S0 `pin51D`↔J1 pin4、S1 `pin50D`↔J1 pin5、S2 `pin49D`↔J1 pin6、S3 `pin48D`↔J1 pin7 | 通道选择，S0=最低位 |
-| MUX 电源 | VCC `pin53D`→J1 pin1 `VCC`、GND `pin54D`→J1 pin2 `GND`、EN `pin52D`→GND | EN 子板接地常开 |
+| MUX 电源 | VCC `pin53D`→J1 pin1 `3V3`、GND `pin54D`→J1 pin8 `GND`、EN `pin52D`→GND | EN 子板接地常开 |
 | C1 端2→GND | `BB2 pin34H`(C1 端2) → GND | 低通滤波对地 |
-| 电源轨 | J1 pin1 `VCC` → 3V3 轨；J1 pin2 `GND` → GND 轨 | 由控制板经 J1 供电 |
+| 电源轨 | J1 pin1 `3V3` → 3V3 轨；J1 pin8 `GND` → GND 轨 | 由控制板经 J1 供电 |
 
 > ⚠️ 装配前用万用表二极管档确认 BAT54S 实物方向（pin1→pin3→pin2）；整流输出须 < 3.3 V（ESP32 ADC 量程）。
 > ⚠️ 面包板视图 = 子板原型（无 MCU）。ESP32 在独立控制板，经 J1 引线供电/读信号；控制板原理图待建。
