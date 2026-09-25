@@ -86,6 +86,9 @@
 3. 排布（左 → 右）：`L1 → D1 / D2 → R1 / C1 → U1 → LED1`；`5V / GND / DATA_IN / DATA_OUT` 四个网络标签放在 U1 两侧；
 4. 按 §2 连线（Fritzing 会自动吸附到引脚端点）；
 5. 保存后把 fzz 给我 —— 我读里面的 `wire` 元素**逐条核对网表**（和核对 single-channel 一样的方式）。
+6. 作图规则（网格/位号/命名/字体）**沿用库仓**：`fritzing-parts-langhua/docs/schem-drawing-rules.md` ✓；
+   画完可先自核一遍：`py -3.13 <库仓>\tools\sch_style_check.py hardware\pixel\pixel.fzz`
+   （网格只作参考 ✓；**位号重复 / 名字只差大小写**会报 FAIL ✓）。
 
 ## 5. 暂不做
 

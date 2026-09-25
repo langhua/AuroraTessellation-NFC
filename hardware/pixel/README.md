@@ -297,3 +297,4 @@ SPI 栏都是 **1** ✓，引脚就是 **`PC5/PC6/PC7` = SCK/MOSI/MISO**（pin 1
 | `hardware/subboard_4x4/schematic-spec.md` | 16 路 + 4×TS3A + MUX 连接表 | 同上（P2 方案依据） |
 | `hardware/subboard_4x4/single-channel/` | 已送厂的单通道板（Gerber v0.1.3） | **照原计划打板**，用于验证模拟前端量级 |
 | 本文件 | P1 像素板 | **新方向** |
+| `fritzing-parts-langhua/docs/schem-drawing-rules.md` | **画电路通用规则**（A 节可机器校验 / B 节审美）| **本项目遵循** ✓ —— 画完用 `tools/sch_style_check.py` 核（网格只作参考 ✓）|
