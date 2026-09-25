@@ -81,7 +81,7 @@
 ## 4. 画图步骤（Fritzing GUI）
 
 1. 新建 sketch（**旧 `pixel.fzz` 已作废、不要改它** ✓）→ 保存为 `hardware/pixel/pixel.fzz`；
-2. 切到**原理图**视图，从 MINE / core 拖入 §1 的元件（MINE 搜型号：`CH32V003F4U6` ✓、`WS2812B_1010_1` ✓、`MX-1.25-3P-V` ✓…）；
+2. 切到**原理图**视图，从 MINE / core 拖入 §1 的元件（MINE 搜型号：`CH32V003F4U6` ✓、`WS2812B_1010_1` ✓、`SH-1.0-3P-V` ✓…）；
 3. 排布（左 → 右）：`L1 → D1 / D2 → R1 / C1 → U1 → LED1`；`5V / GND / DATA` 三个网络标签放在 U1 两侧；
 4. 按 §2 连线（Fritzing 会自动吸附到引脚端点）；
 5. 保存后把 fzz 给我 —— 我读里面的 `wire` 元素**逐条核对网表**（和核对 single-channel 一样的方式）。
