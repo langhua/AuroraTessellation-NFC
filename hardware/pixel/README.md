@@ -8,10 +8,11 @@
 >
 > 本文件是像素板的设计依据。`docs/phase-1-4x4-validation.md` 与 `hardware/subboard_4x4/*` 记录的是
 > **集中式（P2）**方案（TS3A44159 开关 + CD74HC4067 MUX），**保持不变**；其中 single-channel 板
-> （已送厂，3~4 天回板）验证的「线圈 → 2×BAT54S → RC」模拟前端，**正是本像素板的核心，仍然有效**。
+> （已送厂，3~4 天回板）验证的「线圈 → 2×BAT54S → RC」模拟前端，**正是本像素板的核心，仍然有效**
+> （像素板把那 2 颗 BAT54S 换成 **1 颗 `BAS70BRW`** ✓ —— 同样的 4 管全波桥，见 §3）。
 
 [![NFC 线圈](../../../fritzing-parts-langhua/svg/NFC-Coil/svg.icon.NFC_Coil_20mm_6T_0p2_1_icon.svg)](../../../fritzing-parts-langhua/svg/NFC-Coil/svg.icon.NFC_Coil_20mm_6T_0p2_1_icon.svg)
-[![BAT54S](../../../fritzing-parts-langhua/svg/BAT54S/svg.icon.BAT54S_SOT23_1_icon.svg)](../../../fritzing-parts-langhua/svg/BAT54S/svg.icon.BAT54S_SOT23_1_icon.svg)
+[![BAS70BRW](../../../fritzing-parts-langhua/svg/BAS70BRW/svg.icon.BAS70BRW_SOT363_1_icon.svg)](../../../fritzing-parts-langhua/svg/BAS70BRW/svg.icon.BAS70BRW_SOT363_1_icon.svg)
 [![WS2812B-1010](../../../fritzing-parts-langhua/svg/WS2812B/1010/svg.icon.WS2812B_1010_1_icon.svg)](../../../fritzing-parts-langhua/svg/WS2812B/1010/svg.icon.WS2812B_1010_1_icon.svg)
 
 *像素板 = 1 个线圈 + 1 路整流 + 1 颗 MCU + 1 颗 1010 LED*
@@ -31,7 +32,7 @@
 ```mermaid
 flowchart LR
     subgraph PIX["1 个磁像素（1 块板）"]
-        COIL["φ19 线圈<br/>PCB 顶层铜"] --> BR["2 × BAT54S<br/>全波整流"]
+        COIL["φ19 线圈<br/>PCB 顶层铜"] --> BR["BAS70BRW<br/>全波整流（4 管一颗）"]
         BR --> RC["10 kΩ + 100 nF<br/>低通"]
         RC --> ADC["MCU ADC<br/>（可选内置 OPA 放大）"]
         ADC --> MCU["CH32V003 级 MCU"]
@@ -55,7 +56,7 @@ flowchart LR
 | 位号 | 元件 | 封装 | 数量 | 说明 |
 |---|---|---|---|---|
 | L1 | NFC 线圈 φ19 / 6 匝 / 0.2 mm | PCB 顶层铜 | 1 | 复用 `NFC-Coil`（库内已有，实测铜箔外径 19.0 mm） |
-| D1/D2 | BAT54S 双肖特基 | SOT-23 | 2 | 组成四二极管全波桥（库内已有） |
+| D1 | `BAS70BRW`（4 × 70 V 肖特基）| SOT-363（SC-70-6）| 1 | **一颗就是整个全波桥** ✓（库内已有 ✓；70 V 耐压 ✓、对线圈加载更小 ✓）|
 | R1 | 10 kΩ | 0603 | 1 | RC 串联 |
 | C1 | 100 nF | 0603 | 1 | RC 对地 |
 | U1 | CH32V003F4U6 / CH32V002F4U6 | **QFN20**（3 × 3 mm，见 §4） | 1 | 5 V 直供、内置 ADC（+ OPA ✓）、**有 SPI** ✓；两颗 drop-in 可互换 ✓ |
@@ -202,16 +203,16 @@ SPI 栏都是 **1** ✓，引脚就是 **`PC5/PC6/PC7` = SCK/MOSI/MISO**（pin 1
 
 | 元件 | 占地（含焊盘） |
 |---|---|
-| 2 × BAT54S（SOT-23） | ~19 mm² |
+| `BAS70BRW`（SOT-363）| **~7.5 mm²**（焊盘外廓 2.60 × 2.90 ✓）|
 | R + C + C（0603 × 3） | ~6 mm² |
 | MCU | QFN20 **~9 mm²**（3 × 3 ✓） |
 | WS2812B-1010 | **~1 mm²**（1 × 1 ✓） |
-| **合计** | **≈ 35 mm²** |
+| **合计** | **≈ 24 mm²** |
 
 可用面积：
 
 - **20 mm 间距**：只有 φ8 中心孔 ⇒ **50 mm² / 面**（双面共 100 mm²）
-  ⇒ **单面就能放下**（≈35 < 50 ✓）—— 比 SOP8 版（≈63 必须双面）宽裕得多 ✓。
+  ⇒ **单面就能放下**（≈24 < 50 ✓）—— 比 SOP8 版（≈63 必须双面）宽裕得多 ✓。
 - **22 mm 间距**：孔以外还多出约 **130 mm² 窄边条**（约 1.5 mm 宽，只放得下小件），
   大件（MCU / LED）仍进孔 ⇒ 余量明显更宽松。
 
