@@ -17,7 +17,7 @@
 | 拓扑 | **单向菊花链**（unidirectional daisy chain） | 每块两个口，链式串下去 ✓ |
 | 线码 | 单线、脉宽编码、自定时 | ← **不照抄** ✗：我们加**主控发的节拍当软时钟**（时序更稳 ✓） |
 | 寻址 | **隐式寻址 / 位置寻址**（implicit addressing） | 位置 = 链上先后 ✓ **不用地址字段** ✓ |
-| 行为 | **分布式移位寄存器**（distributed shift register） | 每级"吃掉自己那份、转发剩余" ✓ |
+| 行为 | **分布式移位寄存器**（distributed shift register） | 每级"取走自己那份、转发剩余" ✓ |
 
 **和 I2C 的关系**：开漏 + 上拉 + 主从轮询这一段**很像 I2C** ✓，但有两处不同 ✗：
 ① **少了 `SCL` 时钟线** ✗；② **拓扑是链、不是共线总线** ✗（见 §2 ✓）。
@@ -80,9 +80,9 @@ sequenceDiagram
     participant P1 as 第 1 块（未登记）
     participant P2 as 第 2 块（未登记）
     H->>P1: 枚举帧 N=0
-    Note over P1: 还没登记 ⇒ 吃掉它<br/>my_index = 0，写 Flash
+    Note over P1: 还没登记 ⇒ 认领它<br/>my_index = 0，写 Flash
     P1->>P2: 我重新发一帧 N=1
-    Note over P2: 吃掉 ⇒ my_index = 1
+    Note over P2: 认领 ⇒ my_index = 1
     P2->>P2: 继续往下发 N=2 …
 ```
 
@@ -99,7 +99,7 @@ sequenceDiagram
 ### 4.3 颜色帧（运行时，完全照 WS2812 的思路）
 
 - 帧 = `[同步头][0x02][count][RGB × count][CRC]`
-- 每块：**吃掉前 3 字节**当自己的颜色 ✓，**把剩余原样转给下游** ✓
+- 每块：**取走前 3 字节**当自己的颜色 ✓，**把剩余原样转给下游** ✓
 - ⇒ **不用地址** ✓ 位置即地址 ✓；断一块 ⇒ 下游全灭 ✗（和 WS2812 一样 ✓，靠 `count` 判断断点 ✓）
 
 ```mermaid
@@ -108,9 +108,9 @@ sequenceDiagram
     participant P1 as 第 1 块
     participant P2 as 第 2 块
     H->>P1: [同步头][0x02][count][RGB×count][CRC]
-    Note over P1: 吃掉前 3 B（自己的颜色）<br/>更新板载 1010
+    Note over P1: 取走前 3 B（自己的颜色）<br/>更新板载 1010
     P1->>P2: 剩余原样转发
-    Note over P2: 吃掉下一个 3 B<br/>继续往下发
+    Note over P2: 取走下一个 3 B<br/>继续往下发
 ```
 
 ### 4.4 回读（半双工的反向时隙）
@@ -149,7 +149,7 @@ stateDiagram-v2
     直通 --> 登记: 收到枚举帧
     登记 --> 直通: 发 N+1 给下游
     直通 --> 取色: 收到颜色帧
-    取色 --> 直通: 吃 3 B / 转发剩余 / 更新 LED
+    取色 --> 直通: 取走 3 B / 转发剩余 / 更新 LED
     直通 --> 回读: 收到回读请求 且 index 匹配
     回读 --> 直通: 按时隙驱动完
 ```
@@ -194,7 +194,7 @@ flowchart LR
 
 - [ ] 单线半双工收发（USART 单线模式 或 GPIO + 定时软件收发）
 - [ ] 位置枚举 + `index` 存 Flash（带版本校验）
-- [ ] 颜色帧"吃掉 3 B + 转发剩余" + **SPI + DMA**（走 `SPI_MOSI` ✓）驱动板载 WS2812-1010
+- [ ] 颜色帧"取走 3 B + 转发剩余" + **SPI + DMA**（走 `SPI_MOSI` ✓）驱动板载 WS2812-1010
 - [ ] 回读：准时在自己的时隙开漏拉低
 - [ ] 上电/复位默认**只直通、不驱动**总线 ✓；看门狗 ✓
 
