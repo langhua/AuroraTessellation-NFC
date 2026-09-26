@@ -115,7 +115,10 @@ EXPECT = {
     "COIL_A": {"L1.connector0", "D3.connector5"},
     "COIL_B": {"L1.connector1", "D3.connector2"},
     "GND": {"D3.connector0", "D3.connector1", "C1.connector1", "U1.connector3",
-            "C2.connector1", "LED2.connector1", "J1.connector1", "J2.connector1"},
+            "C2.connector1", "LED2.connector1", "J1.connector1", "J2.connector1",
+            # ★ EPAD（U1 的裸焊盘 connector20 ✓）**必须接地** ✓（2026-09-26 用户定 ✓）：
+            #   上一版把它写成"单脚网、图上留空"是错的 ✗ —— 裸盘要接到 GND ✓
+            "U1.connector20"},
     "BR+": {"D3.connector3", "D3.connector4", "R1.connector0"},
     "RC": {"R1.connector1", "C1.connector0", "U1.connector1"},
     "5V": {"U1.connector5", "C2.connector0", "LED2.connector3", "J1.connector0",
@@ -123,7 +126,6 @@ EXPECT = {
     "DATA_IN": {"U1.connector2", "J1.connector2"},
     "DATA_OUT": {"U1.connector4", "J2.connector2"},
     "LED_DIN": {"U1.connector12", "LED2.connector2"},
-    "EPAD": set(),      # 单脚网 ⇒ 本来就没有导线，图上留空 ✓（保持独立成网 ✓）
 }
 print("\n=== 对照 pixel-netlist.md §2 ===")
 bad = 0
@@ -134,8 +136,6 @@ for net, pins in EXPECT.items():
         if pins & s:
             got = s if got is None else (got | s)
     got = got or set()
-    if net == "EPAD":
-        got = set()
     ok = got == pins
     bad += 0 if ok else 1
     print("  %-9s %s  应有 %-42s 实际 %s"

@@ -7,4 +7,10 @@ __pycache__/
 bom/
 **/gerber*/*.zip
 
+# Fritzing sketches hand-edited in the editor: drafts, not the generated deliverable
+*_byHand.fzz
+
+# pipeline intermediates (hardware/pixel/run_v6.py writes here; deliverables go to hardware/pixel/)
+hardware/pixel/_work/
+
 *.code-workspace
