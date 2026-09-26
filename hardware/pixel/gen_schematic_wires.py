@@ -22,10 +22,8 @@ import zipfile
 import xml.etree.ElementTree as ET
 
 SCRATCH = os.path.dirname(os.path.abspath(__file__))
-TOOLS = os.environ.get("FRITZING_TOOLS", r"f:\git\fritzing-parts-langhua\tools")
-# ★★ 2026-09-27 入库 ✓：**本地这份优先** ✓（顺序反过来 ✓：本地最后插入 ⇒ 在最前 ✓）
-sys.path.insert(0, TOOLS)
-sys.path.insert(0, SCRATCH)
+# ★★ 2026-09-27（用户定 ✓）：通用工具只有一份，在**库仓 tools/** ✓（定位见 `toolpaths.py` ✓）
+import toolpaths                                 # noqa: E402
 import part_measure as pm                       # noqa: E402
 from pin_ruler import apply, mul, parse_tf       # noqa: E402
 

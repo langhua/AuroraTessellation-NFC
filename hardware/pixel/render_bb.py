@@ -17,13 +17,14 @@ import sys
 import zipfile
 import xml.etree.ElementTree as ET
 
-# ★★ 2026-09-27 修 ✓：**只认"自己旁边"的模块** ✓ ——
-#   原来还 `insert(0, r"f:\git\_scratch")` ✗ ⇒ `_scratch` 里的**旧副本**会顶掉仓库这份 ✗
-#   ⇒ 我刚加的 `part_box.pin_points` **根本没加载到** ✗（日志原话：`module 'part_box' has no
-#   attribute 'pin_points'` ✓）—— 而且它**不报错、不退出** ✗，只是脚位自检全部沦陷为"未验证" ✗。
-#   ★ 教训：**同一个工具只能有一份** ✓（`_scratch` 是草稿区 ✓，**绝不能进 import 路径** ✗）；
-#     "路径里有旧副本"这种坑不会报错 ✗ ⇒ 只会在结果里静静变错 ✗。
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# ★★ 2026-09-27（用户定 ✓）：**通用工具只有一份，就在元件库仓 `tools/`** ✓
+#   （`part_box` / `bb_compare` ✓）；本项目里不再留副本 ✗。
+#   我在这里犯过两个反例 ✓ 记下来别再犯 ✗：
+#     ① 把 `f:\git\_scratch` 插进 import 路径 ✗ ⇒ 草稿区旧副本顶掉当前那份 ✗，
+#        而且**不报错** ✗，只让脚位自检静静退化成"未验证" ✗；
+#     ② 又把库仓的模块拷了一份进项目 ✗ ⇒ 又是"两份实现" ✗。
+#   ⇒ 定位写在 `toolpaths.py` ✓（**一处** ✓，不每个脚本各写一遍 ✗）。
+import toolpaths                                                  # noqa: E402
 import part_box as PB                                             # noqa: E402
 import bb_compare as BC                                           # ★ 孔位/遮挡同一份实现 ✓
 

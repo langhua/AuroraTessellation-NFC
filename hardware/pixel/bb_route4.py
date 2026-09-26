@@ -28,13 +28,11 @@ import zipfile
 import xml.etree.ElementTree as ET
 
 SCRATCH = os.path.dirname(os.path.abspath(__file__))
-TOOLS = os.environ.get("FRITZING_TOOLS", r"f:\git\fritzing-parts-langhua\tools")
-PIXEL = os.path.dirname(os.path.abspath(__file__))        # ★ 自定位 ✓（不写死机器路径 ✗）
-# ★★ 2026-09-27 入库 ✓：**本地这份优先** ✓ —— 从前 `TOOLS` 被插在本地目录**之前** ✗
-#   ⇒ 同一个模块实际用的是元件库仓里那份 ✗（跨仓依赖 ✓，换机器/改一处不生效 ✗）。
-#   现在顺序反过来（本地最后插入 ⇒ 在最前 ✓）⇒ "同一个工具只有一份"✓ 名副其实 ✓。
-for p in (TOOLS, PIXEL):
-    sys.path.insert(0, p)
+# ★★ 2026-09-27（用户定 ✓）：**通用工具只有一份，就在元件库仓 `tools/`** ✓ ——
+#   本项目 hardware/pixel/ 里**不再留副本** ✗（我一度又拷了一份 ⇒ 正是"两份实现" ✗）。
+#   ⇒ import 一律从 `TOOLS` 来 ✓；定位写在 `toolpaths.py` ✓（**一处** ✓，不每个脚本各写一遍 ✗）。
+import toolpaths                                             # noqa: E402
+PIXEL = os.path.dirname(os.path.abspath(__file__))        # ★ 自定位 ✓
 import part_measure as pm                        # noqa: E402
 import part_box as pbox                          # noqa: E402
 # ★ 几何/度量与仓库里的对比工具**共用一份实现** ✓（2026-09-26 ✓）——

@@ -24,8 +24,9 @@ import sys
 import xml.etree.ElementTree as ET
 import zipfile
 
-PIX = r"f:\git\AuroraTessellation-NFC\hardware\pixel"
-sys.path.insert(0, PIX)
+PIX = os.path.dirname(os.path.abspath(__file__))                 # ★ 自定位 ✓（不写死机器路径 ✗）
+import toolpaths                                                 # noqa: E402
+# ★ 通用工具（`bb_compare` / `part_box`）**只在库仓 tools/ 一份** ✓（本项目不留副本 ✗）
 import bb_compare as BC                                          # noqa: E402
 import part_box as PB                                            # noqa: E402  ④ 的本体框
 NETS_PATH = os.path.join(PIX, "gen_schematic_wires.py")

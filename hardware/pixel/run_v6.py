@@ -13,13 +13,13 @@ import os
 import subprocess
 import sys
 
-SCRATCH = r"f:\git\_scratch"   # 旧名保留（已不再参与任何路径 ✓）
-# ★★ 2026-09-27 入库 ✓：本管线**不再依赖草稿区** ✗ —— 工具就在本目录 ✓、
-#   中间产物放 `_work/` ✓、成品直接落本目录 ✓（从前全指草稿区 ✗ ⇒ 换机器就跑不起来 ✗，
-#   "工具只有一份"也永远做不到 ✗）。自定位写法 ✓ ⇒ 不写死机器路径 ✓。
+# ★★ 2026-09-27（用户定 ✓）：本管线自定位 ✓（不写死机器路径 ✗）；
+#   中间产物 → `_work/` ✓；成品 → 本目录 ✓；**通用工具在库仓 tools/** ✓（见 `toolpaths.py` ✓）。
 PIXEL = os.path.dirname(os.path.abspath(__file__))
 WORK = os.path.join(PIXEL, "_work")
 os.makedirs(WORK, exist_ok=True)
+import toolpaths                                            # noqa: E402
+TOOLS = toolpaths.TOOLS
 PY = sys.executable
 
 # 用法：py -3.13 run_v6.py [输入 .fzz] [版本号] [对比参照 .fzz]
@@ -35,16 +35,16 @@ STEPS = [
                                 src, sch_fixed]),
     ("2 面包板布线（EPAD→GND 电源轨）", [PY, os.path.join(PIXEL, "bb_route4.py"),
                                         sch_fixed, raw]),
-    ("3 图例写进视图", [PY, os.path.join(PIXEL, "bb_legend3.py"), raw, final,
+    ("3 图例写进视图", [PY, os.path.join(TOOLS, "bb_legend3.py"), raw, final,
                         "590", "12", "12", "19", "-3",
                         os.path.join(PIXEL, "pixel-breadboard59.fzz")]),
     ("4a 网表核对", [PY, os.path.join(PIXEL, "check_netlist.py"), final]),
-    ("4b 与参照版对比", [PY, os.path.join(PIXEL, "bb_compare.py"), ref, final]),
-    ("4c 文件自检（颜色/零长/属性 ✓）", [PY, os.path.join(PIXEL, "file_sanity.py"), final]),
+    ("4b 与参照版对比", [PY, os.path.join(TOOLS, "bb_compare.py"), ref, final]),
+    ("4c 文件自检（颜色/零长/属性 ✓）", [PY, os.path.join(TOOLS, "file_sanity.py"), final]),
     # ★ 悬空连接记录清扫 ✓（2026-09-26 用户实测 ✗）：删了旧导线，但“孔 → 那根线”的记录
     #   还留着 ✗ ⇒ Fritzing 里那些孔显示接在不存在的线上 ✗（悬停时一大片亮 ✓）。
     #   实测我以前的版本各 **12 处** ✗、用户手画版 **0 处** ✓ ⇒ 交付前清掉 ✓。
-    ("4d 清悬空连接记录", [PY, os.path.join(PIXEL, "fix_connects.py"), final, final]),
+    ("4d 清悬空连接记录", [PY, os.path.join(TOOLS, "fix_connects.py"), final, final]),
 ]
 
 for title, cmd in STEPS:
