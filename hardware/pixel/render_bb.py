@@ -20,6 +20,11 @@ import xml.etree.ElementTree as ET
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # ★ 先找"自己旁边" ✓（入库后
 sys.path.insert(0, r"f:\git\_scratch")                           #   在 hardware/pixel/ 里也能跑 ✓）
 import part_box as PB                                             # noqa: E402
+try:
+    import bb_compare as BC                                       # ★ 孔位/遮挡同一份实现 ✓
+except ImportError:                                               # 从 _scratch 跑 ⇒ 指到仓库那份 ✓
+    sys.path.insert(0, r"f:\git\AuroraTessellation-NFC\hardware\pixel")
+    import bb_compare as BC                                       # noqa: E402
 
 path, out = sys.argv[1], sys.argv[2]
 PXW = float(sys.argv[3]) if len(sys.argv) > 3 else 1800.0
@@ -190,30 +195,65 @@ for el in root.iter("instance"):
     _hdr = re.search(r"<svg\b[^>]*>", txt, flags=re.S)
     # ★★ 自检 ✓（2026-09-27 ✓）：把这次画的尺寸换成 **mm** 报出来 ✓ ——
     #   板子/零件的物理尺寸人手一算就能对账 ✓（不再"渲染没报错就算对" ✗）。
-    _vbm = re.search(r'viewBox="[\d.]+\s+[\d.]+\s+([\d.]+)\s+([\d.]+)"', txt)
+    _vbm = re.search(r'viewBox="[\d.]+[\s,]+[\d.]+[\s,]+([\d.]+)[\s,]+([\d.]+)"', txt)
     _phys = ""
     if _vbm:
         _phys = "本体 %.1f×%.1f mm" % (float(_vbm.group(1)) * k * 25.4 / 90.0,
                                         float(_vbm.group(2)) * k * 25.4 / 90.0)
     print("   %-6s svg头: %s ‖ k=%.4f %s"
           % (ttl,
-             " ".join(re.findall(r'[a-zA-Z:-]+="[^"]*"', _hdr.group(0))[:6]) if _hdr else "（无头 ✗）",
+             " ".join(re.findall(r'[a-zA-Z:-]+="[^"]*"', _hdr.group(0))) if _hdr else "（无头 ✗）",
              k, _phys))
+    # ★★★ 脚位自检 ✓✓（2026-09-27 用户报 ✗："1010 板的 4 个引脚都是悬空的" ✓）：
+    #   把每个脚**画出来的位置**算出来 ✓（part svg 里 `id="connectorNpin"` 的圆心 ✓，
+    #   与布线器算 EPAD 焊盘用的是同一套数学 ✓），再跟它**声称插进的孔** ✗ 比 ✓
+    #   ⇒ Δ 应当 ≈ 0 ✓；**Δ 大 = "脚悬空"** ✗（正是用户一眼看到的 ✓）。
+    _ph = {}                       # 脚 id → 它插进的孔 id ✓（从 <connector> 下的 <connect> 读 ✓）
+    for _cn in bv.iter():
+        if tag(_cn) != "connector":
+            continue
+        for _cs2 in _cn.iter():
+            if tag(_cs2) == "connect" and _cs2.get("layer") == "breadboardbreadboard":
+                _ph[_cn.get("connectorId")] = _cs2.get("connectorId")
+    _circles = re.findall(r"<(?:circle|ellipse)[^>]*>", txt)
+    _nchk = _bad = 0
+    _unv = 0
+    for _cid2, _hid2 in sorted(_ph.items()):
+        _el2 = next((s for s in _circles if 'id="%spin"' % re.escape(str(_cid2)) in s), None)
+        if _el2 is None:
+            _unv += 1
+            continue               # ★ 认不出 ⇒ **记入"未验证"** ✓（不许静默跳过 ✗）
+        _cx = re.search(r'\bcx="([-\d.]+)"', _el2)
+        _cy = re.search(r'\bcy="([-\d.]+)"', _el2)
+        _xy2 = BC.hole_xy(_hid2) if _hid2 else None
+        if not (_cx and _cy) or _xy2 is None:
+            continue
+        _nchk += 1
+        _lu, _lv = float(_cx.group(1)) * k, float(_cy.group(1)) * k
+        _padx = num(g.get("x")) + m[0] * _lu + m[2] * _lv + m[4]
+        _pady = num(g.get("y")) + m[1] * _lu + m[3] * _lv + m[5]
+        _dx, _dy = _padx - _xy2[0], _pady - _xy2[1]
+        _dd = (_dx * _dx + _dy * _dy) ** 0.5
+        if _dd > 1.0:              # 1 单位 = 0.28mm ✓；超过就是"脚没落在孔上" ✗
+            _bad += 1
+            print("      ✗ 脚 %-16s 画在 (%7.1f,%7.1f)，孔 %-8s 在 (%7.1f,%7.1f)"
+                  " ⇒ Δ=%.2f 单位 (%.2f mm) **悬空** ✗"
+                  % (_cid2, _padx, _pady, _hid2, _xy2[0], _xy2[1], _dd, _dd * 25.4 / 90.0))
+    if _nchk or _unv:
+        _verdict = ("✓ 全落在孔上 ✓" if not _bad else "✗ **%d 个悬空** ✗" % _bad) \
+            if _nchk else "**一个都没查到 ⇒ 未验证 ✗（别当它是对的 ✗）**"
+        print("      脚位自检：查到 %d 个脚 ⇒ %s ｜认不出/未验证 %d 个 %s"
+              % (_nchk, _verdict, _unv, "✓" if not _unv else "✗（这些件只能靠人眼 ✓）"))
     a, b, c, d = k * m[0], k * m[1], k * m[2], k * m[3]
     e, f = num(g.get("x")) + m[4], num(g.get("y")) + m[5]
-    # ★★ 2026-09-27 修 ✓（用户报的 bug ✗：preview.png 没一张是对的 ✗）：
-    #   **零件 svg 的 `viewBox` 原点常常不是 (0,0)** ✗（本库自己的件就写 `viewBox="7 7 18 18"` ✓）
-    #   ⇒ 只按 `viewBox[2]` 缩放、**不减原点** ✗ ⇒ 零件整体**平移错位** ✗（图上"零件跟孔/线对不上" ✓）。
-    #   ⇒ 补一层 `translate(-minX, -minY)` ✓（用户单位 ⇒ 在缩放层**内**做 ✓，乘在 k 之后再平移 ✗ 会错）。
-    vbm = re.search(r'viewBox="([^"]+)"', txt)
-    vx0, vy0 = 0.0, 0.0
-    if vbm:
-        _p = [float(x) for x in re.split(r"[ ,]+", vbm.group(1).strip()) if x]
-        if len(_p) == 4:
-            vx0, vy0 = _p[0], _p[1]
-    lay_body.append('<g transform="matrix(%.6f %.6f %.6f %.6f %.6f %.6f)">'
-                    '<g transform="translate(%.6f %.6f)">%s</g></g>'
-                    % (a, b, c, d, e, f, -vx0, -vy0, inner(txt)))
+    # ★★ 2026-09-27 **撤掉**早先那个 `translate(-minX,-minY)` ✗（用户报 ✗："1010 板被移动了一点儿，
+    #   4 个引脚都悬空" ✓）：我在这里做的是把**用户坐标**重映射到 sketch ✓，
+    #   **不是**在摆 viewport ✗ ⇒ **viewBox 的原点不该减** ✗。减了以后，
+    #   **原点非 0 的那个件**（全批次只有 `LED2` ✓：`viewBox="1.03 0 19.54 28.8"`）
+    #   就整体偏移 **1.03 单位 ≈ 0.29mm** ✗ ⇒ 四个脚落到孔外 ✗ ✓（图看着就是"脚悬空"✓）。
+    #   （当年加它的"理论"是错的 ✗：那套"原点非 0 要补偿"只对**贴图/视口**成立 ✗。）
+    lay_body.append('<g transform="matrix(%.6f %.6f %.6f %.6f %.6f %.6f)">%s</g>'
+                    % (a, b, c, d, e, f, inner(txt)))
 
 xs, ys = [0.0, 576.0], [0.0, 189.0]
 for x1, y1, x2, y2, _c in wires:
