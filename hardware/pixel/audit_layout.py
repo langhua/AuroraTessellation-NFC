@@ -7,7 +7,12 @@
   ① 一个孔最多一个导线端点 ✓（且导线端点不得落在插了脚的孔上 ✗）
   ② 引线不得盖住"已接线的孔" > 30% ✓（孔开口 vs 导线带 ✓，正反两向都查 ✓）
   ③ 两根引线不得重叠（共线叠在一起 ✗）
-  ④ 引线不得穿过别的元件本体 ✓（★ 暂用生成器的外形框 ✗ ⇒ 标"未独立验证" ✗）
+  ④ **用到的孔（元件脚 + 导线端点）不得落在「别的元件」的本体框内** ✓
+    （框 = `part_box.body_box`（画布尺寸×内容包围盒）+ `place`（实例矩阵）✓
+      与生成器**同一份实现** ✓ —— 所以 ④ 是**共用实现**、非独立 ✓（旧版只是一行占位 ✗）
+      框边也算压住 ✓（孔心在框内即算 ✓）；离最近边 ≤1 单位时标为
+      **贴着框边 ⚠ 需人判断**（不替人下结论 ✗ —— 用户 2026-09-27 的手工版里就有这种写法 ✓）；
+      拿不到框的元件**会报出来** ✓，不静默 ✗）
   ⑤ 一条 bus（5 孔/50 孔铜片 ✓）上不得挂两个不同网络的脚 ✗（会实物短接 ✓）
   ⑥ 每个网络的脚必须由"孔+引线+bus"连通 ✓
 
@@ -22,6 +27,7 @@ import zipfile
 PIX = r"f:\git\AuroraTessellation-NFC\hardware\pixel"
 sys.path.insert(0, PIX)
 import bb_compare as BC                                          # noqa: E402
+import part_box as PB                                            # noqa: E402  ④ 的本体框
 NETS_PATH = os.path.join(PIX, "gen_schematic_wires.py")
 
 
@@ -109,6 +115,47 @@ def net_terminals(fzz):
     return out
 
 
+def body_rects(fzz):
+    """每个**非面包板**元件实例的本体框（sketch 绝对坐标 ✓）⇒ [(标题, (x0,y0,x1,y1))]
+
+    框的算法与生成器**同一份** ✓（`part_box.body_box` + `place` ✓）。
+    拿不到 svg / 量不出框的元件 ⇒ 归到第三个返回值里 **报出来** ✓（不静默跳过 ✗）。
+    """
+    out, missed = [], []
+    for e in sketch_root(fzz).iter("instance"):
+        ttl = (e.findtext("title") or "").strip()
+        mid = e.get("moduleIdRef") or ""
+        if mid.startswith("Wire") or ttl.startswith("TXT") or "readboard" in mid:
+            continue
+        vw = child(e, "views")
+        sub = child(vw, "breadboardView") if vw is not None else None
+        if sub is None:
+            continue
+        fzp = (e.get("path") or "").replace("/", os.sep)
+        if not os.path.isfile(fzp):
+            missed.append("%s（fzp 不在磁盘 ✓ %s）" % (ttl, fzp))
+            continue
+        img = None
+        lay = ET.parse(fzp).getroot().find(".//breadboardView/layers")
+        if lay is not None:
+            img = lay.get("image")
+        svg = PB.resolve_svg(fzp, img)
+        if not svg:
+            missed.append("%s（找不到 svg ✗ image=%s）" % (ttl, img))
+            continue
+        box = PB.body_box(svg)
+        if box is None:
+            missed.append("%s（`body_box` 量不出框 ✗ %s）" % (ttl, os.path.basename(svg)))
+            continue
+        g = child(sub, "geometry")
+        if g is None:
+            missed.append("%s（没有 <geometry> ✗）" % ttl)
+            continue
+        loc = (float(g.get("x") or 0), float(g.get("y") or 0))
+        out.append((ttl, PB.place(loc, PB.tf_of(g), box)))
+    return out, missed
+
+
 def check(path):
     links, plugged = BC.load(path)
     real = [lk for lk in links if not lk.legend]
@@ -164,8 +211,33 @@ def check(path):
                           % ("+".join(l1.wids), "+".join(l2.wids), a1[0], a1[1], b1[0], b1[1]))
     bad["③ 引线重叠"] = v3
 
-    # ④ 穿元件（★ 用生成器的框 ✗，标注为未独立验证 ✗）
-    v4 = ["（未独立验证 ✗：元件外形框仍来自生成器用的 part_box ✗）"]
+    # ④ **用到的孔不得落在别的元件的本体框内** ✓（用户 2026-09-27 报：
+    #    `Wire90012903` 接在 `pin32E`(288,108) ✓，而它在 LED2 本体框 277.6..298.4 × 79.6..109.4 内 ✗
+    #    ⇒ 物理上插不进去 ✓；旧版这里只是一行占位字符串 ✗ ⇒ **从来没查过** ✓）
+    v4 = []
+    rects, missed = body_rects(path)
+    for hid, who in sorted(ends.items()):
+        hp = BC.hole_xy(hid)
+        if hp is None:
+            continue
+        owners = {w.split(":", 1)[1].split(".")[0] for w in who if w.startswith("脚:")}
+        for ttl, r in rects:
+            if ttl in owners:
+                continue                       # 自己的脚当然在自己板子底下 ✓
+            if not (r[0] - 1e-6 <= hp[0] <= r[2] + 1e-6
+                    and r[1] - 1e-6 <= hp[1] <= r[3] + 1e-6):
+                continue
+            # ★ 分两档**如实**报 ✓（2026-09-27 ✓）：用户手工的两版里都有"孔心正好压在框边"的写法 ✓
+            #   ⇒ 该不该算违规**由用户定** ✗ ⇒ 工具只分档，不替人下结论 ✗。
+            m = min(hp[0] - r[0], r[2] - hp[0], hp[1] - r[1], r[3] - hp[1])
+            v4.append("%s（%s）在 %s 的本体框内 —— %s（框 %g,%g..%g,%g ✓ 孔 (%g,%g) ✓ 离最近边 %.2f 单位 ✓）"
+                      % (hid, "、".join(who), ttl,
+                         "**深在框内 ⇒ 物理插不进** ✗" if m > 1.0
+                         else "**贴着框边 ⚠ 需人判断**",
+                         r[0], r[1], r[2], r[3], hp[0], hp[1], m))
+    for m in missed[:6]:
+        v4.append("⚠ 量不到框 ⇒ **未验证** ✗：%s" % m)
+    bad["④ 孔在本体下"] = v4
 
     # ⑤ 一条 bus 两个网
     v5 = []
@@ -227,7 +299,7 @@ def check(path):
         print("   %s %-14s %d 处" % (mark, k, len(v)))
         for line in v[:6]:
             print("        %s" % line)
-    return sum(len(v) for k, v in bad.items() if k != "④ 穿元件")
+    return sum(len(v) for k, v in bad.items())
 
 
 def main(paths):

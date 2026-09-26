@@ -255,6 +255,24 @@ def pin_points(root):
     return got, bad
 
 
+def resolve_svg(fzp_path, image):
+    """按 fzp 的 `breadboardView/layers@image` 找到真 svg ✓
+
+    照 Fritzing 的目录约定：`<parts>/svg/{'',core,contrib,user}/<image>` ✓
+    （user 件在 `…/Documents/Fritzing/parts/user/x.fzp` ✓，svg 在 `…/parts/svg/user/breadboard/x.svg` ✓）
+    找不到 ⇒ None ✓（**不静默** ✓：调用方要报出来 ✓）。
+    """
+    if not image or not fzp_path:
+        return None
+    import os                       # ★ 本模块原本不 import os ✓（函数内导入最稳 ✓，不动文件头 ✓）
+    base = os.path.dirname(os.path.dirname(fzp_path))
+    for s2 in ("", "core", "contrib", "user"):
+        cand = os.path.normpath(os.path.join(base, "svg", s2, image.replace("/", os.sep)))
+        if os.path.isfile(cand):
+            return cand
+    return None
+
+
 def canvas_mm(attrs):
     """svg 的 width/height → mm ✓（mm/cm/in/mil/px/pt ✓），取不到 ⇒ None ✓
 
