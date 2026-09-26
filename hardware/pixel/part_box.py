@@ -319,8 +319,15 @@ def body_box(svg_path):
         return None
     box = ((c[0] - ox) * k * MM, (c[1] - oy) * k * MM,
            (c[2] - ox) * k * MM, (c[3] - oy) * k * MM)
-    # ★ 自检：内容不能超出画布（超了 ⇒ 多半是相对命令没解析对 ⇒ 不可信 ⇒ 退回画布 ✓）
-    if box[0] < -1 or box[1] < -1 or box[2] > wmm * MM + 1 or box[3] > hmm * MM + 1:
+    # ★★ 2026-09-27 修 ✓：**不要因为"内容超出画布"就返回 None** ✗ ——
+    #   core 的 `ceramic_capacitor_blue_leg.svg` / `resistor_220.svg` 都把**引脚腿画到画布外** ✓，
+    #   那是**合理的画法** ✓（腿本来就伸出去 ✓）⇒ 旧写法让这两件**永远量不出框** ✗
+    #   ⇒ 审计里一直卡在"未验证"✗（是用户报 `Wire90012903` 那一轮才暴露出来的第二个洞 ✓）。
+    #   ⇒ 现在**照实返回内容包围盒** ✓（腿占的地方也算它占的 ✓），
+    #     只在**离谱**溢出（> 4 倍画布 ✗ = 多半是相对 path 命令没解析对 ✗）时才 None ✓。
+    lim = 4.0 * max(wmm * MM, hmm * MM, 1e-6)
+    if (box[0] < -lim or box[1] < -lim
+            or box[2] > wmm * MM + lim or box[3] > hmm * MM + lim):
         return None
     return box
 

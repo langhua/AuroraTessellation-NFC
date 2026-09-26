@@ -23,8 +23,9 @@ import xml.etree.ElementTree as ET
 
 SCRATCH = os.path.dirname(os.path.abspath(__file__))
 TOOLS = os.environ.get("FRITZING_TOOLS", r"f:\git\fritzing-parts-langhua\tools")
-sys.path.insert(0, SCRATCH)
+# ★★ 2026-09-27 入库 ✓：**本地这份优先** ✓（顺序反过来 ✓：本地最后插入 ⇒ 在最前 ✓）
 sys.path.insert(0, TOOLS)
+sys.path.insert(0, SCRATCH)
 import part_measure as pm                       # noqa: E402
 from pin_ruler import apply, mul, parse_tf       # noqa: E402
 
@@ -34,14 +35,16 @@ NETS = {
     "COIL_A":   [("L1", "inner"), ("D3", "AC1")],
     "COIL_B":   [("L1", "outer"), ("D3", "AC2")],
     "GND":      [("D3", "A1"), ("D3", "A2"), ("C1", "#2"), ("U1", "VSS"), ("C2", "#2"),
-                 ("LED2", "GND"), ("J1", "#2"), ("J2", "#2")],
+                 ("LED2", "GND"), ("J1", "#2"), ("J2", "#2"),
+     # ★ 裸焊盘/底板必须接地（2026-09-26 用户定 ✓）：原来写成"独立成网、单脚网无线"是错的 ✗
+     #   —— EPAD 要**接到 GND** ✓（原理图上就接过来 ✓；元件库里它仍是独立脚 ✓ 见 AGENTS §5 ✓）
+                 ("U1", "EPAD")],
     "BR+":      [("D3", "C1"), ("D3", "C2"), ("R1", "#1")],
     "RC":       [("R1", "#2"), ("C1", "#1"), ("U1", "PA1")],
     "5V":       [("U1", "VDD"), ("C2", "#1"), ("LED2", "VDD"), ("J1", "#1"), ("J2", "#1")],
     "DATA_IN":  [("U1", "PA2"), ("J1", "#3")],
     "DATA_OUT": [("U1", "PD0"), ("J2", "#3")],
     "LED_DIN":  [("U1", "PC6"), ("LED2", "DI")],
-    "EPAD":     [("U1", "EPAD")],      # 独立成网 ✓（AGENTS §5：不许并进 GND ✗）⇒ 单脚网无线 ✓
 }
 
 

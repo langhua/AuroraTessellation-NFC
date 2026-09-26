@@ -239,14 +239,24 @@ def check(path):
         v4.append("⚠ 量不到框 ⇒ **未验证** ✗：%s" % m)
     bad["④ 孔在本体下"] = v4
 
-    # ⑤ 一条 bus 两个网
+    # ⑤ 一条 bus 两个网（★★ 2026-09-27 扩到**整条 bus** ✓ —— 原来只比"同一个孔" ✗，
+    #    §5b-5② 的"实物短接"（同一块 5 孔/50 孔铜片上挂两个网 ✓）根本查不出来 ✗）
+    #    ★ 用的孔→网映射来自 `net_terminals()` ✓（与 ⑥ 连通检查**同一份** ✓，不另写 ✗）。
     v5 = []
-    nets = BC.load_nets() if hasattr(BC, "load_nets") else {}
-    bus2net = {}
-    for hid, who in sorted(ends.items()):
-        nets_here = sorted({w.split(":", 1)[1].split(".")[0] for w in who if w.startswith("脚:")})
-        if len(nets_here) > 1:
-            v5.append("%s 同时插着 %s" % (hid, ", ".join(nets_here)))
+    net_of_hole = {}
+    for net, terms in net_terminals(path).items():
+        for t in terms:
+            if re.match(r"^pin\d+[A-Za-z]$", t):
+                net_of_hole.setdefault(t, set()).add(net)
+    for i, bus in enumerate(board_buses(path), 1):
+        got = {}
+        for hid in bus:
+            for net in net_of_hole.get(hid, ()):
+                got.setdefault(net, []).append(hid)
+        if len(got) > 1:
+            v5.append("bus#%d %s 上挂着 %s ⇒ **实物短接** ✗"
+                      % (i, ",".join(bus),
+                         " / ".join("%s@%s" % (n, ",".join(h)) for n, h in sorted(got.items()))))
     bad["⑤ bus 短接"] = v5
 
     # ⑥ 连通（用 孔/bus + 引线 + 脚 建并查集 ✓）

@@ -24,7 +24,9 @@ import sys
 import zipfile
 import xml.etree.ElementTree as ET
 
+# ★★ 2026-09-27 入库 ✓：**本地这份优先** ✓（从前元件的工具仓被插在最前 ✗ ⇒ 跨仓依赖 ✗）
 sys.path.insert(0, r"f:\git\fritzing-parts-langhua\tools")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import part_measure as pm                        # noqa: E402
 from pin_ruler import apply, mul, parse_tf        # noqa: E402
 
