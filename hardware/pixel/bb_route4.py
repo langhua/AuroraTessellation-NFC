@@ -571,6 +571,28 @@ def main(argv):
                     t_touch += 1
         return cross, over_pin, over_end, ovl, self_bad, end_on, hide, hide_max, t_touch
 
+    # ★★ 斜线罚（**人为可调旋钮** ✓，2026-09-27 用户要求"折线换斜线"时做的）：
+    #   默认 1.5 = 老行为 ✓（工具不许被弄坏 ✓）；调大＝更不容忍斜线 ✓。
+    #   ★ 为什么要调：实测 v62 的 5V `pin32C→pin47Y`（独立量尺 tools/diag_pair.py ✓）：
+    #     折线 (288,126)→(288,122)→(423,122)→(423,18) 68.6mm / 交集 0 ⇒ 形状加权 68.6，
+    #     再乘拥挤 (1+0.3×0.33) = **75.4** ✗；斜线 48.8mm × 1.5 = **73.2** ✓
+    #     ⇒ 只差 **2.2** ✓ ⇒ 罚到 **1.6 以上** 折线就赢 ✓（1.6×48.8 = 78.1 > 75.4 ✓）。
+    DIAG_PEN = float(os.environ.get("PP_DIAG_PEN", 1.5))
+    print("斜线罚 = ×%.2f（人为可调 ✓ `PP_DIAG_PEN`；1.5 = 老行为 ✓；调大＝更不容忍斜线 ✓）"
+          % DIAG_PEN)
+    # ★★ 2026-09-27 实验开关 `PP_SHAPE_ACCOUNT=1`（用户"折线换斜线，牺牲一点儿" ✓）：
+    #   **收尾重排**接"形状加权长度"算账 ✓（默认 0 = 老行为 ✓，一个字不改 ✓）。
+    #   ★ 为何必须动这里（实测 ✓）：罚系数单独调大**毫无作用** ✗ ——
+    #     1.8 那档与基线**逐项一字不差** ✗（458.9 / 交集 0 / 斜线 4 ✓）⇒ 因为
+    #     ① 收尾的**键**里 `折弯数` 在长度**前面** ✗（直线 bends=0 必赢 ✗）；
+    #     ② 收尾的**接受闸门**只认**真实长度** ✗（`Δ长 ≤ K×Δ交集` ✗）——
+    #       而 `pin32C→pin47Y` 换折线要 **+19.8mm 真长** ✗、省的却是 **0 个交集** ✗
+    #       ⇒ 闸门一律否决 ✗（哪怕形状加权其实**更短** ✓：68.6 < 48.8×1.5=73.2 ✓）。
+    #   ⇒ 这个开关把两处一起换成"形状加权长度" ✓ = **一个变量** ✓。
+    SHAPE_ACC = [os.environ.get("PP_SHAPE_ACCOUNT") == "1"]
+    print("收尾算账口径：%s" % ("**形状加权长度** ✓（斜线贵的账在收尾也认 ✓）"
+                                if SHAPE_ACC[0] else "真实长度 ✓（老行为 ✓）"))
+
     def shape_factor(pts):
         """★ 2026-09-26 修正（用户美学原则 ✓）：**斜线不如正交折线好看** ✓ ——
         实测两处"不美"的线（`21H→25D` 黑斜线、`48E→54Y` 红斜线）**都是斜线** ✗，
@@ -584,7 +606,7 @@ def main(argv):
         dx, dy = abs(pts[0][0] - pts[1][0]), abs(pts[0][1] - pts[1][1])
         if dx < 1e-9 or dy < 1e-9:
             return 1.0
-        return 1.5
+        return DIAG_PEN
 
     # ★★ 汇率 K：**1 个「交集」= 允许绕多少 mm** ✓
     #    —— 这是个**人为选定、可调的系数** ✓（2026-09-26 用户定 10mm；≈ 4 个孔 ✓）。
@@ -993,13 +1015,20 @@ def main(argv):
                     #     `pin31C → pin37F` = **19.8mm** ✓✓（省 32.6mm ✓）。
                     #   而那一对按"最左最上"**根本进不了前 3** ✗ ⇒ 永远轮不到 ✓。
                     #   ⇒ 改成按**两 bus 的孔间最短距离**排序 ✓（= 连线长度的下界 ✓，便宜的启发式 ✓）。
-                    if os.environ.get("PP_MERGE_KEY") == "distance":
+                    # ★★ 2026-09-27 ✓：**用户的排序键（按两 bus 的孔距）现在是默认** ✓ ——
+                    #   实测（`SH-1.0-3P-V` 按 §3b 让半格之后的新几何 ✓）：
+                    #     老键（min x / min y）= 461.5mm / 交集 **2** ✗
+                    #     新键（两 bus 孔距）  = **397.7mm / 交集 0** ✓✓（−61.2mm；拥挤 0.85→0.52 ✓）
+                    #   —— 正是用户 2026-09-27 指出的那条（“以 bus 为节点”，旧几何上曾因
+                    #      `overlap 1` 被拒 ✗；几何一改就合法了 ✓）。
+                    #   ★ 老行为仍可用 `PP_MERGE_KEY=nearest` 取回 ✓（方便对照 ✓）。
+                    if os.environ.get("PP_MERGE_KEY") == "nearest":
+                        cand.append((min(pos[i][0], pos[j][0]),
+                                     min(pos[i][1], pos[j][1]), i, j))
+                    else:
                         d2 = min((pos[i][0] - pos[j][0]) ** 2
                                  + (pos[i][1] - pos[j][1]) ** 2, 1e18)
                         cand.append((d2, min(pos[i][0], pos[j][0]),
-                                     min(pos[i][1], pos[j][1]), i, j))
-                    else:
-                        cand.append((min(pos[i][0], pos[j][0]),
                                      min(pos[i][1], pos[j][1]), i, j))
             cand.sort()
             best = None
@@ -1377,10 +1406,12 @@ def main(argv):
                 # ★ 键：① 少交叉阶段 = （交集 → 折弯 → 形状加权长度 → 代价）
                 #     ② 算账阶段 = （代价 → 交集 → 折弯 → 形状加权长度）（见 KEY_MODE ✓）
                 cr0 = _cross(pts, wire_segs())
+                wl0 = _plen(pts) * shape_factor(pts)
                 if KEY_MODE[0] == 1:
-                    k = (cr0, bends(pts), _plen(pts) * shape_factor(pts), c)
+                    k = ((cr0, wl0, bends(pts), c) if SHAPE_ACC[0]
+                         else (cr0, bends(pts), wl0, c))
                 else:
-                    k = (c, cr0, bends(pts), _plen(pts) * shape_factor(pts))
+                    k = (c, cr0, bends(pts), wl0)
                 if best is None or k < best[0]:
                     best = (k, pts, x, y)
         return best
@@ -1411,8 +1442,9 @@ def main(argv):
             if take is not None:
                 (k0, k1, k2, k3), pts_new, n1, n2 = take
                 if KEY_MODE[0] == 1:
-                    k_new = (k0, k1, k2, k3)                    # = (交集,折弯,形状加权长,代价)
-                    k_old = (old_cross, old_b, old_len, old_cost)
+                    k_new = (k0, k1, k2, k3)     # = (交集,折弯,形状加权长,代价)／开关开则折弯降为平手 ✓
+                    k_old = ((old_cross, old_len, old_b, old_cost) if SHAPE_ACC[0]
+                             else (old_cross, old_b, old_len, old_cost))
                     new_cross = k0
                 else:
                     k_new = (k3, k0, k1, k2)                    # = (代价,交集,折弯,形状加权长)
@@ -1431,15 +1463,29 @@ def main(argv):
                 _new_real = _plen(pts_new) * MMU
                 _dc = old_cross - new_cross                 # 省下的交集数 ✓
                 _dlen = _new_real - _old_real               # 多花的真实长度（mm ✓）
-                if k_new < k_old and _dlen <= K_MM * _dc + 1e-9:
+                # ★ 开关 `PP_SHAPE_ACCOUNT=1` ⇒ 闸门按**形状加权长度**算账 ✓
+                #   （斜线那 48.8mm 在这里算 73.2mm ✓ ⇒ 换折线算"省" ✓）
+                _dacc = _dlen
+                if SHAPE_ACC[0]:
+                    _dacc = (_plen(pts_new) * shape_factor(pts_new)
+                             - _plen(pts_old) * shape_factor(pts_old)) * MMU
+                # ★★ 守卫（2026-09-27 第二次调 ✓）：开关打开、且处于"少交叉阶段"时，
+                #   **不许用交叉换长度** ✗（`_dc >= 0` ✓）—— 第一次跑（v78）就是漏了这道守卫 ✓：
+                #   它顺手做了一笔"1 个交叉 ↔ 10mm 长度"的买卖 ✗ ⇒ 斜线 4→2 ✓、长 458.9→455.8 ✓
+                #   但**交集 0→1** ✗ ⇒ 目标 465.8 > 458.9 ✗（用户 #1 判据是交集 ✓）⇒ 得守住 ✓。
+                # ★★ 2026-09-27 实验记录 ✓（**已回退** ✗，见 `better()` 里的数 ✓）：
+                #   试过 mode 2 也守“交集不许变多”（`new_cross <= old_cross`）✗
+                #   ⇒ 交集 2→1 ✓ 但长度 461.5→488.8 ✗ ⇒ 得不偿失，回退 ✓。
+                _ok_cross = (_dc >= 0) if (SHAPE_ACC[0] and KEY_MODE[0] == 1) else True
+                if k_new < k_old and _ok_cross and _dacc <= K_MM * _dc + 1e-9:
                     jumpers.insert(i, (net, pts_new, n1, n2, kind))
                     _refix()
                     moved += 1
-                    if (n1, n2) != (h1, h2) or new_cross != old_cross:
+                    if (n1, n2) != (h1, h2) or new_cross != old_cross or abs(_dacc - _dlen) > 1e-9:
                         print("   抽出重排: %-10s %s→%s 换成 %s→%s  交集 %d→%d | 真长 %.1f→%.1f mm"
-                              "（Δ%+.1f mm ≤ K×%d = %d ✓）"
+                              "（Δ%+.1f ≤ K×%d = %d ✓；算账用 Δ%+.1f ✓）"
                               % (net, h1, h2, n1, n2, old_cross, new_cross,
-                                 _old_real, _new_real, _dlen, _dc, round(K_MM * _dc)))
+                                 _old_real, _new_real, _dlen, _dc, round(K_MM * _dc), _dacc))
                     continue
             jumpers.insert(i, (net, pts_old, h1, h2, kind))
             _refix()
@@ -1557,6 +1603,15 @@ def main(argv):
                         over += 1
         tot = sum(((p2[0] - q2[0]) ** 2 + (p2[1] - q2[1]) ** 2) ** 0.5
                   for p2, q2 in sg_all) * MMU
+        # ★★ 2026-09-27 第三次调（用户"先改 13027、再改 13028，两根一起变折线" ✓）：
+        #   `layout_score` 是**成对重排 / 破局重排**的目标函数 ✓，而它一直只算**真实长度** ✗
+        #   ⇒ 折线换来的那笔"斜线罚差额"在它眼里 = **0** ✗ ⇒ **联合收益看不见** ✗
+        #     （实测 v79 ✓：`抽出重排` 开场就把 GND 换成 `pin42Z→pin31D` ✗、留下 1 个交集 ✗，
+        #      之后 `成对重排 动了 0 对 | 交集 1` ✗、`破局重排 没变好` ✗ ⇒ 卡死 ✗）。
+        #   ⇒ 开关打开时，这里也按**形状加权长度**算账 ✓（同一个口径 ✓ 仍是一个变量 ✓）。
+        if SHAPE_ACC[0]:
+            tot = (sum(_plen(j[1]) * shape_factor(j[1]) for j in jumpers)
+                   + sum(_plen(p) * shape_factor(p) for _n, p, _a, _b, _k in extra)) * MMU
         # ★ 硬违规（唯一实现 ✓）+ 规则 ⑩ 的“中间走廊”长度（只管电源/地组 0/1 ✓）
         _dup, _be, _hid = hard_bad()
         hard = len(_dup) + len(_be) + len(_hid)
@@ -1584,6 +1639,12 @@ def main(argv):
             if a[0] == b[0]:
                 return a[1] < b[1]
             return a[1] <= b[1]                   # ★ 少交叉 ✓ 且 多花的长度 ≤ K×ΔΔ ✓
+        # ★★ 2026-09-27 实验记录 ✓（**已回退** ✗）：试过在算账阶段也守“交集不许变多” ✓
+        #   （下面注释保留经过 ✓）—— 守卫本身是对的 ✓，但实测**更差** ✗：
+        #     v83（不守）= 461.5mm / 交集 **2** ✗
+        #     v84（守）= 488.8mm / 交集 **1** ✗ ⇒ 长度暴涨 27mm ✗（`DATA_OUT` 走到 **61mm** ✗）
+        #   ⇒ 说明 mode 2 的“代价优先”在替后面**试错** ✓（暂时容忍一下、才走得出去 ✓）；
+        #     先守死 ⇒ 反而卡在更差的局部解 ✗ ⇒ 回退 ✓（要修得从**选择孔对/路线**那一层修 ✗）。
         return (a[1], a[0]) < (b[1], b[0])
 
     def crossing_pairs():
