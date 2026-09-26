@@ -170,6 +170,91 @@ def shape_bbox(root):
     return (min(xs), min(ys), max(xs), max(ys))
 
 
+def pin_points(root):
+    """`id="connector<N>pin"` 的**参考点**（根用户单位、走完祖先 transform ✓）
+
+    ⇒ `({id: (x, y)}, 认不出的清单 ✓)`；认不出**要点名报出** ✓（不静默跳过 ✗）。
+
+    ★★ 为什么必须走 transform 链 ✓（2026-09-27 实测 ✓，我为此连错三次 ✗）：
+      `WS2812B_1010` 的 4 个焊盘各在一个 `translate(…, …)` 组里 ✓：
+        · 组 translate：34.035 → 234.035 ⇒ 差 **200**（**假的** ✗）；
+        · 组内 `<rect x>`：−31.584 → −217.184 ⇒ 差 **−186** ✓；
+        ⇒ **两个大数互抵**，真脚距只有 **14.401** ✓（21.600 在 y ✓）。
+      只看元素自己的 x/y ⇒ 会拿到 200 这种假值 ✗；**相邻两个数字之差 ≠ 几何** ✗。
+    """
+    got, legs, bad = {}, {}, []
+
+    def ref(el):
+        t = tag(el)
+        if t in ("circle", "ellipse"):
+            return (float(el.get("cx") or 0), float(el.get("cy") or 0))
+        if t == "rect":
+            return (float(el.get("x") or 0) + float(el.get("width") or 0) / 2.0,
+                    float(el.get("y") or 0) + float(el.get("height") or 0) / 2.0)
+        if t == "line":
+            return ((float(el.get("x1") or 0) + float(el.get("x2") or 0)) / 2.0,
+                    (float(el.get("y1") or 0) + float(el.get("y2") or 0)) / 2.0)
+        return None
+
+    def ends(el):
+        """`<line>` 的两端 ✓（腿只认 line ✓）"""
+        if tag(el) != "line":
+            return None
+        return ((float(el.get("x1") or 0), float(el.get("y1") or 0)),
+                (float(el.get("x2") or 0), float(el.get("y2") or 0)))
+
+    def walk(el, m):
+        if tag(el) == "defs":
+            return
+        for c in el:
+            if tag(c) == "svg":                 # 嵌套视口没处理 ⇒ 明说 ✓（别当没事 ✗）
+                bad.append("<嵌套 <svg> 视口（未处理 ✗）>")
+                continue
+            t = c.get("transform")
+            mc = mul(m, parse_tf(t)) if t else m
+            eid = c.get("id") or ""
+            if re.match(r"^connector\d+pin$", eid):
+                p = ref(c)
+                if p is None:
+                    bad.append("%s=<%s>（认不出参考点 ✗）" % (eid, tag(c)))
+                else:
+                    got[eid] = apply(mc, p[0], p[1])
+            ml = re.match(r"^(connector\d+)leg$", eid)
+            if ml:
+                e2 = ends(c)
+                if e2 is None:
+                    bad.append("%s=<%s>（腿不是 <line> ✗）" % (eid, tag(c)))
+                else:
+                    legs[ml.group(1)] = (apply(mc, e2[0][0], e2[0][1]),
+                                         apply(mc, e2[1][0], e2[1][1]))
+            walk(c, mc)
+
+    walk(root, (1.0, 0.0, 0.0, 1.0, 0.0, 0.0))
+    # ★★ 有 `legId`（**core 件约定** ✓）⇒ **连接点在腿尖** ✓（2026-09-27 机验钉死 ✓）：
+    #   core 的 .fzp 写的是 `<p layer="breadboard" svgId="connector0pin" legId="connector0leg"/>` ✓
+    #   —— "腿尖才是插进孔的那个点" ✓；而 `svgId` 那个小 rect 是**看不见的标记**
+    #   （`fill="none"` ✗，宽 3 高 1 ✓）⇒ 拿它当连接点会错 ✓。
+    #   证据 ✓：C1 两条腿的**远端** → `pin16J`/`pin17J` ⇒ **Δ=0.00 / 0.02** ✓✓
+    #   （若取标记中心 ⇒ Δ=26.55 ✗✗，就是一条假警报 ✗）。
+    #   "远端" = 离**图形包围盒中心**较远的那一端 ✓（电容腿朝下 ✓、电阻腿朝左右 ✓ 都成立 ✓）。
+    #   ✗ 已知例外（**core 自己的桩画错了** ✗，不是我们的 ✗）：
+    #     · `ceramic_capacitor_blue_leg.svg` 的 `connector1leg` 与
+    #     · `resistor_220.svg` 的 `connector1leg`
+    #     都离**真正的腿尖**差 **10 用户单位（= 9 sketch 单位 = 2.54mm = 1 孔）** ✗
+    #     ⇒ 这两个脚仍报 Δ=9 ✓。**判据**：用户自己手工做的 `pixel-breadboard43_byHand.fzz`
+    #     里**一模一样** ✓（Fritzing 自己写下的记录与它自己的图形不符 ✓）⇒ 不属于我们的错 ✗。
+    bb = shape_bbox(root)
+    for cid, (pa, pb) in legs.items():
+        if bb is None:
+            tip = pa
+        else:
+            cx, cy = (bb[0] + bb[2]) / 2.0, (bb[1] + bb[3]) / 2.0
+            tip = pb if ((pb[0] - cx) ** 2 + (pb[1] - cy) ** 2) > \
+                        ((pa[0] - cx) ** 2 + (pa[1] - cy) ** 2) else pa
+        got["%spin" % cid] = tip
+    return got, bad
+
+
 def canvas_mm(attrs):
     """svg 的 width/height → mm ✓（mm/cm/in/mil/px/pt ✓），取不到 ⇒ None ✓"""
     UNIT = {"mm": 1.0, "cm": 10.0, "in": 25.4, "mil": 0.0254,

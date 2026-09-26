@@ -17,14 +17,15 @@ import sys
 import zipfile
 import xml.etree.ElementTree as ET
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # ★ 先找"自己旁边" ✓（入库后
-sys.path.insert(0, r"f:\git\_scratch")                           #   在 hardware/pixel/ 里也能跑 ✓）
+# ★★ 2026-09-27 修 ✓：**只认"自己旁边"的模块** ✓ ——
+#   原来还 `insert(0, r"f:\git\_scratch")` ✗ ⇒ `_scratch` 里的**旧副本**会顶掉仓库这份 ✗
+#   ⇒ 我刚加的 `part_box.pin_points` **根本没加载到** ✗（日志原话：`module 'part_box' has no
+#   attribute 'pin_points'` ✓）—— 而且它**不报错、不退出** ✗，只是脚位自检全部沦陷为"未验证" ✗。
+#   ★ 教训：**同一个工具只能有一份** ✓（`_scratch` 是草稿区 ✓，**绝不能进 import 路径** ✗）；
+#     "路径里有旧副本"这种坑不会报错 ✗ ⇒ 只会在结果里静静变错 ✗。
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import part_box as PB                                             # noqa: E402
-try:
-    import bb_compare as BC                                       # ★ 孔位/遮挡同一份实现 ✓
-except ImportError:                                               # 从 _scratch 跑 ⇒ 指到仓库那份 ✓
-    sys.path.insert(0, r"f:\git\AuroraTessellation-NFC\hardware\pixel")
-    import bb_compare as BC                                       # noqa: E402
+import bb_compare as BC                                           # ★ 孔位/遮挡同一份实现 ✓
 
 path, out = sys.argv[1], sys.argv[2]
 PXW = float(sys.argv[3]) if len(sys.argv) > 3 else 1800.0
@@ -52,44 +53,70 @@ def inner(svg_text):
     return body
 
 
-def scale_of(svg_text):
-    """svg 的 用户单位 → sketch 单位 ✓
+UNIT_MM = {"": 25.4 / 1000.0,          # ★ 无单位 = 1/1000 英寸 ✓（Fritzing 零件约定 ✓）
+           "px": 25.4 / 72.0,          # ★★ `px` = **1/72 英寸** ✓（2026-09-27 实测钉死 ✓）
+           "pt": 25.4 / 72.0,
+           "mm": 1.0, "cm": 10.0, "in": 25.4}
 
-    ★★ 2026-09-27 修 ✓（用户定位的 bug ✗：「preview.svg 的**面包板尺寸**错误 ⇒ 看起来不对」✓）：
-      老写法是「**没有 viewBox 就 return 1.0**」✗ —— 而**面包板 svg 恰恰没有 viewBox** ✗
-      （`breadboard2.svg` 头：`width="468.238px" height="151.2px"` ✓ 无 viewBox ✗）
-      ⇒ 板子按"用户单位＝sketch 单位"画 ✗ ⇒ **板子小了 ~20%** ✗（正确值 1.2502 ✓）
-      ⇒ 零件/导线相对板子偏大、看着"落不到孔上" ✗ = 用户看到的现象 ✓。
-      ★ 两种 px 要分清 ✓（2026-09-27 **实测钉死** ✓，别再猜 ✗）：
-        · **有 viewBox 的 px/无单位** = 90dpi ✓（Fritzing 新惯例 ✓）；
-        · **没有 viewBox 的老 svg** ＝ **72dpi（"点"）** ✓ —— 面包板就是这种 ✓：
-          `468.238px × 25.4/72 = 165.2mm` ✓ ≈ 孔阵 `576 单位 = 162.6mm` ✓（对上了 ✓）；\
-          若按 90dpi 算得 132mm ✗ ⇒ **板子画小一圈** ✗ ⇒ 底部 X/W 两条轨落到板外 ✗
-          ⇒ 看着像"导线悬到板外" ✗（用户看到的正是这个 ✗）。
+
+def scale_of(svg_text):
+    """svg 的**用户单位 → sketch 单位** ✓（**只有一条规则** ✓，不分"有没有 viewBox" ✗）
+
+        w_mm = width值 × UNIT_MM[单位]
+        有 viewBox ⇒ 1 用户单位 = w_mm / viewBox宽
+        没有 viewBox ⇒ 1 用户单位 = UNIT_MM[单位]
+        k = 每用户单位 mm × 3.5433（= 1mm 的 sketch 单位数 ✓）
+
+    ★★★ 2026-09-27 **实测钉死** ✓（我在单位上连错三次 ✗，每次都被用户点出来 ✓，记下来别再犯 ✗）：
+      · **`px` = 1/72 英寸 = 0.35278 mm** ⇒ k = **1.2500** ✓
+        证据①（**面包板自己** ✓）：`width="468.238px" viewBox="0 0 468.238 …"` ⇒ 468.238px = **165.2mm** ✓
+          ≈ 孔阵 `576 单位 = 162.6mm` ✓（差 9 单位 = 端部留边 ✓ 合理 ✓）；
+        证据②（**LED2 的 `WS2812B_1010`** ✓）：`width="19.54px" viewBox="1.03 0 19.54 28.8"` ⇒ 同样 k=1.25 ✓
+          ⇒ 4 脚中心差 **14.401 × 21.600 用户单位** → **18.00 × 27.00 sketch 单位** ✓
+          = 它插的孔 `col31→col33`（18 ✓）与 `rowE→rowF`（27 ✓）
+          ⇒ **两个方向各自独立算出 1.2500** ✓✓ ⇒ 规则成立 ✓（板子与零件**同一条规则** ✓，板子不是特例 ✓）。
+      · **无单位 = 1/1000 英寸 = 0.0254 mm** ✓。
+      ✗ 作废的错法：`px`/无单位一律 0.09 ✗（⇒ 板子小 14 倍 ✗ / LED2 变"一粒米" ✗）；
+        "有 viewBox 就算 90dpi" ✗（⇒ 板子 132mm ✗、小 20% ✗ ⇒ 底部 X/W 两条轨落到板外 ✗）。
+      ✗ 我为什么会算错 ✓：把焊盘组的 `translate` 之差（34.035→234.035 = **200** ✓）当成脚距 ✗，
+        而组内 `<rect x>` 是 −31.584→−217.184（差 **−186** ✓）⇒ **两个大数互抵**，真脚距只有
+        **14.401** ✓ —— 教训：**动 svg 前必须把 transform 链真算出来** ✓（`part_box.pin_points` ✓
+        一份实现 ✓），别拿"相邻两个数字之差"当几何 ✗。
     """
     head = re.search(r"<svg\b[^>]*>", svg_text, flags=re.S)
     if not head:
+        print("      [!] 这张 svg 连 `<svg>` 头都没有 ✗")
         return 1.0
     h = head.group(0)
-    m = re.search(r'width="([\d.]+)(mm|in|px)?"', h)
-    vb = re.search(r'viewBox="([^"]+)"', h)
+    m = re.search(r'width="([\d.]+)\s*(mm|cm|in|px|pt)?"', h)
     if not m:
         print("      [!] 这张 svg 连 width 都没有 ⇒ 只能按「用户单位＝sketch 单位」画 ✗")
         return 1.0
     v = float(m.group(1))
     u = m.group(2) or ""
-    if u == "mm":
-        umm = 1.0
-    elif u == "in":
-        umm = 25.4
-    else:
-        umm = 25.4 / (90.0 if vb else 72.0)       # ★ 有 viewBox=90dpi ✓ / 无 viewBox=72dpi ✓
+    umm = UNIT_MM.get(u)
+    if umm is None:
+        print("      [!] 没见过的单位 `%s` ⇒ 按**无单位**（1/1000in）画 ✗" % u)
+        umm = UNIT_MM[""]
+    vb = re.search(r'viewBox="([^"]+)"', h)
     if not vb:
         return umm * SK                          # 没有 viewBox ⇒ 用户单位本身就是长度 ✓
     parts = [float(x) for x in re.split(r"[ ,]+", vb.group(1).strip()) if x]
     if len(parts) != 4 or not parts[2]:
         return umm * SK
-    return v * umm * SK / parts[2]
+    return v * umm * SK / parts[2]               # ★ **唯一**的规则 ✓
+
+
+def vb_origin(svg_text):
+    """`viewBox` 的 **(min-x, min-y)** ✓；没有 ⇒ (0, 0) ✓
+
+    ★★ 为什么要它 ✓（2026-09-27 **机验钉死** ✓）：`viewBox` 的 min-x/min-y 是**视口原点** ✓
+      ⇒ `sketch = loc + M·(k·(用户坐标 − 原点))` ✓ ⇒ **必须减** ✓。
+      证据 ✓（不是推理 ✗）：`LED2` 的 `viewBox="1.03 0 19.54 28.8"` ⇒ 4 个脚**一律**
+      偏 `+1.29 单位 = 1.03 × 1.25` ✓✓（x 偏 / y 不偏 ✓ = min-y 为 0 ✓）；减掉后 Δ=0.00 ✓✓。
+    """
+    m = re.search(r'viewBox="\s*([-\d.]+)[\s,]+([-\d.]+)', svg_text or "")
+    return (float(m.group(1)), float(m.group(2))) if m else (0.0, 0.0)
 
 
 z = zipfile.ZipFile(path)
@@ -108,9 +135,14 @@ LAST_PICK = [None]          # ★ 刚才那个零件到底用了哪个 svg ✓�
 def svg_for(fzp_path, img, view="breadboard"):
     """取零件的视图 svg 文本 ✓：先看包里 ✓，再按 fzp 路径旁边找 ✓"""
     key = (fzp_path, img)
-    LAST_PICK[0] = None
     if key in svg_cache:
-        return svg_cache[key]
+        # ★★ 2026-09-27 修 ✓：命中缓存时**也要把"用了哪个文件"带出来** ✓ ——
+        #   上一版这里直接 `return` ✗ ⇒ 第二个实例（C1 与 C2 同件 ✓、J1 与 J2 同件 ✓）
+        #   会打成"用了（**找不到** ✗）"✗ ⇒ **报告在说谎** ✗（文件其实取到了 ✓）。
+        #   我自己的规矩：**不许有会误导的输出** ✓ ⇒ 缓存里连"出处"一起存 ✓。
+        LAST_PICK[0] = svg_cache[key][1]
+        return svg_cache[key][0]
+    LAST_PICK[0] = None
     txt = None
     want = os.path.basename(img or "")
     for n, t in packed.items():
@@ -126,7 +158,7 @@ def svg_for(fzp_path, img, view="breadboard"):
                 txt = open(cand, encoding="utf-8").read()
                 LAST_PICK[0] = cand
                 break
-    svg_cache[key] = txt
+    svg_cache[key] = (txt, LAST_PICK[0])      # ★ 连"出处"一起缓存 ✓（上面命中时要报 ✓）
     return txt
 
 
@@ -169,25 +201,19 @@ for el in root.iter("instance"):
              len(txt)))
     m = PB.tf_of(g)
     k = scale_of(txt)
-    # ★★ 面包板（旧 Illustrator 导出的 px svg ✓）：**px = 1/72 in** ✓（2026-09-27 ✓）
-    #   为什么不能靠 `scale_of` 的"有 viewBox ⇒ 90dpi" ✗：这块板子**有** viewBox
-    #   （`0 0 468.238 …` ✓）⇒ 会被算成 `468.238px = 132.1mm` ✗，而它必须是 **165.2mm** ✓
-    #   （72dpi ✓）—— 否则**板子画小一圈** ✗ ⇒ 底部 X/W 两条轨落到板外 ✗
-    #   ⇒ 看着像"导线悬在板外" ✗（用户看到的正是这个 ✓）。
-    #   ★ 判据（可核对 ✓）：`468.238 × 25.4/72 = 165.2mm` ✓ ≈ 孔阵 `576 单位 = 162.6mm` ✓
-    #     （相差 9 单位 = 一列留边 ✓ 合理 ✓）；按 90dpi 得 132.1mm ✗ ⇒ 明显对不上板子 ✓。
-    #   ⇒ 圆 ≥100 个（= 面包板 ✓）时，px/无单位一律按 **72dpi** ✓，并把尺寸打出来 ✓。
+    _ox, _oy = vb_origin(txt)        # ★ viewBox 原点**必须减** ✓（证据见下面 matrix 那段 ✓）
+    _subx = m[0] * k * _ox + m[2] * k * _oy
+    _suby = m[1] * k * _ox + m[3] * k * _oy
+    # ★★ 交叉验算 ✓（2026-09-27 ✓）：**面包板**（几百个圆 ✓）**声明的宽**必须 ≈ 孔阵宽 ✓
+    #   `468.238 × 1/72in = 165.2mm` ✓ ≈ 孔阵 `576 单位 = 162.6mm` ✓（差 9 单位 = 端部留边 ✓）
+    #   ⇒ `scale_of` 那条规则**由板子自己验过** ✓（不再需要"圆多就强制 72dpi"那种特例 ✗）。
     if len(re.findall(r"<circle", txt)) >= 100:
-        _m2 = re.search(r'width="([\d.]+)px"', txt) or re.search(r'width="([\d.]+)"', txt)
+        _m2 = re.search(r'width="([\d.]+)\s*(mm|cm|in|px|pt)?"', txt)
         if _m2:
-            _wmm = float(_m2.group(1)) * 25.4 / 72.0
-            print("   %-6s **面包板按 72dpi** ✓：宽 %.3fpx = **%.1f mm** ✓（孔阵 = 576 单位 = 162.6mm ✓）"
-                  % (ttl, float(_m2.group(1)), _wmm))
-            if _m2.group(1) and float(_m2.group(1)) > 0:
-                _vbw = re.search(r'viewBox="[\d.]+\s+[\d.]+\s+([\d.]+)', txt)
-                if _vbw and abs(float(_vbw.group(1)) - float(_m2.group(1))) < 1e-6:
-                    k = 25.4 / 72.0 * SK       # ★ 用户单位 = px ⇒ k = (1/72 in) × 3.5433 ✓
-                    print("        ⇒ 自标定 k = %.4f ✓（原 %.4f ✗）" % (k, scale_of(txt)))
+            _wmm = float(_m2.group(1)) * k / SK        # 声明值 × 每用户单位 mm ✓
+            print("   %-6s **板子对账** ✓：声明宽 %s%s = **%.1f mm** ↔ 孔阵 576 单位 = 162.6mm ⇒ %s"
+                  % (ttl, _m2.group(1), _m2.group(2) or "(无单位)", _wmm,
+                     "✓ 对得上 ✓" if 150.0 < _wmm < 180.0 else "✗ **对不上** ✗"))
     # ★★ 2026-09-27 ✓（用户定位 ✗：`preview.svg` 的**面包板尺寸错** ⇒ 看起来不对 ✓）：
     #   把**每张 svg 的头部声明**和**我算出的 k** 打出来 ✓ —— 才能看出是哪一件、错在哪 ✗。
     #   （`scale_of` 里：无单位按 90dpi ✓、`%` 或解析不到 ⇒ 直接**退化 k=1.0** ✗✗
@@ -215,43 +241,56 @@ for el in root.iter("instance"):
         for _cs2 in _cn.iter():
             if tag(_cs2) == "connect" and _cs2.get("layer") == "breadboardbreadboard":
                 _ph[_cn.get("connectorId")] = _cs2.get("connectorId")
-    _circles = re.findall(r"<(?:circle|ellipse)[^>]*>", txt)
+    # ★★★ 2026-09-27 **修** ✓（用户报"preview 是错的"✗，而 Fritzing 里 LED2 位置正确 ✓）：
+    #   脚位**参考点**必须走完 svg 的祖先 `transform` 链 ✓ —— 上一版只认 `<circle>` 且直接用
+    #   `cx/cy` ✗ ⇒ ① 焊盘画在 `<rect>` 里的件（LED2/J1/J2/L1/C1/C2/R1 ✓）**一个都查不到** ✗
+    #   ⇒ 全报"未验证"✗；② 就算查得到，忽略 `translate` 组也会得到**假坐标** ✗。
+    #   现在统一用 `part_box.pin_points` ✓（**一份实现** ✓，与算本体包围盒同一套矩阵数学 ✓）。
+    _pts, _badref = {}, []
+    try:
+        _pts, _badref = PB.pin_points(ET.fromstring(txt))
+    except Exception as _ex:       # ★ 有些 svg 带 DOCTYPE 实体 ⇒ 解析不了也要**明说** ✓（不静默 ✗）
+        _badref = ["<XML 解析不了：%s>" % _ex]
     _nchk = _bad = 0
     _unv = 0
+    _maxd = 0.0                    # ★ 最大 Δ 也要报 ✓（"✓"必须带数字 ✓，不是口号 ✓）
     for _cid2, _hid2 in sorted(_ph.items()):
-        _el2 = next((s for s in _circles if 'id="%spin"' % re.escape(str(_cid2)) in s), None)
-        if _el2 is None:
+        _p2 = _pts.get("%spin" % _cid2)
+        _xy2 = BC.hole_xy(_hid2) if _hid2 else None
+        if _p2 is None or _xy2 is None:
             _unv += 1
             continue               # ★ 认不出 ⇒ **记入"未验证"** ✓（不许静默跳过 ✗）
-        _cx = re.search(r'\bcx="([-\d.]+)"', _el2)
-        _cy = re.search(r'\bcy="([-\d.]+)"', _el2)
-        _xy2 = BC.hole_xy(_hid2) if _hid2 else None
-        if not (_cx and _cy) or _xy2 is None:
-            continue
         _nchk += 1
-        _lu, _lv = float(_cx.group(1)) * k, float(_cy.group(1)) * k
-        _padx = num(g.get("x")) + m[0] * _lu + m[2] * _lv + m[4]
-        _pady = num(g.get("y")) + m[1] * _lu + m[3] * _lv + m[5]
+        _lu, _lv = _p2[0] * k, _p2[1] * k
+        _padx = num(g.get("x")) + m[0] * _lu + m[2] * _lv + m[4] - _subx
+        _pady = num(g.get("y")) + m[1] * _lu + m[3] * _lv + m[5] - _suby
         _dx, _dy = _padx - _xy2[0], _pady - _xy2[1]
         _dd = (_dx * _dx + _dy * _dy) ** 0.5
-        if _dd > 1.0:              # 1 单位 = 0.28mm ✓；超过就是"脚没落在孔上" ✗
+        _maxd = max(_maxd, _dd)
+        # ★★ 阈值收紧到 **0.3 单位（0.08mm）** ✓（2026-09-27 ✓）：原来 1.0 ✗ ⇒ LED2 那种
+        #   **1.29 单位**的错**差点漏掉** ✗（只超出 29% ✗）。**对的件实测 Δ=0.00** ✓
+        #   （U1/D3/J1/J2/L1 ✓）⇒ 阈值可以贴地 ✓；"差一点点"在这里是**可算**的，不该给宽容 ✗。
+        if _dd > 0.3:
             _bad += 1
             print("      ✗ 脚 %-16s 画在 (%7.1f,%7.1f)，孔 %-8s 在 (%7.1f,%7.1f)"
                   " ⇒ Δ=%.2f 单位 (%.2f mm) **悬空** ✗"
                   % (_cid2, _padx, _pady, _hid2, _xy2[0], _xy2[1], _dd, _dd * 25.4 / 90.0))
     if _nchk or _unv:
-        _verdict = ("✓ 全落在孔上 ✓" if not _bad else "✗ **%d 个悬空** ✗" % _bad) \
+        _verdict = ("✓ 全落在孔上 ✓（最大 Δ=%.2f 单位）" % _maxd if not _bad else
+                    "✗ **%d 个悬空** ✗（最大 Δ=%.2f 单位）" % (_bad, _maxd)) \
             if _nchk else "**一个都没查到 ⇒ 未验证 ✗（别当它是对的 ✗）**"
         print("      脚位自检：查到 %d 个脚 ⇒ %s ｜认不出/未验证 %d 个 %s"
               % (_nchk, _verdict, _unv, "✓" if not _unv else "✗（这些件只能靠人眼 ✓）"))
+    if _badref:
+        print("      ⚠ 参考点没能算出来的：%s" % "；".join(_badref[:6]))
     a, b, c, d = k * m[0], k * m[1], k * m[2], k * m[3]
-    e, f = num(g.get("x")) + m[4], num(g.get("y")) + m[5]
-    # ★★ 2026-09-27 **撤掉**早先那个 `translate(-minX,-minY)` ✗（用户报 ✗："1010 板被移动了一点儿，
-    #   4 个引脚都悬空" ✓）：我在这里做的是把**用户坐标**重映射到 sketch ✓，
-    #   **不是**在摆 viewport ✗ ⇒ **viewBox 的原点不该减** ✗。减了以后，
-    #   **原点非 0 的那个件**（全批次只有 `LED2` ✓：`viewBox="1.03 0 19.54 28.8"`）
-    #   就整体偏移 **1.03 单位 ≈ 0.29mm** ✗ ⇒ 四个脚落到孔外 ✗ ✓（图看着就是"脚悬空"✓）。
-    #   （当年加它的"理论"是错的 ✗：那套"原点非 0 要补偿"只对**贴图/视口**成立 ✗。）
+    e, f = num(g.get("x")) + m[4] - _subx, num(g.get("y")) + m[5] - _suby
+    # ★★★ 2026-09-27 **证据推翻了我昨天的"撤掉"** ✗✓：**viewBox 的原点必须减** ✓ ——
+    #   早先我把 `translate(-minX,-minY)` 撤了 ✗，理由是"这只是坐标重映射、不是摆视口" ✗ ——**错** ✓。
+    #   硬证据 ✓（机验 ✓，不是推理 ✗）：`LED2` 的 `viewBox="1.03 0 …"` ⇒ 四个脚**一律**偏
+    #   **+1.29 单位 = 1.03 × 1.25** ✓✓（x 偏、y 不偏 ✓ = min-y 为 0 ✓）—— 偏移量与 `min×k`
+    #   **逐位相符** ✓ ⇒ 真凶就是它 ✓；减掉后四脚 Δ=0.00 ✓✓。
+    #   ★ 判据：**偏移量必须等于 min×k** ✓（"差一点点"在这里是**可算**的 ✓，不是审美 ✗）。
     lay_body.append('<g transform="matrix(%.6f %.6f %.6f %.6f %.6f %.6f)">%s</g>'
                     % (a, b, c, d, e, f, inner(txt)))
 
