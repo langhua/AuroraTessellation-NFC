@@ -35,12 +35,12 @@ if not ARGV:
     print("\n请给至少一个 .fzz ✓（如：py -3.13 check_fake_wires.py pixel-schematic-v15.fzz）")
     raise SystemExit(2)
 
-SEC_RE = re.compile(r"^\s*\(([AB])\)[^\n]*?\*\*(\d+) 处\*\*")
-END_RE = re.compile(r"^\s*\([AB]\)|^── |^   [^ ]")
+SEC_RE = re.compile(r"^\s*\(([ABC])\)[^\n]*?\*\*(\d+) (?:处|根)\*\*")
+END_RE = re.compile(r"^\s*\([ABC]\)|^── |^   [^ ]")
 
 
 def section(lines, letter):
-    """取 (A)/(B) 那一段 ✓ —— 取不到返回 None ✗（= 渲染器版本不对 ✓，要报错 ✗）"""
+    """取 (A)/(B)/(C) 那一段 ✓ —— 取不到返回 None ✗（= 渲染器版本不对 ✓，要报错 ✗）"""
     i = next((k for k, ln in enumerate(lines) if SEC_RE.match(ln) and
               SEC_RE.match(ln).group(1) == letter), None)
     if i is None:
@@ -63,12 +63,13 @@ def run_one(path):
     lines = ((r.stdout or "") + (r.stderr or "")).splitlines()
     _, na, da = section(lines, "A")
     _, nb, db = section(lines, "B")
+    _, nc, dc = section(lines, "C")
     if na is None or nb is None:
         raise RuntimeError("报告里没有 (A)/(B) 段 ✗ ⇒ 渲染器版本不对 ✓（不要当通过 ✗）")
     key = [ln.strip() for ln in lines
            if any(z in ln for z in ("十字交叉", "穿过别的元件本体", "不相连的引脚",
                                     "悬空导线端", "总长", "画布"))]
-    return na, nb, da, db, key
+    return na, nb, da, db, key, nc, dc
 
 
 print("══ 假连线出厂检查 ✓（判据 = `render_sch.py` 唯一一份 ✓）")
@@ -81,14 +82,15 @@ for t in ARGV:
         bad.append((name, 2, 0, ["文件不存在 ✗"]))
         continue
     try:
-        na, nb, da, db, key = run_one(fzz)
+        na, nb, da, db, key, nc, dc = run_one(fzz)
     except RuntimeError as ex:
         print("\n── %s ✗ 跑不起来 ✗\n%s" % (name, ex))
         bad.append((name, 2, 0, [str(ex).splitlines()[0]]))
         continue
     ok = (na == 0 and nb == 0)
-    print("\n── %s ： (A) **%d 处** %s ｜ (B) **%d 处** %s  %s"
+    print("\n── %s ： (A) **%d 处** %s ｜ (B) **%d 处** %s ｜ (C) 退化为点 **%d 根** %s  %s"
           % (name, na, "✓" if na == 0 else "✗✗", nb, "✓" if nb == 0 else "✗✗",
+             nc if nc is not None else -1, "✓" if nc == 0 else "⚠ 请人看一眼",
              "✅ 合格 ✓" if ok else "❌ 不合格 ✗"))
     for ln in da + db:
         print("     " + ln.strip()[:130])

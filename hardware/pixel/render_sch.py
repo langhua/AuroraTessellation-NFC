@@ -315,6 +315,19 @@ for ttl_w, a, b, _c, _w in wires:
             if d3 <= 0.05:
                 geom_body.append((ttl_w, t3, c3, q3))
 
+# ★★ (C) **退化为点的导线** ✓（2026-09-28 ✓ 用户手改版实测后新增的**第三类** ✓）
+#   实测两根、性质**完全不同** ✓（都是**只读** `pixel-schematic-v16_byHand.fzz` 得来的 ✓）：
+#     · `Wire90012908` = **点接头** ✓ —— 几何 (22.578,18.000)→(22.578,18.000) ✓
+#       （**正好在 `U1.PD0` 引脚上** ✓），只声明原理图连接 ✓ ⇒ **功能正常** ✓；
+#     · `Wire90012946` = **跨视图残留** ✗ —— 几何 (153.000,72.000)→(153.001,72.004) ✓
+#       但它在**面包板/PCB** 里是**实体**（`R1.c0 ↔ Breadboard1.pin17G` ✓）
+#       ⇒ 在**原理图**里塌成了一个点 ✗、且离它声称的 `R1.c0` 引脚 **25 单位** ✗。
+#   ⇒ 这两类**都不是**“表里有、图上没有”✗、也**不是**“图上接上、表里没有”✗
+#     ⇒ 单独算 **(C)** ✓，**不计入** (A)/(B) 与悬空端 ✗（否则永远报假错 ✗）；
+#     ★ 但**照样报出来** ✓（绝不静默丢掉 ✗ —— 交给人看一眼 ✓）。
+DEGEN_TOL = 0.05          # = 全仓“碰到/落在”的同一个容差 ✓（不新造数 ✗）
+degen = [t for (t, a, b, _pa, _pb) in geom_end if math.dist(a, b) <= DEGEN_TOL]
+
 # 连接表**说**接谁（把线端的两个目标摊平 ✓）
 declared = {}                                  # ttl_w → {端点: {(标题, 脚)}}
 for ttl_w, _a, _b, _c, _w in wires:
@@ -330,6 +343,8 @@ for ttl_w, _a, _b, _c, _w in wires:
 fake_a, fake_b = [], []
 W_END = {t: (a, b) for (t, a, b, _pa, _pb) in geom_end}      # 每根线的两个端点 ✓（查接头用 ✓）
 for ttl_w, a, b, pa, pb in geom_end:
+    if ttl_w in degen:                         # ★ (C) 退化导线 ⇒ 不并进 (A)/(B) ✗（单独报 ✓）
+        continue
     d = declared.get(ttl_w, {})
     tall = set().union(*d.values()) if d else set()
     # (A) 表里说了某只脚，可几何**完全不在这只脚上** ✗✗
@@ -376,6 +391,19 @@ for ttl_w, t5, c5, a, b in fake_b[:10]:
 for ttl_w, t3, c3, q3 in geom_body[:10]:
     print("      ✗ %-14s **线身穿过** %s.%s（%.1f,%.1f）✗ ⇒ 图上像接上了 ✓ 实际没连 ✗"
           % (ttl_w, t3, c3, q3[0], q3[1]))
+print("   (C) **退化为点的导线**（点接头 ✓ / 跨视图残留 ✗ —— 上面两条**不算它们** ✓；"
+      "这里**如实列出** ✓，请人看一眼 ✓）：**%d 根** %s"
+      % (len(degen), "✓" if not degen else "⚠"))
+for ttl_w in degen:
+    _e = next((e for e in geom_end if e[0] == ttl_w), None)
+    _a, _b = (_e[1], _e[2]) if _e else ((0, 0), (0, 0))
+    _d = sorted(set().union(*declared.get(ttl_w, {}).values())) if declared.get(ttl_w) else []
+    _ln = math.dist(_a, _b)
+    _near = min(((math.dist(_a, q[2]), q) for q in PIN_SK), default=(1e18, None))
+    print("      ⚠ %-14s 长度 %.3f 单位 ✗ ｜ 两端 (%.3f,%.3f)→(%.3f,%.3f) ｜ 声明接 %s ｜"
+          " 离最近脚 %s.%s **%.2f 单位**"
+          % (ttl_w, _ln, _a[0], _a[1], _b[0], _b[1], ["%s.%s" % x for x in _d] or "（无）",
+             _near[1][0] if _near[1] else "?", _near[1][1] if _near[1] else "?", _near[0]))
 tot = sum(math.dist(w[1], w[2]) for w in wires)
 print("   总长 %.1f 单位 = %.1f mm" % (tot, tot * MMU))
 
@@ -474,6 +502,8 @@ print("── 位号 %d 个：%s" % (len(labels), ", ".join("%s(%s)" % (l[0], "+
 # ── ④ 自检：悬空端点 / 没接线的脚 ✓（**如实报** ✓ 不偷偷吸附 ✗）──
 dang = []
 for ttl, a, b in widx:
+    if ttl in degen:                           # ★ (C) 退化导线（点 ✓）不算“悬空端” ✗（另报 ✓）
+        continue
     for which, pt in (("起", a), ("止", b)):
         best = min(((math.dist(pt, p[2]), p) for p in PIN_SK), default=(1e18, None))
         joint = any(math.dist(pt, q[1]) < 0.01 or math.dist(pt, q[2]) < 0.01

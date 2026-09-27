@@ -101,6 +101,36 @@ K_INTER = 35.4
 #   ⇒ 跑出去的长度按 K_OUT 倍罚 ✓（只罚“出去”那一段 ✓，出界一点点（标签/45° 小拐角）不受怨 ✓）。
 K_OUT = 10.0
 OUT_MARGIN = 7.2      # 包围盒外扩（1 格 ✓）：小出界不算往外跑 ✓
+
+# ★★ **每根导线的颜色 = 按网络** ✓（2026-09-28 ✓ —— 抄自**用户手改版**的做法 ✓）
+#   用户那一版 9 个网**各有各的色** ✓（红/黑/橙/紫/青/绿/蓝/棕/粉 ✓）⇒ 一眼能分清谁是谁 ✓；
+#   我的自动版**全一个灰 `#404040`** ✗ ⇒ 读图的人得顺着线摸 ✗。
+#   ★ 色值 = **原理图那一节**的官方值 ✓（`fritzing-app/resources/ratsnestcolors.xml`
+#     → `<view name="schematicView">` ✓）—— ✗ **不是**面包板那节 ✗（2026-09-28 ✓ 教训：
+#     我拿面包板的表去判原理图的线色 ⇒ **误报用户** ✗：原理图橙 = **`#ff7300`** ✓，
+#     而 `#ef6100` 在原理图里是 `<obsolete>` 作废值 ✗；同一名字**两个视图不同值** ✓）。
+#   ★ 约定**照官方 XML 自己的声明** ✓：`black` 下挂 `connector name="gnd"` ✓、
+#     `red` 下挂 `3v3`/`+5v` ✓ ⇒ **GND = 黑 `#404040` ✓、5V = 红 `#cc1414` ✓**。
+#   ★★ 具体配色**照抄本项目面包板那一套** ✓（用户 2026-09-28 明确 ✓：「我选的线的颜色，
+#      跟你画的面包板里完全一致」✓；权威表在 `bb_route4.py:COLOR` ✓ + `breadboard-wiring.md`
+#      的颜色表 ✓）—— ✗ **不要**自己按顺序另配一套 ✗（我第一版就是这么干的 ✗，与用户不一致 ✗）。
+#   ★ **同一个名字（orange）两个视图取值不同** ✓：面包板 `#ef6100` ✓、**原理图 `#ff7300`** ✓
+#     ⇒ 这里取**原理图**的值 ✓（用户手改版里就是 `#ff7300` ✓ 实测 ✓）。
+SCHEM_PALETTE = ["#418dd9", "#25cc35", "#fff800", "#999999", "#ff7300",
+                 "#a37911", "#33ffc5", "#ab58a2", "#8c3b00", "#fa50e6", "#ffffff"]
+NET_COLOR = {
+    "GND":      "#404040",     # 黑 ✓（官方 black 的 wire 值 ✓，不是 #000000 ✗）
+    "5V":       "#cc1414",     # 红 ✓
+    "DATA_IN":  "#418dd9",     # 蓝
+    "DATA_OUT": "#33ffc5",     # 青
+    "LED_DIN":  "#25cc35",     # 绿
+    "RC":       "#ff7300",     # 橙（面包板表写 #ef6100 ✓；**原理图**官方值 = #ff7300 ✓）
+    "BR+":      "#ab58a2",     # 紫
+    "COIL_A":   "#8c3b00",     # 棕
+    "COIL_B":   "#fa50e6",     # 粉
+}
+for _i, _n in enumerate(sorted(N for N in NETS if N not in NET_COLOR)):   # 兜底：新增网按序分色 ✓
+    NET_COLOR[_n] = SCHEM_PALETTE[_i % len(SCHEM_PALETTE)]
 # ★★ `CLEAR_PIN`：**导线与“不相连的引脚”之间要留的安全距离** ✓（2026-09-27 用户定 ✓）
 #   用户原话："导线离芯片引脚太近了 ⇒ 应该有安全距离，让导线和引脚的连接关系**肉眼看得清**" ✓。
 #   实测（把导出放大看 ✓）：U1 右侧 `14/15/12/11` 的**引脚线末端正好落在导线上** ✗、
@@ -497,7 +527,13 @@ def candidates(a, b, chx, chy):
         out.append([a, (x, a[1]), (x, b[1]), b])
     for y in chy:
         out.append([a, (a[0], y), (b[0], y), b])
-    return out
+    # ★★ 全部候选**统一**过一遍 `dedup_path` ✓（2026-09-28 ✓）——
+    #   · 消掉 **0.000~0.001 单位**的残段 ✗（否则会写出“点导线”✗，见 `MIN_SEG` ✓）；
+    #   · 并且**对全体候选一律公平** ✓（`bends()` 是按**点数**算的 ✓ ⇒ 少一个假点就少一档
+    #     代价 ✓；只给出脚候选去重 ✗ 会让两边的“弯”不同尺度 ✗✗）。
+    #   ★ 放在**源头**这里 ✓（不在 `route_pair` 里再兜一次 ✗）⇒ 下游 `esc_ids`（按 `id()` ✓）
+    #     与 `used` 都还是同一批对象 ✓，不会错位 ✗。
+    return [dedup_path(pp) for pp in out]
 
 
 def dedup_path(p):
@@ -506,10 +542,17 @@ def dedup_path(p):
     ★ 为什么要合并共线 ✓：`bends()` 数的是**点数** ✓ ⇒ 出脚后的第一段常与第二段共线 ✓
       （如法线向左出脚 + 再向左横走 ✓）⇒ 不合并就会多算 1 个弯 ✗ ⇒ 出脚形状在“弯”
       那一档亏分 ✗（不公平 ✓）。
+    ★★ 去重容差从 `1e-9` 提到 **`MIN_SEG`（=0.05 单位 = 0.014 mm ✓）**（2026-09-28 ✓）：
+      ✗ 原来是 1e-9 ⇒ **0.000~0.001 单位**的残段活下来 ✗ ⇒ 生成器会写出
+        **“点导线”** ✗（实测 v16 里有 **4 根** ✓：`Wire90012893` 0.000 单位@`C2.c0` ✓、
+        `Wire90012902` 0.001@`L1.c0` ✓、`Wire90012933` 0.000@`U1.c12` ✓、
+        `Wire90012940` 0.000@`R1.c1` ✓ —— 电气无害 ✓ 但是垃圾 ✗）。
+      ✓ 成因：**引脚坐标与通道网格差一点点** ⇒ 生出一小截 ✗ ⇒ 按全仓同一个“碰到”容差
+        （0.05 ✓，**不新造数** ✗）当它不存在 ✓。
     """
     q = [p[0]]
     for r in p[1:]:
-        if math.dist(r, q[-1]) > 1e-9:
+        if math.dist(r, q[-1]) > MIN_SEG:
             q.append(r)
     if len(q) < 3:
         return q
@@ -562,6 +605,103 @@ def esc_cands(a, b, na, nb, chx2, chy2):
 
 def bends(path):
     return max(0, len(path) - 2)
+
+
+def free_runs(iv, lo, hi, min_gap):
+    r"""占位区间 `iv`（可重叠 ✓，内部会排序 ✓）在 `[lo, hi]` 里的**空档** ✓
+
+    ★ 只返回**宽度 ≥ `min_gap`** 的空档 ✓（窄得放不下线的直接不算 ✓）。
+    """
+    out, cur = [], lo
+    for a, b in sorted(iv):
+        if a - cur >= min_gap:
+            out.append((cur, a))
+        cur = max(cur, b)
+    if hi - cur >= min_gap:
+        out.append((cur, hi))
+    return out
+
+
+# ★★ **小于这个长度**的段视为“没有” ✓（2026-09-28 ✓）—— 取 **0.05 单位 = 0.014 mm** ✓
+#   = 全仓“碰到 / 落在”的**同一个容差** ✓（**不新造数** ✗）。
+#   实测（2026-09-28 ✓）：`v16` 里有 **4 根 0.000~0.001 单位**的“**点导线**” ✗ ——
+#   **引脚坐标与通道网格差一点点** ⇒ 生出一小截 ✗ ⇒ 被当成“导线”写出去了 ✗。
+#   电气上无害 ✓（Fritzing 的连接只认 `<connects>` ✓），但是**垃圾** ✗、
+#   而且任何“几何 vs 表”的检查都会当成“跨视图残留/点接头”报出来 ✗ ⇒ 必须消掉 ✓。
+MIN_SEG = 0.05
+
+# ★★ `FREECORR`：**空地走廊** ✓（2026-09-28 ✓ 换**机制**，不是再加开关找参数 ✓）
+#   病根（今日四次失败共同指向的那一个 ✓）：现在的通道集是
+#     “**元件盒边 ± `CH_OFFS`（4 档）**” + 引脚坐标 ✗ ⇒ **与元件盒耦合** ✗
+#     ⇒ 一挪元件 / 一删通道，通道集自己就乱 ✗（`--socket 4/7`、`--chans 2`、`--nopinrows`
+#       三条轴实测全灭 ✗，交叉 23 一动不动 ✗，见 `t31`/`t32` ✓）。
+#   新机制 ✓（就是把“人画线时会走的地方”算出来 ✓）：
+#     ① 把**元件本体**在每个轴上的投影收集起来 ✓；
+#     ② 取它们的**空档（gap）** ✓（= 真正可以走线的地带 ✓）；
+#     ③ 在每个空档里放 k 条走廊 ✓，位置取 `(i+1)/(k+1)` 分位 ✓，
+#        但**离空档两边各 ≥ `CLEAR`** 才要 ✓（即“别贴着元件走” ✓）；
+#     ④ 空档太小（< `2×CLEAR` ✓）就**不放走廊** ✓（那儿本来就挤不进线 ✓）。
+#   与旧通道集的区别 ✓：
+#     · 旧：位置由**元件边**定 ✗ ⇒ 换成“贴着元件走” ✗（也是“骑引脚行列”的来源之一 ✗）；
+#     · 新：位置由**空地中央**定 ✓ ⇒ 天然**离开所有元件 ≥ `CLEAR`** ✓、也**天然不在引脚行列上** ✓
+#       （引脚列本就在元件边附近 ✓），而且**走廊条数由空间决定** ✓。
+#   ★ 引脚坐标仍然保留 ✓（`PIN_X`/`PIN_Y` ✓）—— 不然线进不了脚 ✗。
+#   `--freecorr` 打开 ✓；`--freecorr-k N` 改一个空档里放几条（默认 3 ✓）。
+FREECORR = False
+FREECORR_K = 3
+
+# ★★ `CHAN_N` / `NO_PINROWS`：**从用户手改版量出来的两条规则** ✓（2026-09-28 ✓，同一份 layout ✓）
+#   实测（`t30` ✓）：
+#     · 手改版：竖线 **14** 个 x ／ 横线 **9** 个 y ✓、总长 **1923.8** ✓、交叉 **11** ✓
+#     · 自动版：竖线 **19** 个 x ／ 横线 **19** 个 y ✗、总长 2273.7 ✗、交叉 **23** ✗
+#     · 自动版那 19 个 y 里，**6 个正是 `U1` 的引脚行**（−43.2 / −9.0 / 0.0 / 9.0 / 17.0 ✗）
+#       —— 这就是“骑行列 0.00 / 线身穿心 / 贴脚”的**病根** ✓
+#       （为什么会这样 ✓：通道集里**直接放了引脚坐标** ✓ ⇒ 那几条行列就当上了主干 ✗）。
+#     · 手改版的 9 个 y 里**一个引脚行也没有** ✓（−54 / −18.1 / 18 / 26.9 / 65.2 / 77.2 / 85 / 126 / 162 ✓）。
+#   ⇒ 两个开关（**默认关** ✓，先 A/B 量了再说 ✓ —— 本仓规矩：不拿没量过的当默认 ✗）：
+#     · `--chans N`：每方向只留元件边 ± `CH_OFFS[:N]` 的通道 ✓（= 通道**收敛** ✓）
+#     · `--nopinrows`：**别的脚的**行列不再当主干通道 ✓（但**这一对脚自己**的行列仍然保留 ✓
+#       —— 不然线进不了脚 ✗）。
+#   ★ 与已证伪那条的区别 ✓（别搞混 ✗）：以前那条是“离任何引脚坐标 <`CLEAR_PIN` 就全局丢” ✗
+#     ⇒ 通道 72→20 ✗ ⇒ **全线变差** ✗；这里只剔“**正好落在**别的脚行列上”的那几条 ✓（更窄 ✓、
+#     而且**这一对脚**的通道一定留 ✓）。
+#   ★★ **实测结论：两条都被否掉 ✗（2026-09-28 ✓，`_scratch/t31.py` 四档 A/B ✓）** ——
+#      `0` 基线 ｜ `1 --chans 2` ｜ `2 --nopinrows` ｜ `3` 两者（同一 `layout8.fzz` + `--rip 3`）：
+#        基线     ：重叠 0 ｜ 贴脚 11 ｜ 交叉 **23** ｜ 穿体 9 ｜ 总长 **2274** ｜ 19/19 通道
+#        `--chans 2`：重叠 0 ｜ 贴脚 11 ｜ 交叉 **27** ✗ ｜ 穿体 8 ｜ 总长 **2436** ✗ ｜ **19/19** ✗
+#        `--nopinrows`：重叠 0 ｜ 贴脚 **12** ✗ ｜ 交叉 23 ｜ 穿体 9 ｜ 总长 2269 ｜ **18/19** ✗
+#      ⇒ **① 通道数根本没降**（19→19 / 19→18 ✗）；**② 交叉反而涨到 27** ✗；**③ 贴脚也差了一点** ✗。
+#   ★★ 为什么我错了 ✓（**指标本身是假的** ✗，这是本轮最大的教训 ✓）：
+#      “通道签名”数的是**产出线里出现过的不同 x/y** ✓ —— 可每根线**必须从引脚所在的行列出发** ✓
+#      ⇒ 那些 y **必然**出现在统计里 ✗ ⇒ **它根本测不出“主干用得多不多”** ✗✗。
+#      手改版的 9 个 y 里同样含引脚行 ✓（`18.0` / `−18.1` ✓）⇒ 两边不可比 ✗；
+#      我拿这个假指标推出规则②③ ⇒ **推理错、结论也错** ✗（数据没错 ✓，是我读错了意思 ✗）。
+#   ⇒ ★ **默认关是最后防线** ✓：两个开关**一组都没启用** ✓，基线仍是 `0` 档 ✓（重叠 0 ✓、(A)(B)(C) 全 0 ✓）。
+#     —— 本仓规矩：“不拿没量过的当默认” ✓ 就是为今天这种情形定的 ✓。
+CHAN_N = 0                 # 0 = 不限制 ✓（全部 CH_OFFS ✓）；**已证伪 ⇒ 保持 0** ✗
+NO_PINROWS = False         # True = 别的脚的行列不当主干通道 ✓；**已证伪 ⇒ 保持 False** ✗
+
+# ★★ `CHAIN`：**每个网内部的「链序」（连接顺序）** ✓（2026-09-28 ✓ 第**四**条候选规则 ✓）
+#   为什么换到这一轴 ✗：摆位 / 通道那两条轴**三连否** ✗（`--socket 4/7` 实测：交叉 **23/23/23
+#    一动不动** ✗、总长 **+15%** ✗、画布 **+29%** ✗；见 `t32` ✓）—— 根因是**通道集与摆位耦合**
+#     ✗（`CH_OFFS` 相对元件边 ✓ ⇒ 一挪元件通道集就乱 ✗）。
+#   而**链序**是剩下来唯一没试、又**直击头号指标**（交叉 **23 vs 手改 11** ✓）的一轴 ✓：
+#     现状 = 把每网的脚按 `(x, y)` 硬排 ✗（= 链就从左往右串 ✓）—— 人画的时候不会这么死板 ✓。
+#   取值 ✓：`xy`（旧默认 ✗）/ `yx` / `revxy` / **`revyx`** / `nn`（最近邻 ✓）
+#   ★★ **实测结果（2026-09-28 ✓，`_scratch/t33.py` + `t34.py`，同一 `layout8.fzz` + `--rip 3`）**：
+#        档位     重叠 贴脚 交叉 穿体   总长    画布
+#        `xy`      0    11   23    9   2274   82.0×86.3   ← 旧默认 ✗
+#        `yx`      0    18   10    9   2011   78.7×82.9   ← 交叉最好 ✗ 但贴脚变差 ✗
+#        `revxy`   0     9   13   10   2146   **104.0** ✗✗
+#        `nn`      0    11   18    6   2018   82.0×86.3   ← **零回退** ✓
+#        **`revyx`** 0    11   **10**  10   2060   83.2×82.9   ← ★ **采纳 ✓（兼得 ✓）**
+#      ⇒ **交叉 23 → 10** ✓✓（比用户手改版的 11 还好 ✓）、贴脚不变 ✓、总长 −9% ✓、告警 0 ✓；
+#        代价只有**穿体 9 → 10** ✗。
+#   ★★ **`--hardbody` 复测仍不合格 ✗**（`t35.py` ✓）：`revyx --hardbody` / `nn --hardbody` 都出现
+#      **告警 1** ✗ ⇒ 删到没候选又**退回旧候选集**了 ✗ ⇒ “穿体好看”是**假象** ✗（规则没生效 ✗）
+#      ⇒ **带告警的档一律不采纳** ✗（这条判据就是为这种情形预先定下的 ✓）。
+#   ★ 回旧行为：`--chain xy` ✓（= 旧默认 ✓，可逐项复现 ✓）。
+CHAIN = "revyx"
 
 
 def pin_hard_bad(path, pin_all, own_pins=(), eps=PIN_EPS):
@@ -826,6 +966,27 @@ def main(argv):
         global HARD_OVL
         HARD_OVL = False
         print("硬闸门 HARD_OVL：**关闭** ✓（`--noovl` ⇒ 回到“重叠只靠软代价”✓）")
+    if "--chans" in argv:                      # 实验 ✓：通道收敛（每方向只留前 N 档 ✓）
+        global CHAN_N
+        CHAN_N = int(argv[argv.index("--chans") + 1])
+        print("通道收敛 CHAN_N = %d ✓（每方向只留元件边 ± 前 %d 档 = %s）"
+              % (CHAN_N, CHAN_N, CH_OFFS[:CHAN_N]))
+    if "--nopinrows" in argv:                  # 实验 ✓：别的脚的**行列**不当主干通道 ✓
+        global NO_PINROWS
+        NO_PINROWS = True
+        print("引脚行列回避 NO_PINROWS：**开** ✓（别的脚的行列不当主干 ✓；这一对脚自己的保留 ✓）")
+    if "--chain" in argv:                      # 实验 ✓：每网内部的**链序** ✓（第 4 条候选规则 ✓）
+        global CHAIN
+        CHAIN = argv[argv.index("--chain") + 1]
+        print("链序 CHAIN = %s ✓（xy=旧默认 ✓ / yx / revxy / revyx=采纳 ✓ / nn=最近邻 ✓）" % CHAIN)
+    if "--freecorr" in argv:                   # ★★ 换机制 ✓：走廊改成**从空地算** ✓
+        global FREECORR
+        FREECORR = True
+        print("空地走廊 FREECORR：**开** ✓（元件盒空档的中央当走廊 ✓，不再用“元件边 ± CH_OFFS” ✗）")
+    if "--freecorr-k" in argv:                 # 一个空档里放几条走廊 ✓
+        global FREECORR_K
+        FREECORR_K = int(argv[argv.index("--freecorr-k") + 1])
+        print("空地走廊条数 FREECORR_K = %d ✓（每个空档里按 (i+1)/(k+1) 分位放 ✓）" % FREECORR_K)
     if "--ring" in argv:                       # 实验 ✓：开“元件外圈环廊”（默认关 ✓）
         global OUTER_RING
         OUTER_RING = True
@@ -911,7 +1072,31 @@ def main(argv):
     #   当时的解释是“主干型长线从一整排脚前面经过 ⇒ 走廊归属问题” ✗ —— **不够准** ✓；
     #   真正的毛病是：那种“车道形状”的**出脚方向是错的** ✗（横形状的末段会沿底排行跑 ✗、
     #   竖形状的首段会沿左排列跑 ✗ ✓，实测见 `--why` ✓）⇒ 已由 `esc_cands` 修正 ✓。
+    PIN_X = {p[0] for d in insts.values() for p in d["pins"].values()}
+    PIN_Y = {p[1] for d in insts.values() for p in d["pins"].values()}
     boxes = {t: d["box"] for t, d in insts.items() if d["box"]}
+    # ★★ 实验①：**通道收敛** ✓（`--chans N` ✓）—— 只留元件边 ± `CH_OFFS[:N]` 的通道 ✓，
+    #   **引脚坐标一律保留** ✓（不然线进不了脚 ✗）。只在开关打开时动 ✓（默认一条不动 ✓）。
+    if CHAN_N:
+        _keep = {o for o in CH_OFFS[:CHAN_N]}
+
+        def _box_chan(v, axis):
+            for _t, _b in boxes.items():
+                for _e in ((_b[0], _b[2]) if axis == "x" else (_b[1], _b[3])):
+                    for _o in _keep:
+                        if abs(v - (_e - _o)) < 1e-6 or abs(v - (_e + _o)) < 1e-6:
+                            return True
+            return False
+
+        _px = {p[0] for d in insts.values() for p in d["pins"].values()}
+        _py = {p[1] for d in insts.values() for p in d["pins"].values()}
+        _ox, _oy = len(chx), len(chy)
+        chx = {v for v in chx if v in _px or _box_chan(v, "x")}
+        chy = {v for v in chy if v in _py or _box_chan(v, "y")}
+        chx_clean = {v for v in chx_clean if _box_chan(v, "x")}
+        chy_clean = {v for v in chy_clean if _box_chan(v, "y")}
+        print("通道收敛 ✓：x %d→%d ✓、y %d→%d ✓（干净通道 x %d / y %d ✓）"
+              % (_ox, len(chx), _oy, len(chy), len(chx_clean), len(chy_clean)))
     # ★ 零件**总包围盒** ✓（“出界”代价项的参照 ✓）：
     UBOX = None
     if boxes:
@@ -921,6 +1106,37 @@ def main(argv):
               % (UBOX[0], UBOX[1], UBOX[2], UBOX[3], OUT_MARGIN, K_OUT))
     print("keep-out 盒: %s" % ", ".join("%s(%.2f,%.2f→%.2f,%.2f)" % ((t,) + b)
                                          for t, b in sorted(boxes.items())))
+
+    # ★★ 空地走廊 ✓（`--freecorr` ✓，2026-09-28 ✓ **换机制** ✓）—— 走廊位置由**空档中央**定 ✓
+    #   ① 元件盒在各轴上的投影 ⇒ ② 空档（gap）✓ ⇒ ③ 每个空档里按 `(i+1)/(k+1)` 分位放走廊 ✓
+    #   （离空档两边都 ≥ `CLEAR` 才要 ✓；空档 < `2×CLEAR` 就不放 ✓ —— 那儿本来也挤不进线 ✓）
+    if FREECORR and UBOX is not None:
+        _fx = free_runs([(b[0], b[2]) for b in boxes.values()],
+                        UBOX[0] - OUT_MARGIN, UBOX[2] + OUT_MARGIN, 2 * CLEAR)
+        _fy = free_runs([(b[1], b[3]) for b in boxes.values()],
+                        UBOX[1] - OUT_MARGIN, UBOX[3] + OUT_MARGIN, 2 * CLEAR)
+
+        def _mids(runs):
+            vs = []
+            for a, b in runs:
+                g = b - a
+                for i in range(FREECORR_K):
+                    v = a + g * (i + 1) / (FREECORR_K + 1)
+                    if v - a >= CLEAR and b - v >= CLEAR:
+                        vs.append(v)
+            return vs
+
+        _mx, _my = _mids(_fx), _mids(_fy)
+        chx = set(_mx) | PIN_X                   # ★ 引脚坐标保留 ✓（不然线进不了脚 ✗）
+        chy = set(_my) | PIN_Y
+        # 干净通道（出脚候选用 ✓）= 那些**不落在引脚行列上**的走廊 ✓
+        chx_clean = {v for v in _mx if not any(abs(v - q) <= 0.05 for q in PIN_X)}
+        chy_clean = {v for v in _my if not any(abs(v - q) <= 0.05 for q in PIN_Y)}
+        print("空地走廊 ✓：x 空档 %d 个 ⇒ 走廊 %d 条（+引脚 = %d ✓）｜ "
+              "y 空档 %d 个 ⇒ 走廊 %d 条（+引脚 = %d ✓）｜ 空档下限 %.1f = 2×CLEAR ✓"
+              % (len(_fx), len(_mx), len(chx), len(_fy), len(_my), len(chy), 2 * CLEAR))
+        print("      x 走廊：%s" % ["%.1f" % v for v in sorted(_mx)])
+        print("      y 走廊：%s" % ["%.1f" % v for v in sorted(_my)])
 
     if OUTER_RING:                             # ★ 外圈环廊 ✓（用户点名的第 1 条 ✓）
         added = 0
@@ -1033,7 +1249,18 @@ def main(argv):
         ★ `tag` 非空 + `--why` + 首轮 ⇒ 把“选中 / 亚军”两个代价元组与**第一处不同的档位**
           打到 stdout ✓（探针 ✓ 不改行为 ✓）。
         """
-        base_c = candidates(a, b, sorted(chx), sorted(chy))
+        # ★ 实验③：**别的脚的「行列」不当主干道** ✓（`--nopinrows` ✓，默认关 ✓）
+        #   ★ 这一对脚**自己**的行列必须留 ✓（`a`/`b` 的行列 ✓），否则线进不了脚 ✗。
+        if NO_PINROWS:
+            _px = {round(a[0], 4), round(b[0], 4)}
+            _py = {round(a[1], 4), round(b[1], 4)}
+            _cx = sorted(v for v in chx if v in _px
+                         or not any(abs(v - q) <= 0.05 for q in PIN_X))
+            _cy = sorted(v for v in chy if v in _py
+                         or not any(abs(v - q) <= 0.05 for q in PIN_Y))
+        else:
+            _cx, _cy = sorted(chx), sorted(chy)
+        base_c = candidates(a, b, _cx, _cy)
         esc_c = []
         if USE_ESC:                    # ★ 默认开 ✓（用户定：重叠 0 优先 ✓）
             na = PIN_N_BY_XY.get((round(a[0], 3), round(a[1], 3)), (0.0, 0.0))
@@ -1142,7 +1369,28 @@ def main(argv):
         for ref, name in pins:
             cid, p = pin_of(insts, ref, name)
             pts.append({"ref": ref, "cid": cid, "p": p})
-        pts.sort(key=lambda d: (round(d["p"][0], 3), round(d["p"][1], 3)))
+        # ★ 链序 ✓（`--chain` ✓，第 4 条候选规则 ✓）：
+        #   `xy` = 现状（按 (x,y) ✓）；`yx` / `revxy` / `revyx` = 同族探索 ✓；
+        #   `nn` = **最近邻链** ✓（从最左的脚出发 ✓、每次接最近的未访脚 ✓；平手按坐标 ✓ ⇒ 确定性 ✓）。
+        if CHAIN == "yx":
+            pts.sort(key=lambda d: (round(d["p"][1], 3), round(d["p"][0], 3)))
+        elif CHAIN == "revyx":
+            pts.sort(key=lambda d: (round(d["p"][1], 3), round(d["p"][0], 3)))
+            pts.reverse()
+        elif CHAIN in ("xy", "revxy"):
+            pts.sort(key=lambda d: (round(d["p"][0], 3), round(d["p"][1], 3)))
+            if CHAIN == "revxy":
+                pts.reverse()
+        elif CHAIN == "nn":
+            _rest = sorted(pts, key=lambda d: (round(d["p"][0], 3), round(d["p"][1], 3)))
+            _ord = [_rest.pop(0)]
+            while _rest:
+                _cur = _ord[-1]["p"]
+                _nxt = min(_rest, key=lambda d: (round(math.dist(_cur, d["p"]), 3),
+                                                 round(d["p"][0], 3), round(d["p"][1], 3)))
+                _rest.remove(_nxt)
+                _ord.append(_nxt)
+            pts = _ord
         segs = []
         # ★ 连接**对** ✓：默认 = 相邻两脚（链 ✓）；`STAR_NETS` 里的 = 每脚 → 汇点（星 ✓）
         pairs = []
@@ -1334,9 +1582,13 @@ def build_wire(tmpl, w):
     g.attrib.update({"x": fmt(w["p"][0]), "y": fmt(w["p"][1]),
                      "x1": "0", "y1": "0", "x2": fmt(dx), "y2": fmt(dy),
                      "wireFlags": "128"})
-    if pm.child(sub, "wireExtras") is None:
-        ET.SubElement(sub, "wireExtras", {"mils": "9.7222", "color": "#404040",
-                                          "opacity": "1", "banded": "0"})
+    we = pm.child(sub, "wireExtras")
+    if we is None:
+        we = ET.SubElement(sub, "wireExtras")
+    # ★ **按网络上色** ✓（2026-09-28 ✓）：色值取原理图官方调色板 ✓（`NET_COLOR` ✓）
+    we.attrib.update({"mils": "9.7222",
+                      "color": NET_COLOR.get(w.get("net") or "", "#404040"),
+                      "opacity": "1", "banded": "0"})
     for boxel in sub.iter():                     # 清掉模板带来的旧连接 ✗
         if tag(boxel) == "connects":
             for c in list(boxel):
@@ -1483,7 +1735,7 @@ def emit(sroot, insts, z, nets_segs, orig_path, out_path):
                 p, q = s["path"][k], s["path"][k + 1]
                 if abs(p[0] - q[0]) < 1e-6 and abs(p[1] - q[1]) < 1e-6:
                     continue
-                chain.append({"mi": str(next_mi), "p": p, "q": q,
+                chain.append({"mi": str(next_mi), "p": p, "q": q, "net": net,
                               "start_tgt": None, "end_tgt": None})
                 next_mi += 1
             if not chain:
@@ -1539,6 +1791,8 @@ def emit(sroot, insts, z, nets_segs, orig_path, out_path):
             add_conn(part_by_mi[b_mi]["sub"], b_cid, a_cid, a_mi, a_layer, b_layer)
 
     body = b'<?xml version="1.0" encoding="utf-8"?>\n' + ET.tostring(sroot, encoding="utf-8")
+    print("网络配色（原理图官方色 ✓）：" + " ｜ ".join(
+        "%s=%s" % (n, NET_COLOR.get(n, "?")) for n in sorted(nets_segs)))
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
     with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as o:
         for n in z.namelist():

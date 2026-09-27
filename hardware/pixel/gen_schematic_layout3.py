@@ -40,8 +40,22 @@ import xml.etree.ElementTree as ET
 import sch_text as ST                 # ★ 字宽表（唯一实现 ✓，与渲染器同一份 ✓）
 
 GRID = 7.2                       # Fritzing 原理图网格 0.1in ✓（仅用于"整数格"美观 ✓）
-GAP_X = 1 * GRID                 # 相邻本体框水平间隙 ≈ 2.03mm ✓
-GAP_Y = 2 * GRID                 # 行间间隙 ≈ 2.03mm ✓
+# ★★ `GAP_X`：水平间隙从 **1 格 → 2 格** ✓（2026-09-28 ✓ **用户观察 + 实测** 定 ✓）
+#   用户原话（2026-09-28）：「**先抄我手改版的元件间距，我觉得现在明显是间距不够**」✓
+#   两条证据 ✓：
+#     ① **量出来**（同一套量法 ✓，`_scratch/t37.py` ✓）：最近间隙 手改版 **13.27 单位（3.75mm）** ✓
+#        ／ 自动 v17 **7.20（2.03mm）** ✗；且 v17 有 **5 对**正好卡在 7.2 ✗
+#        （J1↔U1、J2↔LED2、D3↔L1、D3↔R1、LED2↔U1 ✓）；换成 2 格 = **14.4 单位** ✓
+#        ⇒ 忠实对应用户手改版的 13.3 ✓（**抄间距** ✓，不是抄绝对坐标 ✗）；
+#     ② **A/B 实测**（`_scratch/t40.py` ✓，只动这一项 ✓）：
+#          1 格（旧默认 ✗）：重叠 0 ｜ 贴脚 11 ｜ 交叉 **10** ｜ 穿体 **10** ✗ ｜ 总长 2060 ｜ 83.2×82.9
+#          2 格（新默认 ✓）：重叠 0 ｜ 贴脚 11 ｜ 交叉 **10** ✓ ｜ 穿体 **6** ✓✓ ｜ 总长 **2025** ✓ ｜ 89.3×82.9
+#        ⇒ **穿体 10 → 6** ✓✓，交叉/贴脚**一项都没变差** ✓，总长还略短 ✓；代价只有**画布宽 +6mm** ✗。
+#   ★ 同批还测了「**照搬用户手改版的 (x,y)**」（`--pos-from` ✓）⇒ **更差** ✗（贴脚 16 ✗、交叉 13 ✗、
+#     总长 2507 ✗、画布 105.6 ✗✗）⇒ **抄间距行、抄绝对坐标不行** ✓（他那套摆位是配**他手画的走线**的 ✓）。
+#   ★ 回旧行为：`--gapx=1` ✓。
+GAP_X = 2 * GRID                 # 相邻本体框水平间隙 ≈ 4.06mm ✓（原来是 1 格 ≈ 2.03mm ✗）
+GAP_Y = 2 * GRID                 # 行间间隙 ≈ 4.06mm ✓
 # ★ 这两个数是**扫出来的** ✓（2026-09-27 ✓，`_scratch/sweep_layout.py` 全流程实测 ✓）：
 #   起因：`px` 那个 bug 修掉后 `LED2`/`D3` 小了 20% ✓ ⇒ 旧间距（2/3 格）是照**错的尺寸**调的 ✗ ⇒
 #   布线器为了绕开空档，交叉升到 12 ✗、画布也撑大了 ✗。
@@ -56,7 +70,18 @@ GAP_Y = 2 * GRID                 # 行间间隙 ≈ 2.03mm ✓
 #     **交叉 8 → 10** ✗、总长 +9% ✗、画布 98.9 → **116.2mm 宽** ✗✗（“导线还绕出零件范围外了” ✗）
 #     ⇒ 它是**审美取舍**（把接口和核心分开 ✓ = 信息层次 ✓）而**不是**指标上的改善 ✗，
 #     所以默认 0 ✓、保留成开关 ✓，由用户定要不要 ✓（按规矩：不硬凑数字 ✓）。
+#   ★★ **`--socket 4 / 7` 也复测过 ⇒ 仍然不划算 ✗**（2026-09-28 ✓，`_scratch/t32.py` 三档 ✓）：
+#       档位     重叠 贴脚 交叉 穿体   总长   画布
+#       socket0   0    11   23    9   2274   82.0×86.3
+#       socket4   0    15   23    5   2440   91.5×86.3
+#       socket7   0    12   23    5   2621   105.4×86.3
+#     ⇒ **交叉 23/23/23 一动不动** ✗（我原以为“插座让路 ⇒ 交叉明显下降” ✗ —— 错 ✗）、
+#       **总长 +15%** ✗、**画布 +29%** ✗、贴脚更差 ✗；唯一收益是**穿体 9→5** ✓。
+#     ★ 根因（三次失败同一个 ✓）：本布线器的**通道集是从元件盒算出来的** ✓（`CH_OFFS` 相对
+#       元件边 ✓）⇒ **一挪元件，通道集跟着乱** ✗ ⇒ 挪摆位这条轴**结构上就不可能赢** ✗
+#       （而用户手改版是**贴着实际空地在画** ✓，不依赖这条网格 ✓）。
 SOCKET_EXTRA = 0
+POS_FROM = None        # ★★ `--pos-from=<fzz>`：抄那一份的摆位 ✓（2026-09-28 ✓ 用户要求 ✓）
 
 
 def tag(e):
@@ -121,6 +146,38 @@ def place_labels(P, LAB, title, gap=7.2):
         placed.append((t, best))
         # 反推锚点 ✓：`label_bbox` 里盒上缘 = 锚点y + 0.25fs ✓（第1行基线 = y+fs ✓）
         out[t] = (best[0] - d.x, best[1] - 0.25 * fs - d.y)
+    return out
+
+
+def read_positions(fzz):
+    r"""从一份 `.fzz` 读每件的**摆位** ✓ ⇒ `[(标题, x, y), …]`
+
+    ★★ 位置在哪里 ✓（2026-09-28 ✓ 我先读错过一次 ✗）：写在
+      `instance / views / schematicView` 的**直接子** `geometry` 的 `x`/`y` ✓；
+      ✗ **不能**用“子树里最后一个 geometry” ✗ —— 那是**连接器**的相对坐标 ✓，全是 `(0, 0)` ✗
+      （我第一版就这么读的 ✗，得到“两版位置一模一样” 的假结果 ✗）。
+    """
+    import xml.etree.ElementTree as _ET
+    import zipfile as _zip
+    z = _zip.ZipFile(fzz)
+    root = _ET.fromstring(z.read([n for n in z.namelist() if n.endswith(".fz")][0]))
+    out = []
+    for el in root.iter("instance"):
+        t = (el.findtext("title") or "").strip()
+        if not t or (el.get("moduleIdRef") or "").startswith("Wire"):
+            continue
+        for ch in el:
+            if ch.tag.split("}")[-1] != "views":
+                continue
+            for sub in ch:
+                if sub.tag.split("}")[-1] != "schematicView":
+                    continue
+                for gg in sub:                      # ★ 只看**直接子** ✓
+                    if gg.tag.split("}")[-1] == "geometry":
+                        try:
+                            out.append((t, float(gg.get("x")), float(gg.get("y"))))
+                        except (TypeError, ValueError):
+                            pass
     return out
 
 
@@ -201,6 +258,19 @@ def main(src, dst, pinfile, snap=False):
     pins, boxes, title, LAB = load_pins(pinfile)
     P = {t: L(t, mi, pins[mi], boxes[mi]) for mi, t in title.items()}
     layout(P)
+    # ★★ `--pos-from=<fzz>`：**整体抄另一份的摆位** ✓（2026-09-28 ✓ 用户要求：「先抄我手改版
+    #   的元件间距」✓）—— 用户手改版的最小间隙是 **13.3 单位（3.75mm）** ✓，
+    #   而我们自动版有 **5 对卡在 7.2 单位（2.03mm）** ✗（就是 `--gapx/--gapy` 那一格 ✓）。
+    #   ⇒ 把源件的 `(x, y)` **照搬** ✓（不猜偏移量 ✗）；**位号随后由 `place_labels` 重算** ✓
+    #     ⇒ 抄的是**摆位**，不是位号偏移 ✓（那本来就该跟着重算 ✓）。
+    if POS_FROM:
+        _n = 0
+        for _t, _x, _y in read_positions(POS_FROM):
+            if _t in P:
+                P[_t].x, P[_t].y = _x, _y
+                _n += 1
+        print("★ 抄摆位 POS_FROM ← %s ✓：%d 件坐标被覆盖 ✓（位号随后重算 ✓，可用 --gapx/--gapy 微调其它件 ✓）"
+              % (POS_FROM, _n))
     LOFF = place_labels(P, LAB, title) if LAB else {}
     if snap:                             # 可选：把锚点吸到网格上（默认**不吸** ✓ ——
         for d in P.values():             # 吸了会破坏"脚同高" ✓，那才是要的 ✓）
@@ -312,6 +382,9 @@ if __name__ == "__main__":
     if "socket" in opts:
         SOCKET_EXTRA = float(opts["socket"]) * GRID
         print("★ SOCKET_EXTRA ← %.2f 格（%.0f 单位 ✓）" % (float(opts["socket"]), SOCKET_EXTRA))
+    if "pos-from" in opts:                     # ★★ 抄摆位 ✓（2026-09-28 ✓ 用户要求 ✓）
+        POS_FROM = opts["pos-from"]
+        print("★ POS_FROM ← %s ✓（照搬该文件的 (x,y) ✓；位号随后重算 ✓）" % POS_FROM)
     main(args[0], args[1],
          opts.get("pins", os.path.join(os.path.dirname(os.path.abspath(__file__)), "pins_v2.py")),
          snap=bool(opts.get("snap")))
