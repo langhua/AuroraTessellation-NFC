@@ -329,6 +329,39 @@ def inside_count(path, own_boxes, shrink=0.5):
     return n
 
 
+def seg_cross(p, q, r, s, eps=0.05):
+    """两段**正交**导线的**内部十字交叉** ✓（一竖一横 ✓；端点相接/共线重叠都不算 ✓）
+
+    ★ 为什么要它（2026-09-27 用户按"美学"提要求后发现 ✓）：
+      原代价 `(free, bends, plen)` 里**根本没有交叉这一项** ✗ ⇒ 布线器宁可让线
+      从 `U1` 肚子里穿过去、宁可到处交叉 ✗（实测 v4：摆位压缩后总长 −45% ✓ 但
+      **交叉 12 → 16** ✗ ✗）。面包板那边的教训就是：**交叉数是头号指标** ✓
+      （`bb_route4.py` 的 `长度 + K×交集` ✓）⇒ 这里把交叉数放到代价的**第一优先级** ✓。
+    """
+    if abs(p[0] - q[0]) < 1e-6 and abs(p[1] - q[1]) > 1e-6:
+        v, h = (p, q), (r, s)
+    elif abs(r[0] - s[0]) < 1e-6 and abs(r[1] - s[1]) > 1e-6:
+        v, h = (r, s), (p, q)
+    else:
+        return False
+    if abs(h[0][1] - h[1][1]) > 1e-6 or abs(h[0][0] - h[1][0]) < 1e-6:
+        return False
+    x, y = v[0][0], h[0][1]
+    y0, y1 = sorted((v[0][1], v[1][1]))
+    x0, x1 = sorted((h[0][0], h[1][0]))
+    return (x0 + eps < x < x1 - eps) and (y0 + eps < y < y1 - eps)
+
+
+def cross_count(path, used):
+    """这条路径会与**已布好的线**十字交叉几处 ✓（用于代价排序 ✓）"""
+    n = 0
+    for k in range(len(path) - 1):
+        for (p2, q2) in used:
+            if seg_cross(path[k], path[k + 1], p2, q2):
+                n += 1
+    return n
+
+
 def main(argv):
     fzz, svg, out_path = argv[0], argv[1], argv[2]
     if "--ratio" in argv:
@@ -396,8 +429,12 @@ def main(argv):
                     continue
                 free = all(not overlap(path[k], path[k + 1], p2, q2)
                            for k in range(len(path) - 1) for (p2, q2) in used)
-                # ★ 新版代价：① 与已布线段不叠 ✓ ② **穿自己本体尽量少** ✓ ③ 弯少 ✓ ④ 短 ✓
-                key = (0 if free else 1, inside_count(path, own_boxes), bends(path), plen(path))
+                # ★ 新版代价（2026-09-27 ✓）：
+                #   ① 与已布线段**共线重叠**的，先排掉 ✓ ② **十字交叉少** ✓（头号指标 ✓）
+                #   ③ **穿自己本体少** ✓ ④ 弯少 ✓ ⑤ 短 ✓
+                #   —— 拿面包板的教训："先只按交叉数排 ✓、再按加权代价算账 ✓" ✓
+                key = (0 if free else 1, cross_count(path, used),
+                       inside_count(path, own_boxes), bends(path), plen(path))
                 if best_key is None or key < best_key:
                     best, best_key = path, key
             if best is None:

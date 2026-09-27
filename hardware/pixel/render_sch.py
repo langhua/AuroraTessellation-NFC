@@ -233,6 +233,7 @@ print("== %s ▶ %s（%d 字节）" % (path, fzname, os.path.getsize(path)))
 
 # ── ① 零件 ──
 body_parts, PIN_SK, ALL_PTS = [], [], []
+PART_BOX, PINS_REL, BOX_REL = {}, {}, {}          # ★ 本体框 / 相对锚点的脚位与框（摆位用 ✓）
 skipped = []
 for el in root.iter("instance"):
     mid = el.get("moduleIdRef") or ""
@@ -316,6 +317,18 @@ for el in root.iter("instance"):
     if bb:
         for cx, cy in ((bb[0], bb[1]), (bb[2], bb[1]), (bb[0], bb[3]), (bb[2], bb[3])):
             ALL_PTS.append(to_sketch(g, A, (cx, cy)))
+        _bx = [to_sketch(g, A, (cx, cy)) for cx, cy in
+               ((bb[0], bb[1]), (bb[2], bb[1]), (bb[0], bb[3]), (bb[2], bb[3]))]
+        PART_BOX[ttl] = (min(p[0] for p in _bx), min(p[1] for p in _bx),
+                         max(p[0] for p in _bx), max(p[1] for p in _bx))
+        # ★ 摆位用的**纯数据** ✓：本体框与各脚 → **相对锚点**（sketch 单位 ✓）
+        for cid, p in pins.items():
+            PINS_REL.setdefault(str(el.get("modelIndex")), {})[cid] = \
+                (to_sketch(g, A, p)[0] - enum(g, "x"), to_sketch(g, A, p)[1] - enum(g, "y"))
+        PINS_REL.setdefault(str(el.get("modelIndex")), {})["__title__"] = ttl
+        BOX_REL[str(el.get("modelIndex"))] = (
+            PART_BOX[ttl][0] - enum(g, "x"), PART_BOX[ttl][1] - enum(g, "y"),
+            PART_BOX[ttl][2] - enum(g, "x"), PART_BOX[ttl][3] - enum(g, "y"))
     print("   %-12s img=%-42s 用了 %s" % (ttl, image or "（无）", os.path.basename(src)))
     print("        k=%.5f｜原点=(%g,%g)｜%s｜脚 %d 个（%s ✓）｜%s"
           % (k, org[0], org[1], khow, len(pins), kind, lnote))
@@ -467,6 +480,76 @@ for d, ttl, which, pt, hit in sorted(dang, reverse=True)[:10]:
           % (ttl, which, pt[0], pt[1], hit[0], hit[1], d, d * MMU))
 for t, why in skipped:
     print("   ⊘ 跳过 %-12s %s" % (t, why))
+
+# ── ④b ★ 美学指标：**交叉数** ✓（面包板那条教训 ✓：交叉数是头号指标 ✓、且不能自证 ✓）──
+#   两类都算 ✓：① 导线×导线的**十字交叉**（内部相交 ✓；共端点/共线不算 ✓）；
+#   ② 导线**穿过零件本体框**的段数 ✓（导线从元件肚子里穿过 = 用户点过名的毛病 ✓）。
+
+def _cross(a, b, c, d, eps=0.05):
+    """正交两段的**内部十字交叉** ✓（一竖一横 ✓；端点相接/共线重叠都不算 ✓）"""
+    if abs(a[0] - b[0]) < 1e-6 and abs(a[1] - b[1]) > 1e-6:
+        v, h = (a, b), (c, d)
+    elif abs(c[0] - d[0]) < 1e-6 and abs(c[1] - d[1]) > 1e-6:
+        v, h = (c, d), (a, b)
+    else:
+        return False
+    if abs(h[0][1] - h[1][1]) > 1e-6 or abs(h[0][0] - h[1][0]) < 1e-6:
+        return False
+    x, y = v[0][0], h[0][1]
+    y0, y1 = sorted((v[0][1], v[1][1]))
+    x0, x1 = sorted((h[0][0], h[1][0]))
+    return (x0 + eps < x < x1 - eps) and (y0 + eps < y < y1 - eps)
+
+
+SEGS2 = [(a, b) for _t, a, b, _c, _w in wires]
+nx = 0
+for i in range(len(SEGS2)):
+    for j in range(i + 1, len(SEGS2)):
+        if _cross(SEGS2[i][0], SEGS2[i][1], SEGS2[j][0], SEGS2[j][1]):
+            nx += 1
+
+
+def _hits_box(p, q, box, infl=1.0, need=4):
+    """段 p→q 是否**真的**穿进 box ✓（★ 擦边不算 ✗）
+
+    ★ 收紧的理由（2026-09-27 ✓）：原来只要**有一个采样点**落在外扩 1.0 单位的框里就算 ✗
+      ⇒ 导线**从元件旁边过**、离框 0.28mm 也会被算成"穿过" ✗（假警报 ✗，而且会让
+      "改进了没有"这个对比失真 ✗）⇒ 现在要求**至少 4 个采样点**落在**内缩 0.5 单位**
+      的框里 ✓（≈ 进到里面 0.14mm 以上 ✓）。
+    """
+    x0, y0, x1, y1 = box[0] + 0.5, box[1] + 0.5, box[2] - 0.5, box[3] - 0.5
+    if x0 >= x1 or y0 >= y1:
+        x0, y0, x1, y1 = box
+    n = max(2, int(max(abs(q[0] - p[0]), abs(q[1] - p[1]))) + 1)
+    hit = 0
+    for i in range(n + 1):
+        t = i / n
+        x, y = p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t
+        if x0 <= x <= x1 and y0 <= y <= y1:
+            hit += 1
+            if hit >= need:
+                return True
+    return False
+
+
+nb = 0
+for a, b in SEGS2:
+    # ★ 排除**自己两端**的元件 ✓（它的脚本来就在本体里 ✓，穿过自己不算毛病 ✗）
+    own = {q[0] for q in PIN_SK
+           if math.dist(q[2], a) < 0.05 or math.dist(q[2], b) < 0.05}
+    nb += sum(1 for t, box in PART_BOX.items() if t not in own and _hits_box(a, b, box))
+print("── ★ 美学指标：导线**十字交叉 %d 处** ✓｜导线**穿过元件本体 %d 段** ✓"
+      "（两个数越小越美 ✓ —— 面包板那条教训：交叉数是头号指标 ✓）" % (nx, nb))
+
+# ── ④c ★ 摆位用纯数据导出 ✓（`--pins-out <file.py>` ✓；单位 = sketch ✓、参考点 = 零件锚点 ✓）──
+if "pins-out" in opts:
+    with open(opts["pins-out"], "w", encoding="utf-8") as fh:
+        fh.write("# -*- coding: utf-8 -*-\n")
+        fh.write("# 由 render_sch.py --pins-out 生成 ✓（**纯数据** ✓）：\n")
+        fh.write("#   PINS[modelIndex][connectorId] = (dx, dy) —— 相对**零件锚点** ✓，sketch 单位 ✓\n")
+        fh.write("#   BOX[modelIndex] = (x0, y0, x1, y1) —— 本体包围盒，同样相对锚点 ✓\n")
+        fh.write("PINS = %r\n\nBOX = %r\n" % (PINS_REL, BOX_REL))
+    print("   摆位数据写入 %s ✓（%d 件的脚位 + 本体框 ✓）" % (opts["pins-out"], len(BOX_REL)))
 
 # ── ⑤ 出图 ──
 xs = [p[0] for p in ALL_PTS] or [0.0, 100.0]
