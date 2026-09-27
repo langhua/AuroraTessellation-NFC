@@ -93,6 +93,15 @@ K_INTER = 35.4
 #   ⇒ 跑出去的长度按 K_OUT 倍罚 ✓（只罚“出去”那一段 ✓，出界一点点（标签/45° 小拐角）不受怨 ✓）。
 K_OUT = 10.0
 OUT_MARGIN = 7.2      # 包围盒外扩（1 格 ✓）：小出界不算往外跑 ✓
+# ★★ `CLEAR_PIN`：**导线与“不相连的引脚”之间要留的安全距离** ✓（2026-09-27 用户定 ✓）
+#   用户原话："导线离芯片引脚太近了 ⇒ 应该有安全距离，让导线和引脚的连接关系**肉眼看得清**" ✓。
+#   实测（把导出放大看 ✓）：U1 右侧 `14/15/12/11` 的**引脚线末端正好落在导线上** ✗、
+#   上侧 `20..16` 与下侧 `7..10` 那么贴着导线 ✗ ⇒ 谁接了、谁没接，**图上分不出来** ✗。
+#   取 **1 格（7.2 单位 = 2.03mm）** ✓（引脚间距本身是 9∼15 单位 ✓ ⇒ 7.2 能既留出可辨的距离、
+#   又不会无路可走 ✓）。规则放在**交叉数之前**的档位 ✓（它是可读性规则 ✓ 不是审美点缀 ✓）。
+CLEAR_PIN = 7.2
+ESC_PIN = CLEAR_PIN + 5.0      # “沿引脚轴向逃出去”的长度 ✓（出口就已超过安全距离 ✓）
+P_STEP = 2.0          # 判定用的采样步长（单位 ✓，与其余判据同一套口径 ✓）
 USE45 = True           # 是否允许 45° dogleg 候选 ✓（`--no45` 关掉 ✓，A/B 用 ✓）
 #   ★ 为什么是“罚”不是“禁” ✗（2026-09-27 用户定 ✓：“允许 45° 斜线” ✓）：
 #     · 用户指明了允许斜线 ✓；
@@ -371,6 +380,37 @@ def out_len(path, ubox, margin=OUT_MARGIN):
     return tot
 
 
+def pin_intr(path, own, pins_all):
+    r"""路径**贴到几个“不相连的引脚”**上 ✓（< CLEAR_PIN 就算 ✓）
+
+    ★ 为什么要这条（2026-09-27 用户定 ✓，原话："导线离芯片引脚太近了…让导线和引脚的连接
+      关系**肉眼看得清**" ✓）：引脚线本来就有长度 ✓，导线从它末端擦过去 ⇒ 读图的人分不出
+      "接上了"还是"路过" ✗ ⇒ 必须拉开一段可辨的距离 ✓。
+    ★ `own` = 这根线自己两端的引脚 ✓ ⇒ 它们当然要“贴上” ✓（那是连接点 ✓ 不算侵入 ✗）。
+    """
+    if not pins_all:
+        return 0
+    n = 0
+    for (ref, cid, px, py) in pins_all:
+        if (ref, cid) in own:
+            continue
+        hit = False
+        for i in range(len(path) - 1):
+            p, q = path[i], path[i + 1]
+            steps = max(2, int(max(abs(q[0] - p[0]), abs(q[1] - p[1])) / P_STEP) + 1)
+            for k in range(steps + 1):
+                tt = k / steps
+                x, y = p[0] + (q[0] - p[0]) * tt, p[1] + (q[1] - p[1]) * tt
+                if math.dist((x, y), (px, py)) < CLEAR_PIN:
+                    hit = True
+                    break
+            if hit:
+                break
+        if hit:
+            n += 1
+    return n
+
+
 def diag_extra(path):
     """斜线比正交**多算**的那部分长度 ✓（= `DIAG_PEN` 罚分 ✓；正交段为 0 ✓）
 
@@ -509,6 +549,10 @@ def main(argv):
     chx, chy = set(), set()
     for d in insts.values():
         b = d["box"]
+        # ✗ 试过把“走廊从含引脚的边界起算” ✗ ⇒ 实测侵入反而 13 → **19 处** ✗（回退 ✓）。
+        #   原因：通道集里本来就有“引脚自己的坐标” ✓（要能拐到脚上 ✓）⇒ 主干照样能挑中
+        #   那条刚好穿过一脚末端的列 ✗；真正要治的是“**谁该占哪条走廊**” ✗（面包板的“留路” ✓）
+        #   和“贪婪抢占” ✗（要“抽出重排” ✓）—— 按规矩“要叠第二个补偿改动就停手” ✓ 先回退 ✓。
         if b:
             chx.update(b[0] - o for o in CH_OFFS)
             chx.update(b[2] + o for o in CH_OFFS)
@@ -517,6 +561,9 @@ def main(argv):
         for p in d["pins"].values():
             chx.add(p[0])
             chy.add(p[1])
+    # ✗ 另试过“沿引脚轴向逃出去”的通道（ESC_PIN ✓）⇒ 侵入 13 → **15** ✗（也回退 ✓）：
+    #   剩下的侵入不是“离开自己的脚时蹭到”✗，而是**主干型长线从一整排脚前面经过** ✗
+    #   （实测 `012917` 正好穿过 `U1.connector0/1/2` 三个脚末端 ✗）⇒ 那是“走廊归属”问题 ✓。
     boxes = {t: d["box"] for t, d in insts.items() if d["box"]}
     # ★ 零件**总包围盒** ✓（“出界”代价项的参照 ✓）：
     UBOX = None
@@ -529,6 +576,11 @@ def main(argv):
                                        for t, b in sorted(boxes.items())))
 
     used, nets_segs, warn = [], {}, []
+    # ★ 全图的**引脚点表** ✓（安全距离规则用 ✓）：绝对 sketch 坐标 ✓
+    PIN_ALL = [(t, cid, p[0], p[1]) for t, d in insts.items()
+               for cid, p in d["pins"].items()]
+    print("引脚点表 %d 个 ✓；安全距离 CLEAR_PIN = %.1f 单位（%.2f mm ✓）"
+          % (len(PIN_ALL), CLEAR_PIN, CLEAR_PIN * 25.4 / 90.0))
     # ★ 布线**次序**：先把电源/地布完 ✓、再布信号 ✓（面包板规则 ⑩ ✓：
     #   “先布电源/地，但**要把中间走廊留给后面的信号线**” ✓）。
     #   这里先只做前半条（次序 ✓）；后半条（给电源/地的“走中间”加权 ✓）还没做 ✗。
@@ -549,6 +601,8 @@ def main(argv):
         for i in range(len(pts) - 1):
             a, b = pts[i]["p"], pts[i + 1]["p"]
             mine = {pts[i]["ref"], pts[i + 1]["ref"]}
+            own_pins = {(pts[i]["ref"], pts[i]["cid"]),
+                        (pts[i + 1]["ref"], pts[i + 1]["cid"])}
             # 三级：① 不碰本体 + 不与已布线段共线重叠 ✓ ② 只要求不碰本体 ✓ ③ 兜底（否则端点接不上 ✗）
             best, best_key = None, None
             own_boxes = [box for t, box in boxes.items() if t in mine]
@@ -590,6 +644,8 @@ def main(argv):
                 #   ★ “出界几格”用**格数**（每 7.2 单位 ✓）而不是长度 ✓：
                 #     两档之间差一格 ✓ ⇒ “出界一点点”不会被当成“跑出去一大截” ✓。
                 ostep = int(out_len(path, UBOX) / 7.2 + 0.9999)
+                # ★ **贴近“不相连的引脚”几个** ✓（用户定的可读性规则 ✓ —— 放在交叉数之前 ✓）
+                pintr = pin_intr(path, own_pins, PIN_ALL)
                 # ★★ `nov`（压在一条直线上）**单独提一档、排在交叉数前面** ✓
                 #   （2026-09-27 用户定 ✓）：两段压在同一条直线上 ⇒ 读图的人会以为
                 #   **那两根线是一根**（像短路 ✗），比"十字交叉"更该躲 ✓；
@@ -599,6 +655,7 @@ def main(argv):
                 key = (1 if hits_own_body(path, own_boxes) else 0,
                        1 if nv else 0,
                        ostep,
+                       pintr,
                        nov,
                        cross_count(path, used),
                        inside_count(path, own_boxes),

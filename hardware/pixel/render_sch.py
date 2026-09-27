@@ -564,8 +564,41 @@ for ttl_w, t, a, b in HITS[:12]:
 if len(HITS) > 12:
     print("      ⚠ …… 另有 %d 段" % (len(HITS) - 12))
 
-# ── ④d ★ 美学指标之二：**位号文字压到东西** ✓（2026-09-27 用户点名 ✓）──
-#   配 ① 别的元件的本体框 ✓ ② 导线 ✓ ③ 别的位号 ✓（三类分开报 ✓，且**逐条点名** ✓）。
+# ── ④c2 ★ 可读性：导线与"**不相连的引脚**"的安全距离 ✓（2026-09-27 用户定 ✓）──
+#   用户原话："导线离芯片引脚太近了 ⇒ 应该设立规则，让导线跟芯片引脚有安全距离，
+#   从而让导线和引脚的连接关系**能通过肉眼看得清晰**" ✓。
+#   判据（与布线器同一条 ✓）：每根导线取两端 0.05 内的脚为"自己的脚" ✓；
+#   其余脚里，离该线段 < CLEAR_PIN 的 ⇒ 算 **1 处侵入** ✗。
+CLEAR_PIN = 7.2
+
+
+def _p2seg(p, a, b):
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    L2 = dx * dx + dy * dy
+    if L2 < 1e-9:
+        return math.dist(p, a)
+    t = max(0.0, min(1.0, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2))
+    return math.dist(p, (a[0] + t * dx, a[1] + t * dy))
+
+
+pc_hits = []
+for ttl_w, a, b, _c, _w in wires:
+    own = {(p[0], p[1]) for p in PIN_SK
+           if math.dist(p[2], a) < 0.05 or math.dist(p[2], b) < 0.05}
+    for t2, cid2, pp in PIN_SK:
+        if (t2, cid2) in own:
+            continue
+        d2 = _p2seg(pp, a, b)
+        if d2 < CLEAR_PIN:
+            pc_hits.append((ttl_w, t2, cid2, d2))
+print("── ★ 可读性：导线贴近**不相连的引脚**（< %.1f 单位 = %.2f mm ✓）**%d 处** %s"
+      % (CLEAR_PIN, CLEAR_PIN * MMU, len(pc_hits), "✓✓" if not pc_hits else "✗✗"))
+for ttl_w, t2, cid2, d2 in sorted(pc_hits, key=lambda z: z[3])[:6]:
+    print("      ⚠ %-14s 蹭到 %s.%s（%.2f 单位 = %.2f mm）✗"
+          % (ttl_w, t2, cid2, d2, d2 * MMU))
+
+
+# ── ④d ★ 美学指标之二：**位号文字压到东西** ✓（2026-09-27 用户点名 ✓）──#   配 ① 别的元件的本体框 ✓ ② 导线 ✓ ③ 别的位号 ✓（三类分开报 ✓，且**逐条点名** ✓）。
 LBOX = [(ttl, ST.label_bbox(lx, ly, fs, lines))
         for ttl, (lx, ly), fs, _c, lines in labels]
 bl = bw = bb2 = 0
