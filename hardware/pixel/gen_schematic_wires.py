@@ -590,10 +590,17 @@ def main(argv):
                 #   ★ “出界几格”用**格数**（每 7.2 单位 ✓）而不是长度 ✓：
                 #     两档之间差一格 ✓ ⇒ “出界一点点”不会被当成“跑出去一大截” ✓。
                 ostep = int(out_len(path, UBOX) / 7.2 + 0.9999)
+                # ★★ `nov`（压在一条直线上）**单独提一档、排在交叉数前面** ✓
+                #   （2026-09-27 用户定 ✓）：两段压在同一条直线上 ⇒ 读图的人会以为
+                #   **那两根线是一根**（像短路 ✗），比"十字交叉"更该躲 ✓；
+                #   用户手改版就是这个取舍 ✓（交叉 12 ✓ 但压线只有 3 ✓）。
+                #   ✗ 原来写成 `nov + cross_count(...)` 合成一个数 ⇒ 1 个压线 = 1 个交叉 ✗
+                #     （实测压线 8 ✗、手改版 3 ✓）。
                 key = (1 if hits_own_body(path, own_boxes) else 0,
                        1 if nv else 0,
                        ostep,
-                       nov + cross_count(path, used),
+                       nov,
+                       cross_count(path, used),
                        inside_count(path, own_boxes),
                        bends(path),
                        plen(path) + diag_extra(path) + K_OUT * out_len(path, UBOX))
@@ -609,6 +616,9 @@ def main(argv):
         nets_segs[net] = segs
         print("网 %-9s %d 个脚 → %d 段（弯 %d）"
               % (net, len(pts), len(segs), sum(bends(s["path"]) for s in segs)))
+
+    # ── ★ 布完线再重摆位号 ✓（2026-09-27 用户定 ✓）──
+    relabel(insts, boxes, used)
 
     if preview:
         draw_preview(preview, svg, insts, nets_segs, fit)
@@ -686,6 +696,101 @@ def add_conn(view, owner_cid, other_cid, other_mi, other_layer, fallback_layer):
         cs = ET.SubElement(conn, "connects")
     ET.SubElement(cs, "connect", {"connectorId": other_cid,
                                    "modelIndex": str(other_mi), "layer": other_layer})
+
+
+def relabel(insts, boxes, used):
+    r"""★ 布完线再把位号重摆一遍 ✓（2026-09-27 用户定 ✓）
+
+    ★ 为什么要在**线布完之后**摆 ✗：摆位脚本那时候还不知道导线在哪 ✗（导线是后布的 ✓）
+      ⇒ 实测总有 **3 处**"位号压导线" ✗。
+    ★ 为什么不让**导线**避位号 ✗：试过了 ✓ —— 位号压导线只从 3 降到 2 ✗，
+      代价是"压线 8→10、总长 +13" ✗ ⇒ **净亏** ✓（已回退 ✓）。
+      正解在这头 ✓：**位号可以自由挪** ✓、导线挪一次要牵动全局 ✗。
+    ★ 候选位与摆位脚本**同一套 7 个** ✓（上·左/右/中 ✓、下·左/右 ✓、左/右 ✓）；
+      判碰只有 `sch_text.label_bbox` 一个实现 ✓（字宽表唯一 ✓）；
+      权重：压**别的元件** 10 ✓、压**导线** 5 ✓、压**已放的位号** 5 ✓。
+    """
+    items = []
+    for t, d in insts.items():
+        lab = PR.LAB.get(d["mi"]) or {}
+        ln, fs = lab.get("lines") or [], lab.get("fs", 5.0)
+        tg = pm.child(d["sub"], "titleGeometry")
+        if not ln or tg is None or (tg.get("visible") or "true") == "false":
+            continue
+        items.append((t, d, tg, ln, fs,
+                      max(ST.twidth(s, fs) for s in ln), fs * len(ln)))
+
+    def score(b, t):
+        sc = 0
+        for t2, box in boxes.items():
+            if t2 != t and box and _ov2(b, box):
+                sc += 10
+        for (p, q) in used:
+            if _seg_in_box(p, q, b):
+                sc += 5
+        for t2, b2 in placed:
+            if _ov2(b, b2):
+                sc += 5
+        return sc
+
+    # 长位号先放（大的先占位 ✓，与摆位脚本同一策略 ✓）
+    items.sort(key=lambda z: -z[5])
+    placed, moved, before, after = [], 0, [0, 0, 0], [0, 0, 0]
+    for t, d, tg, ln, fs, w, h in items:                     # 先量"现状" ✓
+        b = ST.label_bbox(pm.num(tg.get("x")), pm.num(tg.get("y")), fs, ln)
+        before[0] += sum(1 for t2, box in boxes.items() if t2 != t and box and _ov2(b, box))
+        before[1] += sum(1 for (p, q) in used if _seg_in_box(p, q, b))
+        before[2] += sum(1 for _t2, b2 in placed if _ov2(b, b2))
+        placed.append((t, b))
+    placed = []
+    for t, d, tg, ln, fs, w, h in items:
+        bx, gap = boxes.get(t), 7.2
+        if bx is None:
+            continue
+        cand = [(bx[0], bx[1] - gap - h), (bx[2] - w, bx[1] - gap - h),
+                ((bx[0] + bx[2] - w) / 2.0, bx[1] - gap - h),
+                (bx[0], bx[3] + gap), (bx[2] - w, bx[3] + gap),
+                (bx[0] - gap - w, bx[1]), (bx[2] + gap, bx[1])]
+        old = ST.label_bbox(pm.num(tg.get("x")), pm.num(tg.get("y")), fs, ln)
+        best, bk = None, None
+        for x, y in cand:
+            b = (x, y, x + w, y + h)
+            sc = score(b, t)
+            if bk is None or sc < bk:
+                best, bk = b, sc
+        if best is None:
+            continue
+        if (abs(best[0] - old[0]) > 0.01 or abs(best[1] - old[1]) > 0.01):
+            tg.set("x", fmt(best[0]))
+            tg.set("y", fmt(best[1] - 0.25 * fs))            # `label_bbox` 的盒上缘 = y + 0.25fs ✓
+            d2 = insts[t]
+            tg.set("xOffset", fmt(best[0] - d2["loc"][0]))
+            tg.set("yOffset", fmt(best[1] - 0.25 * fs - d2["loc"][1]))
+            moved += 1
+        placed.append((t, best))
+        after[0] += sum(1 for t2, box in boxes.items() if t2 != t and box and _ov2(best, box))
+        after[1] += sum(1 for (p, q) in used if _seg_in_box(p, q, best))
+        after[2] += sum(1 for _t2, b2 in placed[:-1] if _ov2(best, b2))
+    print("── ★ 位号**布完线重摆** ✓：动 %d 个 ✓ ｜ 压元件 %d→%d ✓ ｜ 压导线 %d→%d ✓"
+          " ｜ 压位号 %d→%d ✓" % (moved, before[0], after[0], before[1], after[1],
+                                  before[2], after[2]))
+
+
+def _ov2(a, b):
+    return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+
+def _seg_in_box(p, q, b):
+    n = max(2, int(max(abs(q[0] - p[0]), abs(q[1] - p[1]))) + 1)
+    hit = 0
+    for k in range(n + 1):
+        tt = k / n
+        x, y = p[0] + (q[0] - p[0]) * tt, p[1] + (q[1] - p[1]) * tt
+        if b[0] <= x <= b[2] and b[1] <= y <= b[3]:
+            hit += 1
+            if hit >= 3:                     # ★ 与渲染器的判法一致：≥3 个采样点才算"压到" ✓
+                return True
+    return False
 
 
 def emit(sroot, insts, z, nets_segs, orig_path, out_path):
