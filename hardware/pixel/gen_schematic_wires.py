@@ -167,7 +167,21 @@ def load_geom(fzz, svg):
         pid = next((p for p in ruler if p.startswith(mi) and len(p) == len(mi) + 1),
                    mi if mi in ruler else None)
         ox, oy = ruler[pid]["origin"] if pid else (0, 0)
-        sk = lambda x, y: (loc[0] + RATIO * (x - ox), loc[1] + RATIO * (y - oy))   # noqa: E731
+        # ★★★ `sk`：尺子坐标 → sketch 坐标 ✓ —— **只有一句：乘一个比例** ✓✓
+        #   ✗ 旧写法 `loc + RATIO*(x - ox)`（`ox` = 尺子里"用户坐标 (0,0)"的位置）**是错的** ✗：
+        #     `ox` ≠ 零件锚点 ✗ ⇒ 它会**减掉每个零件自己的平移** ✗ ⇒
+        #     凡 `viewBox 原点 ≠ (0,0)` 或**带旋转**的零件，脚位一律偏 ✗
+        #     （2026-09-27 实测 ✓，`_scratch/diag_pins.py` 逐件对出来的 ✓）：
+        #       D3/L1/LED2/R1（原点 (0,0)）差 **0.0001 单位** ✓ 看不出问题 ✗；
+        #       J1/J2（`viewBox="0.00 -0.50 …"`）差 **1.7718 = k×0.5mm** ✗；
+        #       U1（`viewBox="-190 -190 …"`）差 **17.1 = k×190** ✗；
+        #       C1/C2（再加旋转 180°）差 **31.37** ✗。
+        #     ⇒ 后果：**画出来的导线够不到脚** ✗（用户原图里那 6 个"悬空端"就是这么来的 ✓，
+        #       不是手画错 ✗ —— 我当时误判成用户的图 ✗，记下来别再犯 ✗）。
+        #   ✓ 正解：尺子本身就是"一张按比例画的 sketch" ✓ ⇒ `sketch = RATIO × 尺子坐标` ✓；
+        #     比例由**尺子的单位**定：Fritzing 导出（1/72in）= **1.25** ✓；
+        #     本项目 `render_sch.py` 出图（就是 sketch 单位）= **1.0** ✓（`--ratio` ✓）。
+        sk = lambda x, y: (RATIO * x, RATIO * y)                     # noqa: E731
         pins, pins_export = {}, {}
         if pid:
             for cid, (ex, ey) in ruler[pid]["pins"].items():
@@ -290,8 +304,41 @@ def plen(path):
                for i in range(len(path) - 1))
 
 
+def inside_count(path, own_boxes, shrink=0.5):
+    """路径有多少采样点落在**自己两端元件的本体里** ✓（用一个很小的罚分去避 ✓）
+
+    ★ 为什么要它（2026-09-27 用户的眼睛发现 ✓）：原来对 `my_boxes` **整个豁免** ✗
+      ⇒ 导线为了走直线，会从 **U1 / D3 / LED2 的本体里穿过去** ✗（v3 图上很明显 ✗）。
+      ✗ 但不能改成"一律禁止" ✗ —— 有的脚（D3 的 `AC1/AC2` ✓）**本来就在本体内部** ✓，
+      禁了就无路可走 ✗。⇒ 改成**记代价** ✓：先选不改路 ✓，再选穿得**最少**的路 ✓。
+      判据用**采样点数**当代理长度 ✓（与 `seg_hits_box` 同一套采样 ✓）。
+    """
+    n = 0
+    for i in range(len(path) - 1):
+        p, q = path[i], path[i + 1]
+        for box in own_boxes:
+            if seg_hits_box(p, q, box, -shrink):
+                steps = max(2, int(max(abs(q[0] - p[0]), abs(q[1] - p[1])) / 2) + 1)
+                for k in range(steps + 1):
+                    t = k / steps
+                    x = p[0] + (q[0] - p[0]) * t
+                    y = p[1] + (q[1] - p[1]) * t
+                    if (box[0] + shrink <= x <= box[2] - shrink
+                            and box[1] + shrink <= y <= box[3] - shrink):
+                        n += 1
+    return n
+
+
 def main(argv):
     fzz, svg, out_path = argv[0], argv[1], argv[2]
+    if "--ratio" in argv:
+        # ★ 尺子的单位换算以**尺子自己**为准 ✓（2026-09-27 加 ✓）：
+        #   · Fritzing 导出的 svg = **1/72 in** 一套 ⇒ sketch(1/90in) = 导出 × 1.25 ✓（默认 ✓）；
+        #   · 本项目 `render_sch.py` 出的尺子 = **sketch 单位**一套 ⇒ RATIO = **1.0** ✓
+        #     （渲染器已对 Fritzing 导出验平 Δ≤0.0004 单位 ✓ ⇒ 不必再让用户手导图 ✗）
+        global RATIO
+        RATIO = float(argv[argv.index("--ratio") + 1])
+        print("尺子换算：RATIO = %.4f（导出尺子 1.25 ✓ / 渲染尺子 1.0 ✓）" % RATIO)
     preview = argv[argv.index("--preview") + 1] if "--preview" in argv else None
     orig = [argv[argv.index("--orig") + 1]] if "--orig" in argv else [None]
     if "--pins" in argv:                      # 载入标定过的脚位置 ✓
@@ -340,6 +387,7 @@ def main(argv):
             mine = {pts[i]["ref"], pts[i + 1]["ref"]}
             # 三级：① 不碰本体 + 不与已布线段共线重叠 ✓ ② 只要求不碰本体 ✓ ③ 兜底（否则端点接不上 ✗）
             best, best_key = None, None
+            own_boxes = [box for t, box in boxes.items() if t in mine]
             for path in candidates(a, b, sorted(chx), sorted(chy)):
                 no_box = all(not seg_hits_box(path[k], path[k + 1], box, CLEAR)
                              for k in range(len(path) - 1)
@@ -348,7 +396,8 @@ def main(argv):
                     continue
                 free = all(not overlap(path[k], path[k + 1], p2, q2)
                            for k in range(len(path) - 1) for (p2, q2) in used)
-                key = (0 if free else 1, bends(path), plen(path))
+                # ★ 新版代价：① 与已布线段不叠 ✓ ② **穿自己本体尽量少** ✓ ③ 弯少 ✓ ④ 短 ✓
+                key = (0 if free else 1, inside_count(path, own_boxes), bends(path), plen(path))
                 if best_key is None or key < best_key:
                     best, best_key = path, key
             if best is None:

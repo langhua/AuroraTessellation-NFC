@@ -290,9 +290,16 @@ for el in root.iter("instance"):
     m = PB.tf_of(g)
     A = PB.mul(m, (k, 0.0, 0.0, k, -k * org[0], -k * org[1]))
     e, f = enum(g, "x") + A[4], enum(g, "y") + A[5]
+    # ★★ 多包两层 ✓（`partID` + `id="schematic"` ✓）—— 不是为了好看 ✗，是为了**当尺子** ✓：
+    #   既有接线管线 `gen_schematic_wires.py` 的 `build_ruler()` 就是按 Fritzing **导出**里
+    #   这两层找“零件原点 + 各脚坐标 + 本体轮廓” ✓（`partID` ⇒ 零件 ✓；`id="schematic"` ⇒ 原点/本体 ✓）。
+    #   本机 Fritzing 命令行导出是坏的 ✗ ⇒ **我自己的渲染就是那份尺子** ✓（已对导出验平 ✓）。
+    #   `partID` 用 `modelIndex + "0"` ✓（管线按 `startswith(mi)` + 长度 +1 匹配 ✓，与 Fritzing 同形 ✓）。
+    mi = el.get("modelIndex") or "0"
     body_parts.append((ttl, "%s" % lnote,
-                       '<g transform="matrix(%.6f %.6f %.6f %.6f %.6f %.6f)">%s</g>'
-                       % (A[0], A[1], A[2], A[3], e, f, laytxt)))
+                       '<g partID="%s0"><g transform="matrix(%.6f %.6f %.6f %.6f %.6f %.6f)">'
+                       '<g id="schematic">%s</g></g></g>'
+                       % (mi, A[0], A[1], A[2], A[3], e, f, laytxt)))
     # 脚的 sketch 坐标 ✓（自检/核对用 ✓）：**一处算清** ✓
     #   ★ `A` 里已经含了「减 viewBox 原点」✓（A = M·(k,0,0,k,−k·原点) ✓）
     #     ⇒ 映射就是 `geom + A·p` ✓ —— **不要再减一次原点** ✗（我在草稿里就重复扣减过 ✗）。
