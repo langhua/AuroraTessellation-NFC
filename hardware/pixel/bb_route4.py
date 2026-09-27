@@ -1704,6 +1704,106 @@ def main(argv):
             break
     _refix()
 
+    # ★★★ 换孔让路（2026-09-27 用户定 ✓："加" ✓）：
+    #   为了让某根线拿到**更短 / 更少交集**的走法，把**挡路的那根线**挪到
+    #   **同一 bus 里的空闲孔**上 ✓（同一 bus = 同一块铜片 ⇒ 电气完全等价 ✓、网表一字不改 ✓）。
+    #   为什么要它 ✗（实测 v94 ✓）：`LED_DIN` 的直连 `pin20B→pin33B`（1 段 33.0mm ✓，
+    #     比绕行省 20.3mm ✓）被 ③「与现有线段重叠」否决 ✗ —— GND 的 `pin29X→pin31B`
+    #     正压在同一条 y=135 的走廊上 ✗。用户在 byHand 版里做的就是把它换到**同 bus 的
+    #     `pin31C`** ✓ ⇒ 直连一通 ✓ ⇒ **这就是"手改版赢自动版"的那一步** ✓。
+    #   现有三种重排（抽出 / 成对 / 破局）都只会"抽自己出来重放" ✗ ⇒
+    #     **不会为了让别人而换自己的孔** ✗ ⇒ 补上这一步 ✓。
+    #   判据与其它重排**同一份** ✓：两件事一起算账 ✓（换孔 + 挡路那根重算 ✓），
+    #     只在 `layout_score()` 变好、且 `hard_bad()` 仍全空时才采纳 ✓（不另立一份 ✗）。
+    def _seg_owner(c, d):
+        for k2, (_n2, pts2, _e1, _e2, _k2) in enumerate(jumpers):
+            for a2, b2 in _segs(pts2):
+                if BC.same_pt(a2, c) and BC.same_pt(b2, d):
+                    return k2
+        return None
+
+    def _alt_holes(j2):
+        """这根线（j2）的两个端点，各自能换到同一 bus 里的哪些空闲孔 ✓"""
+        _n2, _p2, g1, g2, _k2 = jumpers[j2]
+        out = []
+        for which, cur, other in ((0, g1, g2), (1, g2, g1)):
+            for alt in sorted(bus_of.get(hole_bus[cur], ())):
+                if alt == cur or alt in used_holes:
+                    continue
+                out.append((which, alt, other))
+        return out
+
+    def _blocked_wish(i):
+        """这根线"想走"、却被 ③（与现有线重叠）挡住的最好那条走法 ✓ ⇒ (pts, 挡路线段) ✓"""
+        net, pts_old, g1, g2, _k = jumpers[i]
+        ref = _plen(pts_old) * shape_factor(pts_old) + K * _cross(pts_old, wire_segs())
+        best = None
+        for pts in routes(g1, g2):
+            if route_cost(pts, own=net) is not None:
+                continue                        # 合法 ⇒ 那是别的重排的事 ✓
+            if not (LAST[0] or "").startswith("③") or LAST[1] is None:
+                continue                        # 不是被"重叠"挡的 ⇒ 不管 ✓
+            ideal = _plen(pts) * shape_factor(pts) + K * _cross(pts, wire_segs())
+            if ideal < ref - 1e-9 and (best is None or ideal < best[0]):
+                best = (ideal, pts, LAST[1])
+        return None if best is None else (best[1], best[2])
+
+    def pass_clear_way(rounds=2, max_alt=6):
+        moved = 0
+        for _rr in range(rounds):
+            any_move = False
+            for i in range(len(jumpers)):
+                if i >= len(jumpers):
+                    break
+                wish = _blocked_wish(i)
+                if wish is None:
+                    continue
+                pts_want, blk = wish
+                j = _seg_owner(*blk)
+                if j is None or j == i:
+                    continue
+                net_i, pi_old, h1i, h2i, kind_i = jumpers[i]
+                net_j, pj_old, h1j, h2j, kind_j = jumpers[j]
+                base = layout_score()
+                hit = False
+                for which, alt, other in _alt_holes(j)[:max_alt]:
+                    nh1, nh2 = (alt, other) if which == 0 else (other, alt)
+                    jumpers[j] = (net_j, pj_old, nh1, nh2, kind_j)
+                    _refix()
+                    t = best_by_cross(hole_bus[nh1], hole_bus[nh2])
+                    if t is None:
+                        continue
+                    jumpers[j] = (net_j, t[1], t[2], t[3], kind_j)
+                    _refix()
+                    if route_cost(pts_want, own=net_i) is None:
+                        continue                    # 让得还不够 ✓
+                    jumpers[i] = (net_i, pts_want, h1i, h2i, kind_i)
+                    _refix()
+                    sc = layout_score()
+                    d2, be2, hid2 = hard_bad()
+                    if not d2 and not be2 and not hid2 and sc[1] < base[1] - 1e-6:
+                        print("   换孔让路: %-10s %s→%s 让路 ⇒ %-10s 改走 %d 段 %.1fmm"
+                              " | 代价 %.1f→%.1f"
+                              % (net_j, h2j if which == 1 else h1j, alt, net_i,
+                                 len(pts_want) - 1, _plen(pts_want) * MMU,
+                                 base[1], sc[1]))
+                        moved += 1
+                        any_move = True
+                        hit = True
+                        break
+                    jumpers[i] = (net_i, pi_old, h1i, h2i, kind_i)
+                    _refix()
+                if not hit:
+                    jumpers[j] = (net_j, pj_old, h1j, h2j, kind_j)
+                    _refix()
+            if not any_move:
+                break
+        return moved
+
+    _n_clear = pass_clear_way()
+    print("换孔让路: 动了 %d 处 ✓" % _n_clear)
+    _refix()
+
     # ★★ 破局重排（R&R，2026-09-26 ✓）：卡在局部最优时，把**所有还有交集的线**一起抽掉、
     #   按两种顺序（交集多的先 ✓ / 原顺序 ✓）整批重放 ✓ —— 比 2-opt（只动两根）邻域更大 ✓，
     #   能一次跨过"两根互相绊住"的死胡同 ✓。取全局更优的那版（判据同上一段 ✓）。
@@ -1752,6 +1852,12 @@ def main(argv):
             print("   破局重排 第 %d 轮: %d 根整批重放 ⇒ 没变好（交集 %d）"
                   % (rr, len(culprits), before[0]))
             break
+    _refix()
+
+    # ★ 破局重排之后**再补一轮换孔让路** ✓（破局会整批重放 ⇒ 常会新出现"让路"机会 ✓）
+    _n_clear2 = pass_clear_way(rounds=1)
+    if _n_clear2:
+        print("换孔让路（破局后补一轮）: 动了 %d 处 ✓" % _n_clear2)
     _refix()
 
     # checks
