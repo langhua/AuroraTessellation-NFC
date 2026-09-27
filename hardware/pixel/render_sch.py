@@ -47,6 +47,7 @@ import xml.etree.ElementTree as ET
 
 import toolpaths                                                  # noqa: E402
 import part_box as PB                                             # noqa: E402
+import sch_text as ST                                            # ★ 字宽表（唯一实现 ✓）
 
 SK_U_PER_MM = PB.MM                       # 3.5433 ✓（1/90 in ✓）
 UMM = {"mm": 1.0, "cm": 10.0, "in": 25.4, "px": 25.4 / 72.0, "pt": 25.4 / 72.0,
@@ -234,6 +235,7 @@ print("== %s ▶ %s（%d 字节）" % (path, fzname, os.path.getsize(path)))
 # ── ① 零件 ──
 body_parts, PIN_SK, ALL_PTS = [], [], []
 PART_BOX, PINS_REL, BOX_REL = {}, {}, {}          # ★ 本体框 / 相对锚点的脚位与框（摆位用 ✓）
+LAB_REL = {}                                     # ★ 位号内容 + 字号（摆位脚本挑位置用 ✓）
 skipped = []
 for el in root.iter("instance"):
     mid = el.get("moduleIdRef") or ""
@@ -321,11 +323,10 @@ for el in root.iter("instance"):
                ((bb[0], bb[1]), (bb[2], bb[1]), (bb[0], bb[3]), (bb[2], bb[3]))]
         PART_BOX[ttl] = (min(p[0] for p in _bx), min(p[1] for p in _bx),
                          max(p[0] for p in _bx), max(p[1] for p in _bx))
-        # ★ 摆位用的**纯数据** ✓：本体框与各脚 → **相对锚点**（sketch 单位 ✓）
-        for cid, p in pins.items():
+        PINS_REL.setdefault(str(el.get("modelIndex")), {})["__title__"] = ttl
+        for cid, p in pins.items():                      # ★ 各脚 → **相对锚点**（sketch 单位 ✓）
             PINS_REL.setdefault(str(el.get("modelIndex")), {})[cid] = \
                 (to_sketch(g, A, p)[0] - enum(g, "x"), to_sketch(g, A, p)[1] - enum(g, "y"))
-        PINS_REL.setdefault(str(el.get("modelIndex")), {})["__title__"] = ttl
         BOX_REL[str(el.get("modelIndex"))] = (
             PART_BOX[ttl][0] - enum(g, "x"), PART_BOX[ttl][1] - enum(g, "y"),
             PART_BOX[ttl][2] - enum(g, "x"), PART_BOX[ttl][3] - enum(g, "y"))
@@ -427,6 +428,7 @@ for el in root.iter("instance"):
     if tg is None or (tg.get("visible") or "true") == "false":
         continue
     lines = [ttl]
+    fzpmid = el.get("modelIndex") or ""
     fzp = (el.get("path") or "").replace("/", os.sep)
     vals = {c.get("name"): c.get("value") for c in el if tag(c) == "property"}
     if os.path.isfile(fzp):
@@ -454,6 +456,7 @@ for el in root.iter("instance"):
         _ = props
     labels.append((ttl, (enum(tg, "x"), enum(tg, "y")), float(enum(tg, "fontSize", 5.0)),
                    tg.get("textColor") or "#000000", lines))
+    LAB_REL[fzpmid] = {"lines": lines, "fs": float(enum(tg, "fontSize", 5.0))}
 print("── 位号 %d 个：%s" % (len(labels), ", ".join("%s(%s)" % (l[0], "+".join(l[4][1:]) or "—") for l in labels)))
 
 # ── ④ 自检：悬空端点 / 没接线的脚 ✓（**如实报** ✓ 不偷偷吸附 ✗）──
@@ -562,6 +565,36 @@ for ttl_w, t, a, b in HITS[:12]:
 if len(HITS) > 12:
     print("      ⚠ …… 另有 %d 段" % (len(HITS) - 12))
 
+# ── ④d ★ 美学指标之二：**位号文字压到东西** ✓（2026-09-27 用户点名 ✓）──
+#   配 ① 别的元件的本体框 ✓ ② 导线 ✓ ③ 别的位号 ✓（三类分开报 ✓，且**逐条点名** ✓）。
+LBOX = [(ttl, ST.label_bbox(lx, ly, fs, lines))
+        for ttl, (lx, ly), fs, _c, lines in labels]
+bl = bw = bb2 = 0
+detail = []
+for ttl, bx in LBOX:
+    for t2, box in PART_BOX.items():
+        if t2 == ttl:
+            continue
+        if bx[0] < box[2] and box[0] < bx[2] and bx[1] < box[3] and box[1] < bx[3]:
+            bl += 1
+            detail.append(("压元件", ttl, t2))
+    for t2, a, b, _c, _w in wires:
+        if _hits_box(a, b, (bx[0], bx[1], bx[2], bx[3]), 0.0, 2):
+            bw += 1
+            detail.append(("压导线", ttl, t2))
+    for t2, bx2 in LBOX:
+        if t2 <= ttl:
+            continue
+        if bx[0] < bx2[2] and bx2[0] < bx[2] and bx[1] < bx2[3] and bx2[1] < bx[3]:
+            bb2 += 1
+            detail.append(("压位号", ttl, t2))
+print("── ★ 美学指标之二：位号文字压到 **别的元件 %d 处** ✓｜**导线 %d 处** ✓｜"
+      "**别的位号 %d 处** ✓（字宽表由 `_scratch/adv_measure.py` 实测 ✓）" % (bl, bw, bb2))
+for kind, t1, t2 in detail[:10]:
+    print("      ⚠ 位号 %-6s %s %s" % (t1, kind, t2))
+if len(detail) > 10:
+    print("      ⚠ …… 另有 %d 处" % (len(detail) - 10))
+
 # ── ④c ★ 摆位用纯数据导出 ✓（`--pins-out <file.py>` ✓；单位 = sketch ✓、参考点 = 零件锚点 ✓）──
 if "pins-out" in opts:
     with open(opts["pins-out"], "w", encoding="utf-8") as fh:
@@ -570,6 +603,8 @@ if "pins-out" in opts:
         fh.write("#   PINS[modelIndex][connectorId] = (dx, dy) —— 相对**零件锚点** ✓，sketch 单位 ✓\n")
         fh.write("#   BOX[modelIndex] = (x0, y0, x1, y1) —— 本体包围盒，同样相对锚点 ✓\n")
         fh.write("PINS = %r\n\nBOX = %r\n" % (PINS_REL, BOX_REL))
+        fh.write("\n# 位号内容（title + fzp 里 showInLabel 的字段 ✓，Fritzing 自己的口径 ✓）\n")
+        fh.write("LAB = %r\n" % LAB_REL)
     print("   摆位数据写入 %s ✓（%d 件的脚位 + 本体框 ✓）" % (opts["pins-out"], len(BOX_REL)))
 
 # ── ⑤ 出图 ──

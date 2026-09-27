@@ -37,6 +37,8 @@ import sys
 import zipfile
 import xml.etree.ElementTree as ET
 
+import sch_text as ST                 # ★ 字宽表（唯一实现 ✓，与渲染器同一份 ✓）
+
 GRID = 7.2                       # Fritzing 原理图网格 0.1in ✓（仅用于"整数格"美观 ✓）
 GAP_X = 2 * GRID                 # 相邻本体框水平间隙 ≈ 4.06mm ✓
 GAP_Y = 3 * GRID                 # 行间间隙 ≈ 3.05mm ✓
@@ -61,7 +63,50 @@ def load_pins(path):
     pins = {mi: {k: v for k, v in d.items() if k != "__title__"}
             for mi, d in ns["PINS"].items()}
     title = {mi: d["__title__"] for mi, d in ns["PINS"].items() if "__title__" in d}
-    return pins, ns["BOX"], title
+    return pins, ns["BOX"], title, ns.get("LAB", {})
+
+
+def _ov(a, b):
+    return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+
+def place_labels(P, LAB, title, gap=7.2):
+    r"""位号摆位 ✓：默认放本体**上方留一格** ✓；从几个候选位里挑**碰撞最少**的 ✓
+
+    ★ 为什么要挑 ✗（2026-09-27 实测 ✓）：`L1` 的位号是 `L1` + `NFC-Coil-20-6T` ✓
+      （宽 ≈ 35 单位 ✓）而 L1 的本体只宽 **4.5** 单位 ✗ ⇒ 放哪都会**伸到邻居身上** ✗
+      ⇒ 把候选位置都算一遍 ✓，取"压到别人最少"的那个 ✓
+      （压**元件**权 10 ✓、压**已放的位号**权 5 ✓；长位号先放 ✓ = 大的先占位 ✓）。
+    ⚠ 导线这时还不知道 ✗（要布完线才知道 ✓）⇒ 位号与导线的关系只能事后量 ✓、
+      必要时再把位号框交给布线器当 keep-out ✓。
+    """
+    fs_of = {t: LAB[mi]["fs"] for mi, t in title.items() if mi in LAB}
+    ln_of = {t: LAB[mi]["lines"] for mi, t in title.items() if mi in LAB}
+    out, placed = {}, []
+    order = sorted((t for t in P if t in ln_of),
+                   key=lambda t: -max(ST.twidth(s, fs_of[t]) for s in ln_of[t]))
+    for t in order:
+        d, bx, fs = P[t], P[t].absbox(), fs_of[t]
+        w = max(ST.twidth(s, fs) for s in ln_of[t])
+        h = fs * len(ln_of[t])
+        cand = [(bx[0], bx[1] - gap - h), (bx[2] - w, bx[1] - gap - h),
+                ((bx[0] + bx[2] - w) / 2.0, bx[1] - gap - h),
+                (bx[0], bx[3] + gap), (bx[2] - w, bx[3] + gap),
+                (bx[0] - gap - w, bx[1]), (bx[2] + gap, bx[1])]
+        best, bk = None, None
+        for x, y in cand:
+            b = (x, y, x + w, y + h)
+            sc = 0
+            for t2, d2 in P.items():
+                if t2 != t and _ov(b, d2.absbox()):
+                    sc += 10
+            sc += 5 * sum(1 for _t2, b2 in placed if _ov(b, b2))
+            if bk is None or sc < bk:
+                best, bk = b, sc
+        placed.append((t, best))
+        # 反推锚点 ✓：`label_bbox` 里盒上缘 = 锚点y + 0.25fs ✓（第1行基线 = y+fs ✓）
+        out[t] = (best[0] - d.x, best[1] - 0.25 * fs - d.y)
+    return out
 
 
 class L:
@@ -135,9 +180,10 @@ def layout(P):
 
 
 def main(src, dst, pinfile, snap=False):
-    pins, boxes, title = load_pins(pinfile)
+    pins, boxes, title, LAB = load_pins(pinfile)
     P = {t: L(t, mi, pins[mi], boxes[mi]) for mi, t in title.items()}
     layout(P)
+    LOFF = place_labels(P, LAB, title) if LAB else {}
     if snap:                             # 可选：把锚点吸到网格上（默认**不吸** ✓ ——
         for d in P.values():             # 吸了会破坏"脚同高" ✓，那才是要的 ✓）
             d.x = round(d.x / GRID) * GRID
@@ -167,10 +213,16 @@ def main(src, dst, pinfile, snap=False):
         g.set("x", "%g" % d.x)
         g.set("y", "%g" % d.y)
         # ★ 位号必须跟着搬 ✓（`titleGeometry.(x,y) = geometry + (xOffset,yOffset)` ✓ 机验 ✓）
+        #   ★★ 而且 Offset 现在由 `place_labels()` **算** ✓（不再是零件自带的 ✗）：
+        #     v4 的"位号压导线 8 处"就是这么来的 ✗ ⇒ 改成"上方留一格 + 候选位挑碰撞最少" ✓。
         tg = child(sub, "titleGeometry")
         if tg is not None and (tg.get("visible") or "true") != "false":
-            tg.set("x", "%g" % (d.x + float(tg.get("xOffset") or 0.0)))
-            tg.set("y", "%g" % (d.y + float(tg.get("yOffset") or 0.0)))
+            ox, oy = LOFF.get(ttl, (float(tg.get("xOffset") or 0.0),
+                                    float(tg.get("yOffset") or 0.0)))
+            tg.set("xOffset", "%g" % ox)
+            tg.set("yOffset", "%g" % oy)
+            tg.set("x", "%g" % (d.x + ox))
+            tg.set("y", "%g" % (d.y + oy))
         moved.append((ttl, d.x, d.y))
     want = set(P)
     miss = [t for t in want if t not in [m[0] for m in moved]]
@@ -212,6 +264,17 @@ def main(src, dst, pinfile, snap=False):
                 ov.append((ts[i], ts[j]))
     print("   ★ 重叠自检：本体框相交 **%d 对** %s" % (len(ov), "✓" if not ov else
                                                     "✗ " + ", ".join("%s×%s" % o for o in ov)))
+    if LOFF:
+        SEG = []
+        for t, (ox, oy) in LOFF.items():
+            d = P[t]
+            fs = LAB[[mi for mi, x in title.items() if x == t][0]]["fs"]
+            ln = LAB[[mi for mi, x in title.items() if x == t][0]]["lines"]
+            SEG.append((t, ST.label_bbox(d.x + ox, d.y + oy, fs, ln)))
+        bad = [(t1, t2) for i, (t1, b1) in enumerate(SEG) for t2, b2 in SEG[i + 1:] if _ov(b1, b2)]
+        bad += [(t, t2) for t, b in SEG for t2, d2 in P.items() if t != t2 and _ov(b, d2.absbox())]
+        print("   ★ 位号自检：压位号/压元件 **%d 处** %s（导线要布完线才能量 ✓）"
+              % (len(bad), "✓" if not bad else "✗ " + ", ".join("%s×%s" % b for b in bad[:6])))
     if miss:
         print("   ✗ 摆位表里这些位号在图中没找到：%s" % ", ".join(miss))
 
