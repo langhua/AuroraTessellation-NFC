@@ -25,6 +25,9 @@ SCRATCH = os.path.dirname(os.path.abspath(__file__))
 # ★★ 2026-09-27（用户定 ✓）：通用工具只有一份，在**库仓 tools/** ✓（定位见 `toolpaths.py` ✓）
 import toolpaths                                 # noqa: E402
 import part_measure as pm                       # noqa: E402
+import sch_geom as SG                           # ★ 几何判据（唯一实现 ✓，含斜线 ✓）
+import sch_text as ST                           # ★ 字宽表（与渲染器、摆位脚本同一份 ✓）
+import pins_ref as PR                           # ★ 生成的位号数据（行/字号 ✓，入库 ✓）
 from pin_ruler import apply, mul, parse_tf       # noqa: E402
 
 # ── 网表（照 `hardware/pixel/pixel-netlist.md` §2 ✓；脚名按 .fzp 的连接器名，
@@ -76,6 +79,20 @@ def build_ruler(svg):
 RATIO = 1.25
 CLEAR = 6.0            # 导线离元件本体至少留这么远（sketch 单位；6 ≈ 1.7mm ✓）
 CH_OFFS = (CLEAR, 12.0, 22.0, 34.0)
+DIAG_PEN = 1.25        # ★ 斜线的小罚分（“长度 × 1.25 才等于” ✓）
+# ★★ K：一个“交集”值多少长度 ✓（面包板规则 ⑧ ✓：**K = 10mm/交集** ✓）
+#   —— 这是**人为选的经验值** ✓（不是从数据推的 ✗），**是个可以调的系数** ✓：
+#     调大 = 更看重少交叉 ✓；调小 = 更看重短而直 ✓。代码里就这一行 ✓。
+#   单位换算：10mm × 3.5433 = **35.4 sketch 单位** ✓。
+K_INTER = 35.4
+USE45 = True           # 是否允许 45° dogleg 候选 ✓（`--no45` 关掉 ✓，A/B 用 ✓）
+#   ★ 为什么是“罚”不是“禁” ✗（2026-09-27 用户定 ✓：“允许 45° 斜线” ✓）：
+#     · 用户指明了允许斜线 ✓；
+#     · 我**量了他手改的那一版** ✓ —— 里面的斜线**不是** 45° ✗，而是 **20.1° / 23.4° /
+#       28.8° / 2:1…** ✓ ⇒ 他实际的做法是“**两脚之间直接连一根直线**” ✓；
+#     ⇒ 实现成**任意角直线**（含 45° ✓），并像面包板那样给斜线一点小罚分 ✓
+#       （`bb_route4.py` 的 `DIAG_PEN` 同一个系数 ✓），让它只有在**躲开交叉/避让元件**
+#       时才被选中 ✓。`,
 
 # ★ 标定过的脚位置（由 recal_pins.py 从 Fritzing 自己的渲染反推 ✓）：
 #   {modelIndex: {connectorId: (x, y)}} —— 有它就用它 ✓（逐元件公式跨元件不成立 ✗，2026-09-26）
@@ -203,6 +220,11 @@ def load_geom(fzz, svg):
         if pts:
             box = (min(p[0] for p in pts), min(p[1] for p in pts),
                    max(p[0] for p in pts), max(p[1] for p in pts))
+        # ★ 位号框避让 —— **试过、实测不划算、已回退** ✗（2026-09-27 ✓）：
+        #   让布线器认识位号框后，位号压导线只从 **3 → 2** ✗（剩下的是 `L1`：
+        #   它旁边根本没有别的通道 ✓），代价却是 **压线 8 → 10** ✗、总长 +13 ✗
+        #   ⇒ 净亏 ✓。位号那条得靠**位号自己挪**（布线完再重摆 ✓ = 下一手 ✓），
+        #   不是让导线绕 ✗ —— 按规矩：“修一个小问题要叠第二个补偿性改动 ⇒ 停手” ✓。
         insts[title] = {"mi": mi, "mid": e.get("moduleIdRef"), "el": e, "sub": sub,
                         "loc": loc, "pins": pins, "box": box, "names": conname,
                         "ox": (ox, oy) if pid else None, "pins_export": pins_export}
@@ -261,40 +283,48 @@ def seg_hits_box(p, q, box, clear):
 
 
 def overlap(a, b, c, d, tol=0.5):
-    """两段是否**共线重叠**（同 net 以外的线不许叠一起 ✓）"""
-    if abs(a[0] - b[0]) < tol and abs(c[0] - d[0]) < tol and abs(a[0] - c[0]) < tol:
-        lo1, hi1 = sorted((a[1], b[1]))
-        lo2, hi2 = sorted((c[1], d[1]))
-        return min(hi1, hi2) - max(lo1, lo2) > tol
-    if abs(a[1] - b[1]) < tol and abs(c[1] - d[1]) < tol and abs(a[1] - c[1]) < tol:
-        lo1, hi1 = sorted((a[0], b[0]))
-        lo2, hi2 = sorted((c[0], d[0]))
-        return min(hi1, hi2) - max(lo1, lo2) > tol
-    return False
+    """两段是否**压在一条直线上** ✗（外壳 —— 真正实现在 `sch_geom.near_overlap` ✓
 
-
-def path_ok(path, boxes, my_boxes, used):
-    for i in range(len(path) - 1):
-        p, q = path[i], path[i + 1]
-        if abs(p[0] - q[0]) > 1e-6 and abs(p[1] - q[1]) > 1e-6:
-            return False                      # 非正交 ✗
-        for title, box in boxes.items():
-            if title in my_boxes:
-                continue
-            if seg_hits_box(p, q, box, CLEAR):
-                return False
-        for (p2, q2) in used:
-            if overlap(p, q, p2, q2):
-                return False
-    return True
+    ★ 为什么删掉自己的实现 ✗（2026-09-27 ✓）：`render_sch.py` 和这里原本**各一份**
+      ⇒ 一旦允许斜线，两份会给出**不同**的数 ✗（面包板那天的教训：判碰只能一份实现 ✓）。
+      现在这里只是包装 ✓ —— 而且换成**通用**判据（不再只认轴对齐 ✗）✓。
+    """
+    return SG.near_overlap(a, b, c, d, tol)
 
 
 def candidates(a, b, chx, chy):
+    """候选路径 ✓（★ 含**真正的 45° 斜线** ✓ —— 2026-09-27 用户定 ✓）
+
+    ★ 为什么**不是“任意角直连”** ✗（实测推翻了我自己的实现 ✓）：
+      ① 先按用户原话“允许 45°” ✓，又去量了他手改版里的 15 根斜线 ✓ ⇒
+         角度是 `20.1° / 23.4° / 28.8° / 2:1…` ✗ —— 不是 45° ✓；
+      ② 于是我改成“任意角直连” ✓（想跟他的手画一致 ✓）⇒ **实测大幅变差** ✗✗：
+         交叉 **8 → 37∼42** ✗、压线 19 → **88∼100** ✗、总长 2496 → **4941** ✗
+         （因为直连线**横穿全图** ✗，且开头几根就把后面的路全堵了 ✗）。
+      ⇒ 结论：**只有 45° 的“小斜切”能用** ✓ —— 它只会把拐角“抹掉一点” ✓，
+        不会拉出一根横穿全图的斜线 ✗。这就是**工程上的 45° 布线**本意 ✓。
+      ★ 斜切只在**省长度**时才被选中 ✓（`diag_extra` 只在最后一档 ✓）：
+        斜边 1.414 优于两边 2.0 ✓ ⇒ 对齐得好的地方会自然长出 45° ✓。
+    """
     out = []
     if abs(a[0] - b[0]) < 1e-6 or abs(a[1] - b[1]) < 1e-6:
-        out.append([a, b])
-    out.append([a, (b[0], a[1]), b])
+        out.append([a, b])                     # ★ **只在轴对齐时**才给直连 ✓
+        #   ✗ 非轴对齐的“直连”= **任意角** ✗ ⇒ 实测交叉 8 → 40 ✗✗（它会横穿全图 ✓）
+        #   ⇒ 不许 ✓：非轴对齐只走 L 形 / 45° dogleg / 走通道 ✓
+    out.append([a, (b[0], a[1]), b])           # L 形
     out.append([a, (a[0], b[1]), b])
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    sx = 1.0 if dx >= 0 else -1.0
+    sy = 1.0 if dy >= 0 else -1.0
+    if USE45 and abs(dx) > 1e-6 and abs(dy) > 1e-6:
+        # ③④⑤⑥ 45° + 正交的 "dogleg" ✓ —— **四种**落法 × 两侧 = 8 条 ✓
+        #   （每一条里**恰有一段是 45°** ✓、另一段正交 ✓ ⇒ 全路径只有 45° 和 0°/90° ✓）
+        #   落法：`斜段靠在 a 端`（跑到 b 的列 / 行 ✓）、`斜段靠在 b 端` ✓
+        for s in (1.0, -1.0):
+            out.append([a, (b[0], a[1] + s * abs(dx)), b])          # 斜段→跑到 b 的列 ✓
+            out.append([a, (a[0] + s * abs(dy), b[1]), b])          # 斜段→跑到 b 的行 ✓
+            out.append([a, (a[0], b[1] - s * abs(dx)), b])          # 斜段在 b 端，先竖直 ✓
+            out.append([a, (b[0] - s * abs(dy), a[1]), b])          # 斜段在 b 端，先水平 ✓
     for x in chx:
         out.append([a, (x, a[1]), (x, b[1]), b])
     for y in chy:
@@ -304,6 +334,20 @@ def candidates(a, b, chx, chy):
 
 def bends(path):
     return max(0, len(path) - 2)
+
+
+def diag_extra(path):
+    """斜线比正交**多算**的那部分长度 ✓（= `DIAG_PEN` 罚分 ✓；正交段为 0 ✓）
+
+    ★ 只在**最后一档**（长度）里加 ✓ ⇒ 它压不过“少交叉”“不穿本体” ✓
+      —— “正交比斜线好看” ✓ 但“斜线能换掉一个交叉”时仍然选斜线 ✓。
+    """
+    e = 0.0
+    for i in range(len(path) - 1):
+        p, q = path[i], path[i + 1]
+        if abs(p[0] - q[0]) > 1e-6 and abs(p[1] - q[1]) > 1e-6:
+            e += (DIAG_PEN - 1.0) * math.hypot(q[0] - p[0], q[1] - p[1])
+    return e
 
 
 def plen(path):
@@ -337,26 +381,13 @@ def inside_count(path, own_boxes, shrink=0.5):
 
 
 def seg_cross(p, q, r, s, eps=0.05):
-    """两段**正交**导线的**内部十字交叉** ✓（一竖一横 ✓；端点相接/共线重叠都不算 ✓）
+    """两段导线的**内部十字交叉** ✓（外壳 ⇒ `sch_geom.seg_cross` ✓，含斜线 ✓）
 
-    ★ 为什么要它（2026-09-27 用户按"美学"提要求后发现 ✓）：
-      原代价 `(free, bends, plen)` 里**根本没有交叉这一项** ✗ ⇒ 布线器宁可让线
-      从 `U1` 肚子里穿过去、宁可到处交叉 ✗（实测 v4：摆位压缩后总长 −45% ✓ 但
-      **交叉 12 → 16** ✗ ✗）。面包板那边的教训就是：**交叉数是头号指标** ✓
-      （`bb_route4.py` 的 `长度 + K×交集` ✓）⇒ 这里把交叉数放到代价的**第一优先级** ✓。
+    ★ 原来是**正交专用**的本地实现 ✗ ⇒ 一放开斜线，“交叉数”就**少算** ✗✗
+      （实测：用户手改版按旧判据是 4 ✗、按新判据是 **18** ✓ —— 拿假数字下过结论 ✗）。
+      面包板还教过：判据**只能一份实现** ✓。
     """
-    if abs(p[0] - q[0]) < 1e-6 and abs(p[1] - q[1]) > 1e-6:
-        v, h = (p, q), (r, s)
-    elif abs(r[0] - s[0]) < 1e-6 and abs(r[1] - s[1]) > 1e-6:
-        v, h = (r, s), (p, q)
-    else:
-        return False
-    if abs(h[0][1] - h[1][1]) > 1e-6 or abs(h[0][0] - h[1][0]) < 1e-6:
-        return False
-    x, y = v[0][0], h[0][1]
-    y0, y1 = sorted((v[0][1], v[1][1]))
-    x0, x1 = sorted((h[0][0], h[1][0]))
-    return (x0 + eps < x < x1 - eps) and (y0 + eps < y < y1 - eps)
+    return SG.seg_cross(p, q, r, s)
 
 
 def cross_count(path, used):
@@ -406,7 +437,20 @@ def main(argv):
         global RATIO
         RATIO = float(argv[argv.index("--ratio") + 1])
         print("尺子换算：RATIO = %.4f（导出尺子 1.25 ✓ / 渲染尺子 1.0 ✓）" % RATIO)
+    if "--K" in argv:                         # 一个“交集”值多少长度 ✓（默认 35.4 = 10mm ✓）
+        global K_INTER
+        K_INTER = float(argv[argv.index("--K") + 1])
+        print("交集当量 K_INTER = %.1f sketch 单位（= %.1f mm ✓；越大越看重少交叉 ✓）"
+              % (K_INTER, K_INTER * 25.4 / 90.0))
     preview = argv[argv.index("--preview") + 1] if "--preview" in argv else None
+    if "--no45" in argv:                     # A/B 用 ✓：关掉 45° 候选（只留正交 ✓）
+        global USE45
+        USE45 = False
+        print("45° 斜线：**关闭** ✓（只走正交 ✓，用于 A/B 对照 ✓）")
+    if "--diag" in argv:                      # 斜线罚分可调 ✓（默认 1.25 ✓）
+        global DIAG_PEN
+        DIAG_PEN = float(argv[argv.index("--diag") + 1])
+        print("斜线罚分 DIAG_PEN = %.2f（1.0 = 斜线与正交同价 ✓；越大越少用斜线 ✓）" % DIAG_PEN)
     orig = [argv[argv.index("--orig") + 1]] if "--orig" in argv else [None]
     if "--pins" in argv:                      # 载入标定过的脚位置 ✓
         import importlib.util
@@ -439,7 +483,14 @@ def main(argv):
                                        for t, b in sorted(boxes.items())))
 
     used, nets_segs, warn = [], {}, []
-    for net, pins in NETS.items():
+    # ★ 布线**次序**：先把电源/地布完 ✓、再布信号 ✓（面包板规则 ⑩ ✓：
+    #   “先布电源/地，但**要把中间走廊留给后面的信号线**” ✓）。
+    #   这里先只做前半条（次序 ✓）；后半条（给电源/地的“走中间”加权 ✓）还没做 ✗。
+    POWER_FIRST = ("GND", "5V")
+    net_order = [n for n in POWER_FIRST if n in NETS] + \
+                [n for n in sorted(NETS) if n not in POWER_FIRST]
+    for net in net_order:
+        pins = NETS[net]
         if len(pins) < 2:
             print("网 %-9s 只有 %d 个脚 ⇒ 没有线可画 ✓（保持独立 ✓）" % (net, len(pins)))
             continue
@@ -456,22 +507,41 @@ def main(argv):
             best, best_key = None, None
             own_boxes = [box for t, box in boxes.items() if t in mine]
             for path in candidates(a, b, sorted(chx), sorted(chy)):
-                no_box = all(not seg_hits_box(path[k], path[k + 1], box, CLEAR)
-                             for k in range(len(path) - 1)
-                             for t, box in boxes.items() if t not in mine)
-                if not no_box:
-                    continue
-                # ★ 自己的本体：只允许"从脚上走出来" ✓，**不许穿自己肚子** ✗
-                if hits_own_body(path, own_boxes):
-                    continue
-                free = all(not overlap(path[k], path[k + 1], p2, q2)
-                           for k in range(len(path) - 1) for (p2, q2) in used)
-                # ★ 新版代价（2026-09-27 ✓）：
-                #   ① 与已布线段**共线重叠**的，先排掉 ✓ ② **十字交叉少** ✓（头号指标 ✓）
-                #   ③ **穿自己本体少** ✓ ④ 弯少 ✓ ⑤ 短 ✓
-                #   —— 拿面包板的教训："先只按交叉数排 ✓、再按加权代价算账 ✓" ✓
-                key = (0 if free else 1, cross_count(path, used),
-                       inside_count(path, own_boxes), bends(path), plen(path))
+                # ★ 一个代价函数排完所有候选 ✓（不再"先跳掉不合格的" ✗）——
+                #   因为放开斜线后，"第一条候选"可能正是最差的一条 ✗，
+                #   兜底绝不能瞎拿一条 ✗（2026-09-27 实测：那次兜底把线直穿元件 ✗）。
+                nv = 0                       # ① 碰到**别的元件**本体（越少越好 ✓）
+                for k in range(len(path) - 1):
+                    for t, box in boxes.items():
+                        if t not in mine and seg_hits_box(path[k], path[k + 1], box, CLEAR):
+                            nv += 1
+                # ② **与已布好的线压在同一条直线上** ✗✗ —— v5 实测 **18 对** ✗
+                #    （`J1` 三只脚的线**全在同一列上竖着走** ✗ ⇒ 图上像三只脚短路了 ✗）
+                #    判据用 `sch_geom.near_overlap` ✓（唯一实现 ✓，含斜线 ✓）
+                nov = 0
+                for k in range(len(path) - 1):
+                    for (p2, q2) in used:
+                        if SG.near_overlap(path[k], path[k + 1], p2, q2):
+                            nov += 1
+                # ★★ 目标函数 = **长度 + K × 交集** ✓（面包板规则 ⑧ ✓，2026-09-27 搬到原理图 ✓）
+                #   交集 = 碰别的元件本体 + 与已布线压同一条直线 + 十字交叉 ✓
+                #   （面包板当天修正过：“交集”= X 形 + T 形 + 从元件下穿过**三类都算** ✓）。
+                #   ★ 为什么要两段式：
+                #     · 先只按**交集数**排 ✓（头号指标 ✓）；
+                #     · 再按 `长度 + K×交集` 算账 ✓ —— 全程加权会到处加交叉 ✗（实测 ✓）。
+                #   ✗ 我先前后试过两个错版（都实测过 ✗，记下来别再试 ✗）：
+                #     ① `弯数` 排在 `长度` 前 ✗ ⇒ 宁可拉长斜线换弯 ✗；
+                #     ② `长度` 排在 `弯数` 前、且**没有 K** ✗ ⇒ 全变一根直线 ✓ 短 ✓
+                #        但**交叉 7 → 42** ✗✗（长直线开头就把后面的路全堵了 ✗）。
+                # ★ 代价顺序 = v5 验证过的那一套 ✓（先硬闸门 ✓、再交叉数 ✓、再弯/长 ✓）
+                #   · `nv`（碰别的元件）与 `nov`（压在同一条直线上）**当硬闸门** ✓ ——
+                #     ✗ 改成“小罚分”实测会把交叉从 8 拉到 40 ✗（漏一角的本体比交叉划算 ✗）✓
+                #   · 交叉数保持**头号指标** ✓（面包板教训 ✓）
+                key = (1 if hits_own_body(path, own_boxes) else 0,
+                       1 if nv else 0,
+                       nov + cross_count(path, used),
+                       inside_count(path, own_boxes),
+                       bends(path), plen(path) + diag_extra(path))
                 if best_key is None or key < best_key:
                     best, best_key = path, key
             if best is None:

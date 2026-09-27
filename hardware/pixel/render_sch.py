@@ -48,6 +48,7 @@ import xml.etree.ElementTree as ET
 import toolpaths                                                  # noqa: E402
 import part_box as PB                                             # noqa: E402
 import sch_text as ST                                            # ★ 字宽表（唯一实现 ✓）
+import sch_geom as SG                                            # ★ 几何判据（含斜线 ✓，唯一实现 ✓）
 
 SK_U_PER_MM = PB.MM                       # 3.5433 ✓（1/90 in ✓）
 UMM = {"mm": 1.0, "cm": 10.0, "in": 25.4, "px": 25.4 / 72.0, "pt": 25.4 / 72.0,
@@ -384,18 +385,6 @@ DOT_R = 0.9
 JTOL = 0.01
 
 
-def on_seg(p, a, b, tol=0.05):
-    """p 是否落在 a→b 的**中段** ✓（两端不算 ✓）"""
-    dx, dy = b[0] - a[0], b[1] - a[1]
-    L2 = dx * dx + dy * dy
-    if L2 < 1e-9:
-        return False
-    t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2
-    if not (0.02 < t < 0.98):
-        return False
-    return math.dist(p, (a[0] + t * dx, a[1] + t * dy)) < tol
-
-
 GRP = []
 for _p in (p for _t, a, b, _c, _w in wires for p in (a, b)):
     _hit = next((g for g in GRP if math.dist(_p, g[0]) < JTOL), None)
@@ -500,28 +489,19 @@ for t, why in skipped:
 #   两类都算 ✓：① 导线×导线的**十字交叉**（内部相交 ✓；共端点/共线不算 ✓）；
 #   ② 导线**穿过零件本体框**的段数 ✓（导线从元件肚子里穿过 = 用户点过名的毛病 ✓）。
 
-def _cross(a, b, c, d, eps=0.05):
-    """正交两段的**内部十字交叉** ✓（一竖一横 ✓；端点相接/共线重叠都不算 ✓）"""
-    if abs(a[0] - b[0]) < 1e-6 and abs(a[1] - b[1]) > 1e-6:
-        v, h = (a, b), (c, d)
-    elif abs(c[0] - d[0]) < 1e-6 and abs(c[1] - d[1]) > 1e-6:
-        v, h = (c, d), (a, b)
-    else:
-        return False
-    if abs(h[0][1] - h[1][1]) > 1e-6 or abs(h[0][0] - h[1][0]) < 1e-6:
-        return False
-    x, y = v[0][0], h[0][1]
-    y0, y1 = sorted((v[0][1], v[1][1]))
-    x0, x1 = sorted((h[0][0], h[1][0]))
-    return (x0 + eps < x < x1 - eps) and (y0 + eps < y < y1 - eps)
-
-
 SEGS2 = [(a, b) for _t, a, b, _c, _w in wires]
 nx = 0
 for i in range(len(SEGS2)):
     for j in range(i + 1, len(SEGS2)):
-        if _cross(SEGS2[i][0], SEGS2[i][1], SEGS2[j][0], SEGS2[j][1]):
+        if SG.seg_cross(SEGS2[i][0], SEGS2[i][1], SEGS2[j][0], SEGS2[j][1]):
             nx += 1
+# ★ 第三类毛病：两段**几乎压在一条线上** ✗（看着像一根 ✓ 读图分不清 ✓）
+#   —— 手改版里就有一对（斜率 0.08° 与 0.28° ✓）⇒ 必须能报出来 ✓（`sch_geom` 唯一实现 ✓）
+nov = 0
+for i in range(len(SEGS2)):
+    for j in range(i + 1, len(SEGS2)):
+        if SG.near_overlap(SEGS2[i][0], SEGS2[i][1], SEGS2[j][0], SEGS2[j][1]):
+            nov += 1
 
 
 def _hits_box(p, q, box, infl=1.0, need=4):
@@ -560,7 +540,8 @@ for ttl_w, a, b, _c, _w in wires:
             nb += 1
             HITS.append((ttl_w, t, a, b))
 print("── ★ 美学指标：导线**十字交叉 %d 处** ✓｜导线**穿过别的元件本体 %d 段** ✓"
-      "（两个数越小越美 ✓ —— 面包板那条教训：交叉数是头号指标 ✓）" % (nx, nb))
+      "｜导线**几乎压在一起 %d 对** ✓（判据含斜线 ✓ —— `sch_geom` 唯一实现 ✓；"
+      "面包板那条教训：交叉数是头号指标 ✓）" % (nx, nb, nov))
 # ★ **点名** ✓（2026-09-27 用户定的规矩：结论必须可查 ✓ —— 只给个数 ✗ 我没法判它是真毛病
 #   还是"脚本来就在本体内部"的必然情形 ✗）+ 给出**穿进去多深** ✓（越深越像真毛病 ✓）
 for ttl_w, t, a, b in HITS[:12]:
