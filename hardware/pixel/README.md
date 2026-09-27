@@ -17,6 +17,33 @@
 
 *像素板 = 1 个线圈 + 1 路整流 + 1 颗 MCU + 1 颗 1010 LED*
 
+## 0. 原理图：渲染器与 v1 摆位（2026-09-27）
+
+**为什么要渲染器**：本机 Fritzing 的**命令行导出是坏的** ✗（库仓 `tools/README.md` 早有记录 ✓）
+⇒ 每轮都要**用户手动导图**给我看 ✗。`render_sch.py` 把这一步自动化 ✓ —— 它按 Fritzing
+自己的摆放规矩把 `.fzz` 的**原理图视图**渲成 PNG/SVG ✓。
+
+    py -3.13 render_sch.py <sketch.fzz> <out.png> [<px宽>] [--verify-export <Fritzing导出的.svg>]
+
+★ **不是自证** ✓：`--verify-export` 拿 **Fritzing 自己导出的 svg 当尺子** ✓ 逐件核对 ✓
+（实测：`pixel-schematic.fzz` 9 件 **Δ ≤ 0.0004 单位 = 0.00011 mm** ✓；
+`pixel-schematic-v1.fzz` 9 件 **Δ ≤ 0.00003 单位** ✓ ⇒ 渲染即 Fritzing ✓）。
+
+| | |
+|---|---|
+| [![原图（用户手画，含 41 根导线）](pixel-schematic_preview.png)](pixel-schematic_preview.png) | [![v1：只摆元件、干净画布](pixel-schematic-v1_preview.png)](pixel-schematic-v1_preview.png) |
+| **原图** ✓ —— J1/J2 吊在最上方 ✓、长线横穿全图 ✓、位号压在线/元件上 ✓ | **v1** ✓ —— 只摆元件 ✓（主链 `J1→U1→LED2→J2` 一条水平线 ✓、采集支路下沉 ✓、C2 贴 U1 上方 ✓） |
+
+**v1 还没接线** ✓ —— 接线是下一手 ✓（`gen_schematic_wires.py` 既有管线 ✓）。
+v1 已暴露、待下一手解决的两点 ✓：① 各件**符号原点不居中** ⇒ 主链各件的**引脚行还没对齐** ✗；
+② 采集支路块间**还不够紧凑** ✗。
+
+**核心事实（机验钉死 ✓）**：原理图的 sketch 单位 = **1/90 in** ✓（**与面包板同一套** ✓）；
+摆放 = `geometry + M·(k·(局部坐标 − viewBox原点))` ✓，`k = 声明物理尺寸/viewBox宽 × 3.5433` ✓。
+（踩坑清单：core svg 用**单引号** ✗；连接点是 `connectorNterminal` 而非 pin 线中点 ✗；
+`<transform>` 是 `<geometry>` 的**子元素** ✗；取 `<g id=…>` 要**认自闭合** ✗；仿射的
+`A4/A5` **不能漏** ✗ —— 详见 `render_sch.py` 头部。）
+
 ## 1. 定位
 
 - **单卖**：一片小方板 + 5 V 输入，线圈朝向被测物体 → 板载 LED 的亮度/颜色表示 13.56 MHz 近场场强。
