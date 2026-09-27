@@ -108,12 +108,19 @@ def shape_pts(el):
 
 
 def body_pts(el, m, out):
-    """本体图形（跳过 pin / terminal / text ✓）的导出坐标点 ✓
+    """本体的导出坐标点 ✓
 
-    ★ 坑（2026-09-26）：不能按"有没有 x 属性"来判断 ✗ —— `<rect>` 本体**也带** x ✓，
-      那样写会把所有矩形本体都跳过 ✗（U1/LED2/C1/C2 的本体框就成了空 ✗）
+    ★★ 2026-09-27 修（实测 ✓）：原来**跳过** `class="pin"` 与 `*terminal` ✗
+      ⇒ keep-out 盒**只框住本体矩形** ✗（实测 `U1(41.5,-31.5→104.5,31.5)` ✓ 63×63 ✓，
+        而 U1 的引脚线伸到 x=29.8…116.2 ✓）⇒ 布线器就钻了空子 ✗：
+        在 **x=106.13** 竖着走 135 单位 ✓ —— 正好在 **U1 引脚线那一带** ✗
+        ⇒ 导线从**引脚线之间**穿过去 ✗（视觉上就像接上了 ✗ **最容易误导人** ✗）。
+      ✓ 现在把引脚线也算进本体框 ✓（与 `render_sch.py` 的量尺**同口径** ✓），
+        这样"贴着一排脚的外侧"就不再是可走的走廊 ✓。
+      ⚠ 注意：引脚**末端**就在框边界上 ✓ ⇒ 导线从**外面**接到脚上不会因此被挡 ✗
+        （自己的元件本来就有豁免 ✓，且豁免已收紧到"端点 R 单位以内" ✓）。
     """
-    if tag(el) == "text" or el.get("class") == "pin" or (el.get("id") or "").endswith("terminal"):
+    if tag(el) == "text":
         return
     for (x, y) in shape_pts(el):
         out.append(apply(m, x, y))
@@ -362,6 +369,33 @@ def cross_count(path, used):
     return n
 
 
+def hits_own_body(path, own_boxes, R=10.0):
+    """路径是否**穿过了自己两端元件的本体** ✓（隔端点 R 单位**以外**才算 ✗）
+
+    ★★ 为什么要这条硬限制（2026-09-27 实测 ✓）：
+      ✗ 原来对 `my_boxes` **整个豁免** ✗（因为脚往往就在本体边界上 ✓，不允许碰就无路可走 ✓）
+        ⇒ 但这样一来，布线器发现了一条**漏洞** ✗✗：
+        **在元件肚子里走，谁也遇不到 ⇒ 交叉数最低** ✗ ⇒ 它专挑这种路 ✗
+        （实测：一段竖直总线从 `U1` 肚子里穿了 **48.5 mm** ✗、还有一段穿 `J1` 9.6 mm ✗）。
+      ✓ 现在：自己的本体只允许在**路径两端 R 单位以内**碰 ✓（= "从脚上走出来" ✓）；
+        隔得远还在本体里 ⇒ 一律不许 ✓。R = 10 单位 ≈ 2.8 mm ✓（够离开引脚与边界 ✓）。
+    """
+    for k in range(len(path) - 1):
+        p, q = path[k], path[k + 1]
+        for box in own_boxes:
+            if not seg_hits_box(p, q, box, -0.5):
+                continue
+            n = max(2, int(max(abs(q[0] - p[0]), abs(q[1] - p[1]))) + 1)
+            for i in range(n + 1):
+                t = i / n
+                x, y = p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t
+                if (box[0] + 0.5 <= x <= box[2] - 0.5 and box[1] + 0.5 <= y <= box[3] - 0.5
+                        and min(math.dist((x, y), path[0]),
+                                math.dist((x, y), path[-1])) > R):
+                    return True
+    return False
+
+
 def main(argv):
     fzz, svg, out_path = argv[0], argv[1], argv[2]
     if "--ratio" in argv:
@@ -426,6 +460,9 @@ def main(argv):
                              for k in range(len(path) - 1)
                              for t, box in boxes.items() if t not in mine)
                 if not no_box:
+                    continue
+                # ★ 自己的本体：只允许"从脚上走出来" ✓，**不许穿自己肚子** ✗
+                if hits_own_body(path, own_boxes):
                     continue
                 free = all(not overlap(path[k], path[k + 1], p2, q2)
                            for k in range(len(path) - 1) for (p2, q2) in used)

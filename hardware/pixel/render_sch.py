@@ -533,13 +533,34 @@ def _hits_box(p, q, box, infl=1.0, need=4):
 
 
 nb = 0
-for a, b in SEGS2:
+HITS = []
+for ttl_w, a, b, _c, _w in wires:
     # ★ 排除**自己两端**的元件 ✓（它的脚本来就在本体里 ✓，穿过自己不算毛病 ✗）
     own = {q[0] for q in PIN_SK
            if math.dist(q[2], a) < 0.05 or math.dist(q[2], b) < 0.05}
-    nb += sum(1 for t, box in PART_BOX.items() if t not in own and _hits_box(a, b, box))
-print("── ★ 美学指标：导线**十字交叉 %d 处** ✓｜导线**穿过元件本体 %d 段** ✓"
+    for t, box in PART_BOX.items():
+        if t in own:
+            continue
+        if _hits_box(a, b, box):
+            nb += 1
+            HITS.append((ttl_w, t, a, b))
+print("── ★ 美学指标：导线**十字交叉 %d 处** ✓｜导线**穿过别的元件本体 %d 段** ✓"
       "（两个数越小越美 ✓ —— 面包板那条教训：交叉数是头号指标 ✓）" % (nx, nb))
+# ★ **点名** ✓（2026-09-27 用户定的规矩：结论必须可查 ✓ —— 只给个数 ✗ 我没法判它是真毛病
+#   还是"脚本来就在本体内部"的必然情形 ✗）+ 给出**穿进去多深** ✓（越深越像真毛病 ✓）
+for ttl_w, t, a, b in HITS[:12]:
+    bb = PART_BOX[t]
+    deep = 0
+    n = max(2, int(max(abs(b[0] - a[0]), abs(b[1] - a[1]))) + 1)
+    for i in range(n + 1):
+        u = i / n
+        x, y = a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u
+        if bb[0] + 0.5 <= x <= bb[2] - 0.5 and bb[1] + 0.5 <= y <= bb[3] - 0.5:
+            deep += 1
+    print("      ⚠ %-14s 穿进 **%s** 的本体（%.1f 单位深 ≈ %.2f mm）"
+          % (ttl_w, t, deep * 2.0, deep * 2.0 * MMU))
+if len(HITS) > 12:
+    print("      ⚠ …… 另有 %d 段" % (len(HITS) - 12))
 
 # ── ④c ★ 摆位用纯数据导出 ✓（`--pins-out <file.py>` ✓；单位 = sketch ✓、参考点 = 零件锚点 ✓）──
 if "pins-out" in opts:
