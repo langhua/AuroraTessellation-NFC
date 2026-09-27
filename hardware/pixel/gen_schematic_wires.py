@@ -140,6 +140,16 @@ ESC_OFFS = (ESC_PIN, ESC_PIN + 7.2)
 #   ★ 基线随时可回 ✓：`--noesc --oldorder`（= A ✓，实测与 v14 一字节不差 ✓）。
 USE_ESC = True
 NEW_ORDER = True
+# ★★ 已证伪并回退（2026-09-27 ✓）——“出脚车道过滤”这一整轴 ✗：
+#   做法：把出脚候选的车道按“**跨度内会贴着别的脚** ⇒ 丢掉”精确过滤 ✓（比全局砍通道准得多 ✓）
+#   ⇒ `_scratch/t17.py` 两档 A/B 实测：① 带过滤 与 ② `--escraw` **一字节不差** ✗ ⇒ **零效果** ✗
+#     ⇒ 说明**出脚候选本来就没被选中** ✗ ⇒ 改它的车道 = 白改 ✓。
+#   ★★ 本轮最终根因（定量 ✓，不是猜的 ✓）：**不是路由问题 ✗，是摆位问题** ✓ ——
+#     U1 左缘 `x=22.6` 与 J1 右缘 `x=15.4` ⇒ 中间**只剩 7.2** ✓，而安全距离 `CLEAR_PIN`
+#     也刚好是 **7.2** ✗ ⇒ **一条 ≥7.2 的空走廊都没有** ✗ ⇒ 从 U1 左排出发，
+#     **往左必蹭 J1 的脚** ✗、**在列内跑必蹭同列别的脚** ✗ ⇒ 出脚候选的 `wt`
+#     **永远 ≥ “骑引脚列”的 3** ✗ ⇒ 布线器只能选“骑” ✓。
+#   ⇒ 本轴**到此停手** ✓（两次实测：一次越改越差 ✗、一次零效果 ✗）⇒ 改到**摆位**轴上再谈 ✓。
 P_STEP = 2.0          # 判定用的采样步长（单位 ✓，与其余判据同一套口径 ✓）
 # ★★ 抽出重排的轮数 ✓（2026-09-27 ✓，面包板验证过的最后一道工序 ✓）：
 #   把每段抽出来、在“看得见其它所有线”的条件下重算 ✓ ⇒ **只留更优的** ✓（单调改进 ✓）。
@@ -466,6 +476,8 @@ def esc_cands(a, b, na, nb, chx2, chy2):
     cx = [v for v in sorted(set(chx2) | set(xs)) if min(xs) - 40.0 <= v <= max(xs) + 40.0]
     cy = [v for v in sorted(set(chy2) | set(ys)) if min(ys) - 40.0 <= v <= max(ys) + 40.0]
     out = []
+    # ✗ 曾在这里加过“车道跨度内贴引脚 ⇒ 丢掉”的精确过滤 ✓ ⇒ 实测**零效果** ✗（见上面那段证伪记录 ✓），
+    #   已撤 ✓ —— 原因：“出脚候选根本没被选中”✗，改它的车道无意义 ✓。
     for ap in aps:
         for bp in bps:
             for x in cx:
@@ -701,12 +713,15 @@ def main(argv):
              fit["y"][0], fit["y"][1], fit["y"][2]))
 
     chx, chy = set(), set()
-    # ★★ **干净通道** ✓（2026-09-27 ✓）：只收“元件边 ± `CH_OFFS`” ✓ —— **不放任何引脚坐标** ✗
-    #   ★ 为什么关键 ✗：用户那两条规则（安全距离 ✓ / 不重叠 ✓）的病根就是
-    #     “**主干骑在引脚行列上**” ✗（实测 x=22.6 / 0.0 / 1.7 ✓ = 引脚列 ✓）——
-    #     而 `chx/chy` 里的引脚坐标正是把主干引上去的那扇门 ✗。
-    #   ⇒ 出脚组合（`esc_cands` ✓）只准用干净通道 ✓；直连 / L 形 / 45° 仍可用 `chx/chy` ✓
+    # ★★ **干净通道** ✓：只收“元件边 ± `CH_OFFS`” ✓ —— **不放任何引脚坐标** ✗
+    #   ⇒ 出脚组合（`esc_cands` ✓）只准用干净通道 ✓；直连 / L 形 / 45° 仍用 `chx/chy` ✓
     #     （它们“进脚”那一段本来就必须落在引脚行列上 ✓ —— 那是连接点 ✓）。
+    #   ✗ 已证伪并回退的做法（2026-09-27 ✓，太粗暴 ✗）：把**全局**通道按“离任何引脚坐标 <
+    #     `CLEAR_PIN` 就丢”过滤 ✗ ⇒ 实测 x 72→**20** ✗、y 72→**26** ✗ ⇒ 通道不够 ⇒
+    #     贴脚 **11→16** ✗、重叠 **0→1** ✗、穿体 **6→8** ✗、总长 +5% ✗ ——
+    #     **全部指标一起变差** ✗（= “通道少 ⇒ 布线器没路可走” ✓）。
+    #   ✓ 正确做法（有针对性 ✓）：只把**出脚候选里、跨度内会贴着引脚跑**的那几条车道剔掉 ✓
+    #     （跨度是知道的 ✓ ⇒ 能精确判 ✓），全局通道一条不动 ✓。
     chx_clean, chy_clean = set(), set()
     for d in insts.values():
         b = d["box"]
@@ -714,7 +729,7 @@ def main(argv):
         #   ★ 为什么这条路走不通 ✓（同一天晚些时候由 `--why` 探针弄清 ✓）：
         #     病根**不是**“谁占哪条走廊” ✗，而是**候选形状里没有“沿法线出脚”那一种** ✗
         #     ⇒ 只能“进脚 / 出脚都在排内跑” ✗ ⇒ 怎么挪走廊都没用 ✗。
-        #     正解 = `esc_cands` + `chx_clean/chy_clean` ✓（见 `ESC_OFFS` 那段完整病史 ✓）。
+        #     正解 = `esc_cands` ✓（见 `ESC_OFFS` 那段完整病史 ✓）。
         #   ⇒ 这一条保持回退 ✓（不再往这个方向打补丁 ✗）。
         if b:
             chx.update(b[0] - o for o in CH_OFFS)
@@ -840,12 +855,15 @@ def main(argv):
         ★ `tag` 非空 + `--why` + 首轮 ⇒ 把“选中 / 亚军”两个代价元组与**第一处不同的档位**
           打到 stdout ✓（探针 ✓ 不改行为 ✓）。
         """
-        cands = candidates(a, b, sorted(chx), sorted(chy))
+        base_c = candidates(a, b, sorted(chx), sorted(chy))
+        esc_c = []
         if USE_ESC:                    # ★ 默认开 ✓（用户定：重叠 0 优先 ✓）
             na = PIN_N_BY_XY.get((round(a[0], 3), round(a[1], 3)), (0.0, 0.0))
             nb = PIN_N_BY_XY.get((round(b[0], 3), round(b[1], 3)), (0.0, 0.0))
             if na != (0.0, 0.0) or nb != (0.0, 0.0):
-                cands = cands + esc_cands(a, b, na, nb, chx_clean, chy_clean)
+                esc_c = esc_cands(a, b, na, nb, chx_clean, chy_clean)
+        cands = base_c + esc_c
+        esc_ids = {id(p) for p in esc_c}     # ★ 用来单独盯“出脚候选”的成绩 ✓（探针用 ✓）
         seen, uniq = set(), []         # ★ 去掉重复候选 ✓（出脚形状会与直连/L 形撞车 ✓）
         for p in cands:
             t = tuple((round(q[0], 4), round(q[1], 4)) for q in p)
@@ -854,8 +872,11 @@ def main(argv):
                 uniq.append(p)
         cands = uniq
         best, best_key, alt, alt_key = None, None, None, None
+        esc_best, esc_best_key = None, None
         for path in cands:
             key = route_key(path, mine, own_pins, used)
+            if id(path) in esc_ids and (esc_best_key is None or key < esc_best_key):
+                esc_best, esc_best_key = path, key
             if best_key is None or key < best_key:
                 if best is not None:           # ★ 上一名降为“亚军” ✓
                     alt, alt_key = best, best_key
@@ -865,12 +886,20 @@ def main(argv):
         if WHY and tag and PHASE[0] == "greedy" and alt is not None:
             dif = next((i for i in range(len(best_key))
                         if best_key[i] != alt_key[i]), -1)
-            print("   [why] %-22s 候选 %2d 条" % (tag, len(cands)))
+            print("   [why] %-22s 候选 %d 条（直连/L/45°/通道 %d ✓ + 出脚 %d ✓）"
+                  % (tag, len(cands), len(base_c), len(esc_c)))
             print("   [why] %-22s 选中 %s ｜ 路径 %s"
                   % ("", best_key, " ".join("%.1f,%.1f" % (q[0], q[1]) for q in best)))
             print("   [why] %-22s 亚军 %s ⇒ 第 %d 档「%s」定胜负"
                   % ("", alt_key, dif + 1,
                      (TIER_NEW if NEW_ORDER else TIER)[dif] if dif >= 0 else "全同"))
+            # ★★ “出脚候选”自己的最好成绩 ✓（2026-09-27 ✓）—— 直接看它们输在哪一档 ✓，不再靠我推 ✗
+            if esc_best is not None:
+                print("   [why] %-22s 出脚最好 %s ｜ 路径 %s"
+                      % ("", esc_best_key,
+                         " ".join("%.1f,%.1f" % (q[0], q[1]) for q in esc_best)))
+            else:
+                print("   [why] %-22s 出脚候选：**一条未生成** ✗（法线缺失 / 被去重吃掉 ✗）" % "")
         return best, best_key
 
     for net in net_order:

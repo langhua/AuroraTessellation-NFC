@@ -590,12 +590,29 @@ for ttl_w, a, b, _c, _w in wires:
             continue
         d2 = _p2seg(pp, a, b)
         if d2 < CLEAR_PIN:
-            pc_hits.append((ttl_w, t2, cid2, d2))
+            # ★ 顺手把“因”也记下来 ✓（只加信息 ✓ 不改判据 ✓）：这根线段是**骑在引脚行列上**、
+            #   还是单纯**擦过** ✓ ⇒ 治病要对症 ✓（骑行列 ⇒ 出脚/通道问题 ✓；擦过 ⇒ 走廊问题 ✓）。
+            if abs(a[0] - b[0]) < 0.05 and abs(pp[0] - a[0]) < 0.05:
+                why = "骑在引脚**列**上"
+            elif abs(a[1] - b[1]) < 0.05 and abs(pp[1] - a[1]) < 0.05:
+                why = "骑在引脚**行**上"
+            else:
+                why = "擦过"
+            pc_hits.append((ttl_w, t2, cid2, d2, a, b, why, sorted(own)))
 print("── ★ 可读性：导线贴近**不相连的引脚**（< %.1f 单位 = %.2f mm ✓）**%d 处** %s"
       % (CLEAR_PIN, CLEAR_PIN * MMU, len(pc_hits), "✓✓" if not pc_hits else "✗✗"))
-for ttl_w, t2, cid2, d2 in sorted(pc_hits, key=lambda z: z[3])[:6]:
+for ttl_w, t2, cid2, d2, a, b, why, own in sorted(pc_hits, key=lambda z: z[3])[:6]:
     print("      ⚠ %-14s 蹭到 %s.%s（%.2f 单位 = %.2f mm）✗"
           % (ttl_w, t2, cid2, d2, d2 * MMU))
+# ★★ 全部明细 ✓（2026-09-27 加 ✓）：原来只报 6 处 ✗ ⇒ 治的时候量不全 ✗
+#   ⇒ 报出**线段两端坐标**（用来对上是哪一段 ✓）+ **因**（骑列 / 骑行 / 擦过 ✓）
+#     + 这根线**自己的脚**（= 它连的是谁 ✓）。
+if len(pc_hits) > 6:
+    print("      —— 全部 %d 处（供定位 ✓）：" % len(pc_hits))
+    for ttl_w, t2, cid2, d2, a, b, why, own in sorted(pc_hits, key=lambda z: z[3]):
+        print("         %-14s %-16s %6.2f 单位  (%.1f,%.1f)→(%.1f,%.1f)  %s  自己的脚=%s"
+              % (ttl_w, "%s.%s" % (t2, cid2), d2, a[0], a[1], b[0], b[1], why,
+                 ",".join("%s.%s" % (r, c) for r, c in own)))
 
 
 # ── ④d ★ 美学指标之二：**位号文字压到东西** ✓（2026-09-27 用户点名 ✓）──#   配 ① 别的元件的本体框 ✓ ② 导线 ✓ ③ 别的位号 ✓（三类分开报 ✓，且**逐条点名** ✓）。
