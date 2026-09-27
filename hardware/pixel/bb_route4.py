@@ -474,7 +474,16 @@ def main(argv):
 
     def wire_segs():
         # ★ 含**额外线**（EPAD 接地 ✓）：它也是障碍 ✓（以前漏在外面 ✗ ⇒ 重排时看不见它 ✗）
-        return [(j[1][i], j[1][i + 1]) for j in jumpers for i in range(len(j[1]) - 1)] + fixed_segs
+        # ★★ 2026-09-27 加 `SKIP` ✓：算"某个线**自己**的愿望"时，要把它**先摘出场** ✓
+        #   —— 否则 `cur` 里含它自己的旧线段 ✗ ⇒ `ref` 把"和自己重叠"也算一笔 ✗
+        #   （实测 ✗：`LED_DIN` 的 ref 算成 180.4 而不是 177.2 ✓，多出来那 K=2.8 就是
+        #    "自己重叠自己" ✗）⇒ 愿望排序被污染 ✓。
+        #   ★ 抽出重排是 `del jumpers[i]` 达成的 ✓（同一口径 ✓）；这里不动 `jumpers` ✗
+        #   （索引不能乱 ✗：owner 的下标还要用 ✓）⇒ 用一个跳过开关 ✓。
+        return [(j[1][k], j[1][k + 1]) for idx, j in enumerate(jumpers) if idx != SKIP[0]
+                for k in range(len(j[1]) - 1)] + fixed_segs
+
+    SKIP = [None]            # ★ 正在算"谁自己"的愿望 ✓（None = 谁都不跳 ✓）
 
     def _segs(pts):
         return [(pts[i], pts[i + 1]) for i in range(len(pts) - 1)]
@@ -577,9 +586,21 @@ def main(argv):
     #     折线 (288,126)→(288,122)→(423,122)→(423,18) 68.6mm / 交集 0 ⇒ 形状加权 68.6，
     #     再乘拥挤 (1+0.3×0.33) = **75.4** ✗；斜线 48.8mm × 1.5 = **73.2** ✓
     #     ⇒ 只差 **2.2** ✓ ⇒ 罚到 **1.6 以上** 折线就赢 ✓（1.6×48.8 = 78.1 > 75.4 ✓）。
-    DIAG_PEN = float(os.environ.get("PP_DIAG_PEN", 1.5))
-    print("斜线罚 = ×%.2f（人为可调 ✓ `PP_DIAG_PEN`；1.5 = 老行为 ✓；调大＝更不容忍斜线 ✓）"
-          % DIAG_PEN)
+    #   ★★ 2026-09-27 **默认改为 1.25** ✓（用户当场定 ✓，原话「1.25 的几根斜线，深得我心」✓）：
+    #     起因 ✗：`shape_factor` 改"逐段"之后默认 1.5 ⇒ **一条斜线都没有** ✗
+    #     （`pixel-breadboard99` ✓）；用户评价「**不够自然**」✗ ——
+    #     要的是"**≤3 条、而且跟他自己画的那几条一样**" ✓。
+    #     扫了一遍（同一输入 `pixel-breadboard95.fzz` ✓，判碰/度量都用独立工具 `bb_compare` ✓）：
+    #        P=1.15 ⇒ 总长 344.6 / 斜线 **6** ✗（含 COIL_A 一条 19.3mm 的长斜 ✗）
+    #        P=1.25 ⇒ 总长 **350.8** / 斜线 **4** ✓ ← 用户认可 ✓（他手版 349.5 / 3 ✓）
+    #        P=1.50 ⇒ 总长 365.8 / 斜线 **0** ✗
+    #     ★ 这个数不是试出来的 ✗，是**算出来的** ✓（拿用户手版那根 5V 比 ✓）：
+    #       `pin32B→pin37Y` 走斜线 = 13.7P + 27.9 ✓；走正交 = 12.7 + 33.0 = 45.7 ✓
+    #       ⇒ 斜线胜出的条件 13.7P + 27.9 < 45.7 ⇒ **P < 1.30** ✓
+    #       ⇒ 1.25 正好落在"会画出用户那几条斜线"的区间里 ✓。
+    DIAG_PEN = float(os.environ.get("PP_DIAG_PEN", 1.25))
+    print("斜线罚 = ×%.2f（人为可调 ✓ `PP_DIAG_PEN`；1.25 = 用户选定的默认 ✓；"
+          "调大＝更不容忍斜线 ✓）" % DIAG_PEN)
     # ★★ 2026-09-27 实验开关 `PP_SHAPE_ACCOUNT=1`（用户"折线换斜线，牺牲一点儿" ✓）：
     #   **收尾重排**接"形状加权长度"算账 ✓（默认 0 = 老行为 ✓，一个字不改 ✓）。
     #   ★ 为何必须动这里（实测 ✓）：罚系数单独调大**毫无作用** ✗ ——
@@ -599,19 +620,36 @@ def main(argv):
           % ("**形状加权长度** ✓（默认 ✓）" if SHAPE_ACC[0] else "真实长度 ✓（老口径 ✓）"))
 
     def shape_factor(pts):
-        """★ 2026-09-26 修正（用户美学原则 ✓）：**斜线不如正交折线好看** ✓ ——
+        """★ 2026-09-27 **改成逐段** ✓（用户当场定 ✓，原话「改，斜线过多，并不美观」✓）。
+
+        以前是「**只要点数 > 2 就免罚**」✗ —— 于是"斜线 + 一小段直"这种**假折线**
+        整条被当成折线 ✓ ⇒ **绕过了** ×1.5 的斜线罚 ✗ ⇒ 它比"整条斜线"、甚至比
+        "正交绕路"都便宜 ✗。实测为证 ✓（新加"先斜后直"候选模板之后 ✓）：
+        斜线段 **1 → 9** ✗（`pixel-breadboard98` ✓）—— 长度倒是短了 20mm ✓
+        （363.6 → 343.5 ✓），但"斜线过多，并不美观" ✗ ⇒ 用户要求改 ✓。
+
+        现在 = **逐段**折算 ✓，也就是和 `_shape_total()` 用**同一把尺子** ✓
+        （以前两处口径**不一致** ✗：一个按整条 ✓、一个按逐段 ✓）：
+          等效正交长度 = Σ 逐段长 ×(该段是斜线 ? `DIAG_PEN` : 1.0) ✓
+
+        ★ 返回值仍是"**倍数**" ✓ ⇒ 所有调用点 `_plen(pts) * shape_factor(pts)`
+          一个字都不用改 ✓（单点改动 ✓、可一键回退 ✓）。
+        ★ **两点**的情形与老口径**逐字一致** ✓（`_shape_total` 走的就是两点 ✓）
+          ⇒ 整条斜线该罚多少完全由 `DIAG_PEN` 决定 ✓（当前 1.25 ✓），
+            本次改动本身**不改变**整条斜线的算法 ✓。
+
+        原注（2026-09-26 用户美学原则 ✓，仍然成立 ✓）：**斜线不如正交折线好看** ——
         实测两处"不美"的线（`21H→25D` 黑斜线、`48E→54Y` 红斜线）**都是斜线** ✗，
         而用户点名"美"的线全是**水平 / 垂直或折线** ✓（例：`22H→38H` 水平 ✓）。
-        ⇒ 斜线罚得足够重，让"绕一下的正交折线"胜过"直斜线" ✓
-          （45° 时正交长度是斜线的 1.41 倍 ⇒ 罚系数要 >1.41 ⇒ 取 **1.5** ✓）。
         折线本身**没有加分** ✓（第 9 条：不许为了折线而绕远路 ✓）。
         """
-        if len(pts) > 2:
-            return 1.0
-        dx, dy = abs(pts[0][0] - pts[1][0]), abs(pts[0][1] - pts[1][1])
-        if dx < 1e-9 or dy < 1e-9:
-            return 1.0
-        return DIAG_PEN
+        tot, base = 0.0, 0.0
+        for a, b in _segs(pts):
+            dl = ((b[0] - a[0]) ** 2 + (b[1] - a[1]) ** 2) ** 0.5
+            diag = abs(b[0] - a[0]) > 1e-9 and abs(b[1] - a[1]) > 1e-9
+            tot += dl * (DIAG_PEN if diag else 1.0)
+            base += dl
+        return (tot / base) if base > 1e-9 else 1.0
 
     # ★★ 汇率 K：**1 个「交集」= 允许绕多少 mm** ✓
     #    —— 这是个**人为选定、可调的系数** ✓（2026-09-26 用户定 10mm；≈ 4 个孔 ✓）。
@@ -758,6 +796,18 @@ def main(argv):
             for o in (9.0 * k, -9.0 * k):
                 out.append([p, (p[0], q[1] + o), (q[0], q[1] + o), q])
                 out.append([p, (p[0] + o, p[1]), (p[0] + o, q[1]), q])
+                # ★★ 2026-09-27 加 ✓（用户当场定 ✓ 选 1 ✓）：**先斜后直** ✓
+                #   为什么非加不可 ✗（实测为证 ✓）：`LED_DIN` 想走 row C 的水平直连 ✓，
+                #   该让路的是 5V（一端 `pin32C`→`pin32B` ✓，同一 bus ✓ 电气完全等价 ✓），
+                #   可 5V 换孔后**一个合法走法都没有** ✗ —— 诊断原文 ✓：
+                #     `868 个候选 → ② 穿过元件 LED2 的本体框×284; ③ 与线段
+                #      (279,117)->(306,117) 重叠×128; ④ 盖住了已接线的孔 pin32C×45 …`
+                #   ⇒ 病根 ✓：从 col32 的孔出发**往上的竖线会穿过 LED2 的本体框** ✗。
+                #   而用户 byHand 里那根 5V 是 `(288,135)→(333,117)→(333,18)` ✓ ——
+                #   **先斜着躲开 LED2 ✓、再直上 ✓** ⇒ 这个形状候选里**没有** ✗（只有整条
+                #   斜线 ✗ 和纯正交折线 ✗）⇒ 让路器无解 ✗（`这两孔之间没有合法走法` ✓）。
+                out.append([p, (q[0], q[1] + o), q])      # 斜 → 竖 ✓
+                out.append([p, (p[0] + o, p[1]), q])      # 横 → 斜 ✓
         # ★★ 三折（绕“墙” ✓，2026-09-26 实测补 ✓）：实测 `COIL_A` 失败时，
         #   **两折模板里没有**它需要的那种形状 ✗ —— L1 的脚只能从 **F 行**出 ✓、
         #   D3 的脚只能从 **J 行**出 ✓，而 F 行上横着**别人要用的孔**（`pin8F` ✗）
@@ -865,7 +915,7 @@ def main(argv):
                 #     ⇒ `net BR+: 连不上` ✗（拆线重排 3 次也救不回 ✓）⇒ **退回** ✓。
                 #   ⇒ 结论 ✓：**折弯优先是贪婪阶段的"保走廊"机制** ✓，不能撤 ✗；
                 #     要用"折线换斜线"得只在**收尾重排**里放宽 ✓（一次一改，还没试 ✓）。
-                #   ★ 独立量过（`_scratch/diag_pair.py` ✓，只读 ✓ 调 bb_compare 同一套判碰 ✓）：
+                #   ★ 独立量过（`tools/diag_pair.py` ✓，只读 ✓ 调 bb_compare 同一套判碰 ✓）：
                 #     · 5V `pin32C→pin47Y`：折线 (288,126)→(288,122)→(423,122)→(423,18)
                 #       68.6mm / 交集 0 ⇒ 75.4 vs 斜线 73.2 ⇒ **只差 2.2** ⇒ 旧键让它输 ✗；
                 #     · GND `pin47Z→pin31C`：折线 76.2mm / 交集 **1** ⇒ 95.3 vs 斜线 102.1
@@ -1390,16 +1440,26 @@ def main(argv):
     #   贪婪布线只看"已经放好的线" ✗ ⇒ 后放的看不见前面的选择 ✗（实测会多出交叉 ✗）
     #   ⇒ 收尾把每根"抽出来"，在**看得见其它所有线**的条件下重算它 ✓，
     #     只在「交叉数变少 ✓ / 交叉相同且明显变短 ✓」时才采纳 ✓
-    def best_by_cross(ba, bb):
+    def best_by_cross(ba, bb, only=None):
         """在两个 bus 里挑一对孔 + 一条路：键见 `KEY_MODE` ✓
         ① 少交叉阶段：交叉数 → 折弯 → 形状加权长度 ✓
         ② 算账阶段：加权代价（长度 + K×交集）→ 交集 → 折弯 → 长 ✓
+
+        ★ 2026-09-27 加 `only` ✓（成对让步用 ✓）：**只准用指定的这两个孔** ✓。
+          不用它时它会**自己重挑孔对** ✗ —— 实测代价 ✗：为 `LED_DIN` 让路那一步，
+          5V 被重新接到 `pin32C→pin29Y`（**又沿着 row C 走了一段** ✗）⇒ 愿望仍被 ③ 挡 ✗
+          ⇒ 白让 ✗（日志为证 ✓：`方案 [('pin32C','pin37Y','pin32B')] ⇒ 让得还不够
+          （③ 与线段 (288,126)->(261,126) 重叠）` ✓）。
+          让步的语义就是"**这根线挪到那个孔**" ✓ ⇒ 孔必须钉死 ✓。
         """
-        ca, cb = free_in(ba), free_in(bb)
-        if not ca or not cb:
-            return None
-        pairs = sorted((((hole[x][0] - hole[y][0]) ** 2 + (hole[x][1] - hole[y][1]) ** 2),
-                        x, y) for x in ca for y in cb)[:60]
+        if only is not None:
+            pairs = [(0.0, only[0], only[1])]
+        else:
+            ca, cb = free_in(ba), free_in(bb)
+            if not ca or not cb:
+                return None
+            pairs = sorted((((hole[x][0] - hole[y][0]) ** 2 + (hole[x][1] - hole[y][1]) ** 2),
+                            x, y) for x in ca for y in cb)[:60]
         best = None
         for _d, x, y in pairs:
             for pts in routes(x, y):
@@ -1591,7 +1651,22 @@ def main(argv):
     #   —— 硬约束是“不满足就不许交付” ✗ ⇒ 权重必须压过长度/交叉的任何取舍 ✓。
     HARD_MM = 100.0
 
-    def layout_score():
+    def layout_score(use_mid=True):
+        """全局代价 ✓（**所有重排共用这一份** ✓）。
+
+        ★ 2026-09-27 加 `use_mid` ✓（**默认 True = 老口径 ✓**，其它重排一个字不改 ✓）：
+          带不带“§5b ⑩ 留路”那项（`MID_PEN × corr` ✓）。
+          ★ 为什么它该在**收尾**关掉 ✗：留路是**贪婪阶段**的机制 ✓（`route_cost` 里
+            只在 `CUR_RANK <= 1` 时加 ✓ = “先布的电源/地给后面的信号线留走廊” ✓）——
+            而 `layout_score` 一直**无条件**把这一项算进最终代价 ✗ ⇒ **收尾阶段没有“后面的线”
+            了，这个罚已经没有意义** ✗，只会拦下真改善 ✓。
+          实测为证 ✓（`pixel-breadboard100_byHand` 那一处 ✓）：用户把 GND 从 `pin13A→pin13X`
+            （7.6mm ✓ 竖着拉到 X 轨 ✓）改成 `pin12D→pin13D`（2.5mm ✓ 搭隔壁 col12 ✓），
+            全图省 5.1mm ✓；而 `pass_retie` 拿**带**留路罚的尺子一量 =
+            `代价 583.2→585.8` ✗（**反而涨 2.6** ✗，硬规则全干净 ✓）⇒ 被拒 ✗。
+            拆开一算 ✓：−5.1mm（长度 ✓）+ 3.0 × 2.54mm（新那段在 row C、不靠轨也不靠板边
+            ⇒ 被当成“走中间” ✗）= **+2.6** ✓ —— 与实测**完全对得上** ✓。
+        """
         sg_all = [s for j in jumpers for s in _segs(j[1])] + fixed_segs
         n = 0
         for i1 in range(len(sg_all)):
@@ -1625,7 +1700,8 @@ def main(argv):
             if net_rank(_n3) <= 1:
                 corr += mid_len(_p3) * MMU
         return (n + over + hard,
-                tot + K_MM * (n + over) + HARD_MM * hard + MID_PEN * corr)
+                tot + K_MM * (n + over) + HARD_MM * hard
+                + (MID_PEN * corr if use_mid else 0.0))
 
     def better(md, a, b):
         """a 是否比 b 好 ✓：mode 1 先比交集 ✓；mode 2 先比代价 ✓
@@ -1733,68 +1809,226 @@ def main(argv):
                 out.append((which, alt, other))
         return out
 
-    def _blocked_wish(i):
-        """这根线"想走"、却被 ③（与现有线重叠）挡住的最好那条走法 ✓ ⇒ (pts, 挡路线段) ✓"""
-        net, pts_old, g1, g2, _k = jumpers[i]
-        ref = _plen(pts_old) * shape_factor(pts_old) + K * _cross(pts_old, wire_segs())
-        best = None
-        for pts in routes(g1, g2):
-            if route_cost(pts, own=net) is not None:
-                continue                        # 合法 ⇒ 那是别的重排的事 ✓
-            if not (LAST[0] or "").startswith("③") or LAST[1] is None:
-                continue                        # 不是被"重叠"挡的 ⇒ 不管 ✓
-            ideal = _plen(pts) * shape_factor(pts) + K * _cross(pts, wire_segs())
-            if ideal < ref - 1e-9 and (best is None or ideal < best[0]):
-                best = (ideal, pts, LAST[1])
-        return None if best is None else (best[1], best[2])
+    def _own_hole_pairs(i):
+        """这根线**自己**能换到同 bus 里的哪些孔组合 ✓（近的在前 ✓）
+        ★★ 2026-09-27 补 ✓（用户当场定 ✓，原话「我选 b」✓）—— 这是让路器**不生效**的根因 ✗：
+          旧版愿望只在「**当前两个端点之间**」枚举（`routes(g1, g2)` ✗）⇒
+          端点一旦被别处的重排挪歪 ✗，「想走水平直线」这个愿望**根本列不出来** ✗
+          ⇒ 让路器永远无事可做 ✗。
+          实测（v96 == v95 ✓，逐根线相同 ✓）：`换孔让路: 动了 0 处 ✓`。
+          具体到 `LED_DIN`：贪婪本来画出了水平直连 ✓（`加线: LED_DIN sig pin20B → pin33B
+          1 段 33.0 mm` ✓），是**成对重排**为消掉 1 个交集 ✗ 把它一端从 `pin20B` 挪到
+          `pin20D`（同一 bus ⇒ 电气等价 ✓）⇒ 变斜 ✗；此时旧版愿望只在
+          `pin20D/pin33B` 之间找 ✗ ⇒ 走不出 row C ✗ ⇒ 一次都没触发 ✗。
+        """
+        _n2, _p2, g1, g2, _k2 = jumpers[i]
+        pairs = []
+        for h1 in bus_of.get(hole_bus[g1], ()):
+            if h1 != g1 and (h1 in used_holes or h1 in blocked):
+                continue
+            for h2 in bus_of.get(hole_bus[g2], ()):
+                if h2 == h1 or (h2 != g2 and (h2 in used_holes or h2 in blocked)):
+                    continue
+                pairs.append((dist_h(g1, h1) + dist_h(g2, h2), h1, h2))
+        pairs.sort(key=lambda t: (t[0], t[1], t[2]))
+        return [(h1, h2) for _d, h1, h2 in pairs]
 
-    def pass_clear_way(rounds=2, max_alt=6):
+    def _blocked_wish(i):
+        """这根线"想走"、却被 ③（与现有线重叠）挡住的最好那条走法 ✓
+        ⇒ (pts ✓, **所有**挡路的线段 ✓, h1 ✓, h2 ✓) —— 成对让路要知道挡路的是哪几根 ✓
+        （不只第一条 ✗），还要知道**这根线最终落到哪两个孔**上 ✓（它自己也换孔了 ✓）。
+
+        ★ 2026-09-27 扩 ✓：愿望不再限定在"当前两个端点"上 ✗ ⇒ 也枚举**这根线自己在同 bus
+          里换孔**的走法 ✓（见 `_own_hole_pairs` ✓）。判据仍是**同一份** `route_cost` ✓
+          （被 ③ 挡 ✓）+ 同一把"形状加权"尺子 ✓ ⇒ 没有另立一套标准 ✗。
+        """
+        net, pts_old, g1, g2, _k = jumpers[i]
+        cur = wire_segs()
+        ref = _plen(pts_old) * shape_factor(pts_old) + K * _cross(pts_old, cur)
+        best = None
+        _dbg_seen = set()
+        for h1, h2 in _own_hole_pairs(i):
+            for pts0 in routes(h1, h2):
+                # ★★ 2026-09-27 必修 ✗：先 `simplify` ✓ —— 否则"**同向共线点**"能把
+                #   交集数**做假** ✗（实测为证 ✓）：`LED_DIN` 走 row B 的直连本该算
+                #   **2** 个交集（GND 重叠 ✓ + GND 搭线 ✓），但把路径写成
+                #   `[(180,135),(261,135),(261,135),(297,135)]`（**故意在 GND 的落点
+                #   x=261 处多插一个节点** ✗）⇒ `pair_kind` 把"搭线"当成"公共端点"跳过 ✗
+                #   ⇒ 交集算成 **1** ✗ ⇒ ideal 从 122.6 掉到 119.8 ✗，与 row C/D **打平**
+                #   ⇒ 靠字典序把 row B 选了出来 ✗（而 row B 正是它要躲的那条走廊 ✗）。
+                #   几何完全相同、只是点写得多一个 ⇒ 这种要把戏必须在入口处掐掉 ✓。
+                pts = simplify(pts0)
+                if _plen(pts) >= ref:
+                    continue        # ★ 便宜的先筛 ✓：形状加权长 ≥ 真长 ≥ ref ⇒ 必输 ✓
+                if route_cost(pts, own=net) is not None:
+                    continue                        # 合法 ⇒ 那是别的重排的事 ✓
+                if not (LAST[0] or "").startswith("③"):
+                    continue                        # 不是被"重叠"挡的 ⇒ 不管 ✓
+                ideal = _plen(pts) * shape_factor(pts) + K * _cross(pts, cur)
+                if CW_DBG and net == "LED_DIN" and (h1, h2) not in _dbg_seen:
+                    _dbg_seen.add((h1, h2))
+                    print("      [愿望] %s→%s %d 段 %.1fmm cross=%d ideal=%.1f ref=%.1f%s"
+                          % (h1, h2, len(pts) - 1, _plen(pts) * MMU,
+                             int(_cross(pts, cur)), ideal, ref,
+                             "  ✗超过ref" if ideal >= ref - 1e-9 else ""))
+                if ideal >= ref - 1e-9:
+                    continue                        # 不比现状省 ⇒ 没必要为它让路 ✓
+                blk = [(c, d) for c, d in cur
+                       for a, b in _segs(pts) if BC.seg_overlap(a, b, c, d)]
+                if not blk:
+                    continue
+                if best is None or ideal < best[0]:
+                    best = (ideal, pts, blk, h1, h2)
+                    if CW_DBG and net == "LED_DIN":
+                        print("      [愿望↑] %s→%s %d 段 %.1fmm ideal=%.1f blk=%d pts=%s"
+                              % (h1, h2, len(pts) - 1, _plen(pts) * MMU, ideal, len(blk),
+                                 [(round(x, 1), round(y, 1)) for x, y in pts]))
+        return None if best is None else (best[1], best[2], best[3], best[4])
+
+    def _shape_total():
+        """全局**形状加权**代价 ✓ —— 与 `best_by_cross` 用的是**同一把尺子** ✓
+        （能看见斜线 ✓）；**不动** `layout_score` ✗ —— 那把只算真实长度 ✗、
+        看不见斜线 ✗，是另一件事（用户 2026-09-27 选的"先做 b"✓ ⇒ 不混进来 ✗）。"""
+        sg = [s for j2 in jumpers for s in _segs(j2[1])] + fixed_segs
+        n = 0
+        for i1 in range(len(sg)):
+            for j1 in range(i1 + 1, len(sg)):
+                if BC.pair_kind(sg[i1][0], sg[i1][1], sg[j1][0], sg[j1][1]):
+                    n += 1
+        ln = 0.0
+        for a2, b2 in sg:
+            seg2 = [a2, b2]
+            ln += _plen(seg2) * shape_factor(seg2)
+        return ln * MMU + K_MM * n
+
+    CW_DBG = os.environ.get("PP_CW_DEBUG") == "1"     # 临时诊断开关 ✓（默认关 ✓）
+
+    def pass_clear_way(rounds=2, max_alt=4):
+        """**换孔让路** ✓（用户 2026-09-27 追加"成对让步" ✓，选 b ✓）。
+
+        由来 ✗：v95 里 `LED_DIN` 被画成**斜线** ✗ —— 贪婪其实**画对了** ✓
+        （日志原话：`加线: LED_DIN sig pin20B → pin33B 1 段 33.0 mm` ✓），
+        是**成对重排**为了消掉那 1 个交集 ✗ 把它的一端从 `pin20B` 挪到 `pin20D`
+        （同一 bus ⇒ 电气等价 ✓，但**跨了行** ⇒ 变斜 ✗，真长还 +0.4mm ✗）
+        —— 因为 `layout_score` 只算真长 ✗、**看不见斜线** ✗。
+        而用户在 `byHand` 版里做的正是：**把挡路那根挪开**（同 bus 换孔 ✓
+        电气完全等价 ✓）⇒ 水平直连就成立 ✓（33.0mm / 0 交集 ✓）。
+        原来的 `pass_clear_way` 只会动**一根**挡路的 ✗ ⇒ 这里扩成**1~2 根一起让** ✓。
+
+        ★★ 2026-09-27 第二处 ✓（用户当场定 ✓）：**愿望枚举也换** ✗ ——
+          上面那版（成对让步）实测**一次都没触发** ✗（`换孔让路: 动了 0 处` ✓，v96 与 v95
+          逐根线相同 ✓），根因是愿望只在"当前两个端点之间"找 ✗（见 `_own_hole_pairs` ✓）。
+          ★ 修好之后**该让路的是谁**（实测 ✓，与用户 byHand 完全对上 ✓）：
+            把 `LED_DIN` 拿掉、逐行试水平直连（`tools/bb_diag_list.py` ✓ 可直接看逐段几何 ✓，判碰用
+            `bb_compare.pair_kind` ✓ **同一份**实现 ✓）：
+              row A ✗ 交叉 GND      row B ✗ 重叠+搭线 GND   **row C ✗ 重叠 5V** ✓（只差这一根）
+              row D ✗ 重叠 GND      row E ✗ 搭线 DATA_OUT
+            ⇒ 用户 byHand 做的就是**把 5V 的一端从 `pin32C` 换到 `pin32B`** ✓（同一 bus ⇒
+              电气等价 ✓）⇒ row C 腾空 ⇒ `LED_DIN` 横平竖直 1 段 33.0mm ✓。
+              （对比表印证 ✓：自动版 5V = `pin32C→pin37Y` 43.2mm ✗ / byHand = `pin32B→pin37Y` 41.6mm ✓）
+        """
         moved = 0
         for _rr in range(rounds):
             any_move = False
             for i in range(len(jumpers)):
                 if i >= len(jumpers):
                     break
+                SKIP[0] = i                 # ★ 算愿望时把自己摘出场 ✓（见 `wire_segs` ✓）
                 wish = _blocked_wish(i)
+                SKIP[0] = None              # ★ 立刻复原 ✓（方案试算/闸门要看得见自己 ✓）
+                _tag = "轮%d i=%d %s %s→%s" % (_rr + 1, i, jumpers[i][0], jumpers[i][2], jumpers[i][3])
                 if wish is None:
+                    if CW_DBG:
+                        print("      [让路] %s 无愿望（%d 组孔）" % (_tag, len(_own_hole_pairs(i))))
                     continue
-                pts_want, blk = wish
-                j = _seg_owner(*blk)
-                if j is None or j == i:
-                    continue
+                pts_want, blk, h1w, h2w = wish      # ★ 愿望自带"落到哪两个孔"✓（它自己也换孔 ✓）
+                if CW_DBG:
+                    print("      [让路] %s 愿望 %s→%s %d 段 %.1fmm；挡路 %d 段"
+                          % (_tag, h1w, h2w, len(pts_want) - 1, _plen(pts_want) * MMU, len(blk)))
+                owners = []
+                for s2 in blk:
+                    j2 = _seg_owner(*s2)
+                    if j2 is not None and j2 != i and j2 not in owners:
+                        owners.append(j2)
+                if not owners or len(owners) > 2:
+                    if CW_DBG:
+                        print("      [让路]   ⇒ 挡路的根数 %d ⇒ 跳过" % len(owners))
+                    continue                     # 只做 1~2 根的让步 ✓（再多就不划算了 ✓）
                 net_i, pi_old, h1i, h2i, kind_i = jumpers[i]
-                net_j, pj_old, h1j, h2j, kind_j = jumpers[j]
-                base = layout_score()
+                saves = {j2: tuple(jumpers[j2]) for j2 in owners}
+                plans = [[]]
+                for j2 in owners:
+                    alts = _alt_holes(j2)[:max_alt]
+                    plans = [p2 + [(j2, w2, a2, o2)] for p2 in plans
+                             for (w2, a2, o2) in alts]
+                    if not plans:
+                        break
+                if not plans:
+                    if CW_DBG:
+                        print("      [让路]   ⇒ 没有可换的孔（_alt_holes 空）")
+                    continue
+                base = _shape_total()
                 hit = False
-                for which, alt, other in _alt_holes(j)[:max_alt]:
-                    nh1, nh2 = (alt, other) if which == 0 else (other, alt)
-                    jumpers[j] = (net_j, pj_old, nh1, nh2, kind_j)
+                for plan in plans:
+                    for j2 in owners:
+                        jumpers[j2] = saves[j2]        # 每套方案都从原状重来 ✓
                     _refix()
-                    t = best_by_cross(hole_bus[nh1], hole_bus[nh2])
-                    if t is None:
+                    okp = True
+                    for (j2, w2, a2, o2) in plan:
+                        n_ = saves[j2]
+                        nh1, nh2 = (a2, o2) if w2 == 0 else (o2, a2)
+                        # ★★ 2026-09-27 必修 ✗：给这根线算新走法前，先把它**从场里抹掉** ✓
+                        #   （`pts` 置空 ✓，但**两个孔仍然占着** ✓）—— 否则它算新走法时
+                        #   看得见**自己的旧线段** ✗ ⇒ 自己跟自己打架 ✗ ⇒ 找不到走法 ✗。
+                        #   实测症状 ✗（最阴的一个 ✓）：方案 `pin32B/32D/32E` **全部静默失败** ✗
+                        #   —— 连一行报错都没有 ✓，只看得到结论 `动了 0 处` ✓，
+                        #   得逐段加日志才看得出来 ✓。
+                        jumpers[j2] = (n_[0], [], nh1, nh2, n_[4])
+                        _refix()
+                        t = best_by_cross(hole_bus[nh1], hole_bus[nh2], only=(nh1, nh2))
+                        if t is None:
+                            if CW_DBG:
+                                print("      [让路]     方案 %s→%s ⇒ 这两孔之间没有合法走法"
+                                      % (nh1, nh2))
+                            okp = False
+                            break
+                        jumpers[j2] = (n_[0], t[1], t[2], t[3], n_[4])
+                        _refix()
+                    if not okp:
                         continue
-                    jumpers[j] = (net_j, t[1], t[2], t[3], kind_j)
-                    _refix()
                     if route_cost(pts_want, own=net_i) is None:
-                        continue                    # 让得还不够 ✓
-                    jumpers[i] = (net_i, pts_want, h1i, h2i, kind_i)
+                        if CW_DBG:
+                            print("      [让路]     方案 %s ⇒ 让得还不够（%s）"
+                                  % ([(saves[j3][2], saves[j3][3], a3) for j3, _w3, a3, _o3 in plan],
+                                     LAST[0]))
+                        continue                     # 让得还不够 ✓
+                    jumpers[i] = (net_i, pts_want, h1w, h2w, kind_i)
                     _refix()
-                    sc = layout_score()
                     d2, be2, hid2 = hard_bad()
-                    if not d2 and not be2 and not hid2 and sc[1] < base[1] - 1e-6:
-                        print("   换孔让路: %-10s %s→%s 让路 ⇒ %-10s 改走 %d 段 %.1fmm"
-                              " | 代价 %.1f→%.1f"
-                              % (net_j, h2j if which == 1 else h1j, alt, net_i,
+                    if not d2 and not be2 and not hid2 and _shape_total() < base - 1e-6:
+                        print("   换孔让路: %s 让步 ⇒ %-10s %s→%s 改走 %d 段 %.1fmm（斜线 %d 段）"
+                              " | 形状加权代价 %.1f→%.1f"
+                              % ("+".join(jumpers[j2][0] for j2 in owners), net_i,
+                                 h1w, h2w,
                                  len(pts_want) - 1, _plen(pts_want) * MMU,
-                                 base[1], sc[1]))
+                                 len([1 for a2, b2 in _segs(pts_want)
+                                      if abs(a2[0] - b2[0]) > 0.25
+                                      and abs(a2[1] - b2[1]) > 0.25]),
+                                 base, _shape_total()))
                         moved += 1
                         any_move = True
                         hit = True
                         break
+                    if CW_DBG:
+                        print("      [让路]     方案 ⇒ 被闸门拦下（hard_bad=%s；形状加权 %.1f vs 基线 %.1f）"
+                              % ((d2, be2, hid2), _shape_total(), base))
                     jumpers[i] = (net_i, pi_old, h1i, h2i, kind_i)
                     _refix()
                 if not hit:
-                    jumpers[j] = (net_j, pj_old, h1j, h2j, kind_j)
+                    if CW_DBG:
+                        print("      [让路]   ⇒ 放弃（%d 套方案全不成）" % len(plans))
+                    for j2 in owners:
+                        jumpers[j2] = saves[j2]
                     _refix()
             if not any_move:
                 break
@@ -1858,6 +2092,175 @@ def main(argv):
     _n_clear2 = pass_clear_way(rounds=1)
     if _n_clear2:
         print("换孔让路（破局后补一轮）: 动了 %d 处 ✓" % _n_clear2)
+    _refix()
+
+    # ★★ 2026-09-27 加 ✓★：**单条 tie 换接** ✓（用户当场指出 ✓，`pixel-breadboard100_byHand`
+    #   全图**只改这一处** ✓）—— 这是现有重排**结构上做不到**的一件事 ✗，补上它 ✓。
+    #
+    #   由来 ✗（实测 ✓）：v100 里 col13 的地是靠 `GND pin13A→pin13X`（**拉到 X 轨道**）7.6mm ✗；
+    #   用户手版改成 `GND pin12D→pin13D`（**搭到隔壁 col12** ✓ —— col12 本来就已接地 ✓，
+    #   而且 `D3` 的两个地脚正好分别在 col12/col13 ✓）⇒ **2.5mm** ✓ ⇒ 全图省 **5.1mm** ✓，
+    #   其它 18 根线**一字未动** ✓（bb_compare：`只有 A 有 1 根 / 只有 B 有 1 根` ✓）。
+    #
+    #   为什么现有重排抓不到 ✗：
+    #     ① `抽出重排` / `成对重排` / `换孔让路` 全都在"**这根线现有的两个 bus 之间**"换孔 ✗
+    #        （`best_by_cross(hole_bus[h1], hole_bus[h2])` ✓）⇒ **换不了"接到哪条 bus"** ✗
+    #        —— 那是**拓扑**层的自由度 ✗；
+    #     ② `拆线重排`（整网拆掉重放 ✓）**能**碰到拓扑 ✓，但它是**整网**重放 ✗ ⇒ 会**顺手**
+    #        把别的接头也改掉 ✗。日志为证 ✓（v100 ✓）：重放时它确实拿出了用户那一手 ✓
+    #        （`加线: GND pin12A → pin13A 1 段 2.5 mm` ✓），但同一批重放还把别处接成
+    #        `加线: GND pin10Z → pin13D 2 段 38.1 mm` ✗ ⇒ **整网变长** ✗ ⇒ 被闸门否决 ✗。
+    #     ⇒ 缺的就是"**只动这一条、其余一根不碰**"的走法 ✓ —— 这一遍补上 ✓。
+    #
+    #   判据与其它重排**同一份** ✓：`hard_bad()` 全空 ✓ + `layout_score()` 的代价**严格变小** ✓；
+    #   另加一条**只有它需要**的硬保险 ✓：**这个网必须仍然连成一片** ✓（从零算 ✓，
+    #   见 `_net_conn` ✓）。放在**最后** ✓（它是拓扑层改动 ⇒ 让只管孔的那些重排先跑完 ✓）。
+    def pass_retie(rounds=2, max_pairs=24):
+        def _net_dsu(net):
+            """按**当前** `jumpers` 现场并一遍这个网的 bus ✓
+            ⇒ 返回 (取根函数 ✓, 端子所在的 bus 集合 ✓)。
+
+            ★ 必须**从零算** ✗ —— 全局那个 `find()` 是"**只增不减**"的 ✗（`uni` 只并、不拆 ✗）
+            ⇒ 把线摘掉之后它**还说连着** ✗ ⇒ 拿它做判据会放过"把网切断"的改动 ✗。
+            以 **bus** 为单位并 ✓（同一 bus 的 5 孔本来就是一块铜 ✓，不用线连 ✓）；
+            `pts` 为空的线 = 被摘掉的线 ✓ ⇒ 不计 ✓。
+            """
+            dsu = {}
+
+            def f2(x):
+                dsu.setdefault(x, x)
+                while dsu[x] != x:
+                    dsu[x] = dsu[dsu[x]]
+                    x = dsu[x]
+                return x
+
+            def u2(a, b):
+                ra, rb = f2(a), f2(b)
+                if ra != rb:
+                    dsu[ra] = rb
+
+            for n2, p2, a2, b2b, _k2 in jumpers:
+                if n2 == net and p2:
+                    u2(hole_bus[a2], hole_bus[b2b])
+            for n3, _p3, e0, e1, _k3 in extra:     # EPAD 接地线也算一条边 ✓
+                if n3 != net:
+                    continue
+                ee = [e[1] for e in (e0, e1) if e[0] == "hole"]
+                for k3 in range(len(ee) - 1):
+                    u2(hole_bus[ee[k3]], hole_bus[ee[k3 + 1]])
+            return f2, {hole_bus[h] for h in net_holes.get(net, ()) if h in hole_bus}
+
+        def _net_conn(net):
+            """这个网的端子孔是否**仍连成一片** ✓（与侧别判定共用 `_net_dsu` ✓ 只此一份 ✓）"""
+            f2, hb = _net_dsu(net)
+            return len(hb) <= 1 or len({f2(b) for b in hb}) == 1
+
+        def _net_buses(net):
+            out = {hole_bus[h] for h in net_holes.get(net, ()) if h in hole_bus}
+            for n2, p2, a2, b2b, _k2 in jumpers:
+                if n2 == net and p2:
+                    out.add(hole_bus[a2])
+                    out.add(hole_bus[b2b])
+            for n3, _p3, e0, e1, _k3 in extra:
+                if n3 == net:
+                    for e in (e0, e1):
+                        if e[0] == "hole" and e[1] in hole_bus:
+                            out.add(hole_bus[e[1]])
+            return out
+
+        def _bus_dist(b_1, b_2):
+            return min(dist_h(x, y) for x in bus_of.get(b_1, ()) for y in bus_of.get(b_2, ()))
+
+        moved = 0
+        for _rr in range(rounds):
+            any_move = False
+            i = 0
+            while i < len(jumpers):
+                if i >= len(jumpers):
+                    break
+                net, pts_old, h1, h2, kind = jumpers[i]
+                if not pts_old or hole_bus[h1] == hole_bus[h2]:
+                    i += 1
+                    continue                    # 不是"两条 bus 之间的 tie" ⇒ 不管 ✓
+                mine = tuple(jumpers[i])
+                # ★ 用**不带留路罚**的尺子 ✓（收尾了，没有“后面的线”要留路 ✓；见 `layout_score` ✓）
+                base = layout_score(use_mid=False)
+                jumpers[i] = (net, [], h1, h2, kind)     # 摘掉这条 tie ✓（孔仍占着 ✓）
+                _refix()
+                if _net_conn(net):
+                    # ① 摘掉还连通 ⇒ 这条 tie **多余** ✓ ⇒ 白省一整根 ✓
+                    _d2, _be2, _hid2 = hard_bad()
+                    _sc = layout_score()
+                    if not _d2 and not _be2 and not _hid2 and _sc[1] < base[1] - 1e-9:
+                        print("   接法精简: %s %s→%s 这条 tie **多余** ⇒ 删掉 ✓（省 %.1fmm）"
+                              % (net, h1, h2, _plen(pts_old) * MMU))
+                        del jumpers[i]               # ★ 真删 ✓（索引往后移 ⇒ **不** i+=1 ✓）
+                        _refix()
+                        moved += 1
+                        any_move = True
+                        continue
+                    jumpers[i] = mine
+                    _refix()
+                    i += 1
+                    continue
+                # ② 摘掉就断了 ⇒ 必须换一条 tie ✓：接到**同网的另一条 bus** 上 ✓
+                #    ★ 侧别怎么判 ✓：摘掉这条之后，h1 那条 bus **自己单干** ✓（它已经断了 ✓）
+                #      ⇒ "另一侧" = "除 b1 之外、仍在 h2 那一堆里的 bus" ✓；
+                #      反方向同理 ✓。侧别用 `_net_dsu` 现场并一遍 ✓（与连通判据**同一份** ✓）。
+                b1, b2 = hole_bus[h1], hole_bus[h2]
+                f2, hb = _net_dsu(net)
+                allb = (_net_buses(net) | hb) - {b1, b2}
+                same2 = {b for b in allb if f2(b) == f2(b2)}      # 跟 h2 一边的 ✓
+                same1 = {b for b in allb if f2(b) == f2(b1)}      # 跟 h1 一边的 ✓（断后往往是空 ✓）
+                others = sorted((_bus_dist(b1, b), b) for b in same2)
+                cands = [(b1, b) for _d, b in others[:max_pairs]]
+                others2 = sorted((_bus_dist(b2, b), b) for b in same1)
+                cands += [(b, b2) for _d, b in others2[:max_pairs]]
+                hit = False
+                for (bA, bB) in cands:
+                    t = best_by_cross(bA, bB)
+                    if CW_DBG:
+                        print("      [换接] %s %s→%s 试 %s ↔ %s ⇒ %s"
+                              % (net, h1, h2, sorted(bus_of[bA])[0], sorted(bus_of[bB])[0],
+                                 "无走法" if t is None else "%s→%s %.1fmm"
+                                 % (t[2], t[3], _plen(t[1]) * MMU)))
+                    if t is None:
+                        continue
+                    jumpers[i] = (net, t[1], t[2], t[3], kind)
+                    _refix()
+                    if not _net_conn(net):
+                        if CW_DBG:
+                            print("      [换接]   ⇒ 接上后**网断了** ✗ ⇒ 不要")
+                        jumpers[i] = (net, [], h1, h2, kind)
+                        _refix()
+                        continue
+                    _d2, _be2, _hid2 = hard_bad()
+                    _sc = layout_score(use_mid=False)
+                    if CW_DBG and not (not _d2 and not _be2 and not _hid2
+                                       and _sc[1] < base[1] - 1e-9):
+                        print("      [换接]   ⇒ 拦下：代价 %.1f→%.1f ✓ 硬规则 dup=%s be=%s hid=%s"
+                              % (base[1], _sc[1], sorted(_d2), sorted(_be2), sorted(_hid2)))
+                    if not _d2 and not _be2 and not _hid2 and _sc[1] < base[1] - 1e-9:
+                        print("   接法换接: %s %s→%s 换成 %s→%s ⇒ 短 %.1fmm ✓（其余线未动 ✓）"
+                              % (net, h1, h2, t[2], t[3],
+                                 (_plen(pts_old) - _plen(t[1])) * MMU))
+                        moved += 1
+                        any_move = True
+                        hit = True
+                        break
+                    jumpers[i] = (net, [], h1, h2, kind)
+                    _refix()
+                if not hit:
+                    jumpers[i] = mine
+                    _refix()
+                i += 1
+            if not any_move:
+                break
+        return moved
+
+    _n_retie = pass_retie()
+    if _n_retie:
+        print("单条 tie 换接: 动了 %d 处 ✓" % _n_retie)
     _refix()
 
     # checks
