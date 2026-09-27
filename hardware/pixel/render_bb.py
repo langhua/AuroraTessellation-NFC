@@ -236,12 +236,15 @@ for el in root.iter("instance"):
     #   与布线器算 EPAD 焊盘用的是同一套数学 ✓），再跟它**声称插进的孔** ✗ 比 ✓
     #   ⇒ Δ 应当 ≈ 0 ✓；**Δ 大 = "脚悬空"** ✗（正是用户一眼看到的 ✓）。
     _ph = {}                       # 脚 id → 它插进的孔 id ✓（从 <connector> 下的 <connect> 读 ✓）
+    _pleg = {}                     # 脚 id → sketch 里有没有 <leg>（腿末端覆盖 ✓）
     for _cn in bv.iter():
         if tag(_cn) != "connector":
             continue
+        _cid0 = _cn.get("connectorId")
         for _cs2 in _cn.iter():
             if tag(_cs2) == "connect" and _cs2.get("layer") == "breadboardbreadboard":
-                _ph[_cn.get("connectorId")] = _cs2.get("connectorId")
+                _ph[_cid0] = _cs2.get("connectorId")
+        _pleg[_cid0] = any(tag(_k) == "leg" for _k in _cn)
     # ★★★ 2026-09-27 **修** ✓（用户报"preview 是错的"✗，而 Fritzing 里 LED2 位置正确 ✓）：
     #   脚位**参考点**必须走完 svg 的祖先 `transform` 链 ✓ —— 上一版只认 `<circle>` 且直接用
     #   `cx/cy` ✗ ⇒ ① 焊盘画在 `<rect>` 里的件（LED2/J1/J2/L1/C1/C2/R1 ✓）**一个都查不到** ✗
@@ -254,6 +257,7 @@ for el in root.iter("instance"):
         _badref = ["<XML 解析不了：%s>" % _ex]
     _nchk = _bad = 0
     _unv = 0
+    _legn = 0                      # ★ 有 <leg> 覆盖的脚（按 sketch 画 ✓，不做几何对账 ✓）
     _maxd = 0.0                    # ★ 最大 Δ 也要报 ✓（"✓"必须带数字 ✓，不是口号 ✓）
     for _cid2, _hid2 in sorted(_ph.items()):
         _p2 = _pts.get("%spin" % _cid2)
@@ -261,6 +265,17 @@ for el in root.iter("instance"):
         if _p2 is None or _xy2 is None:
             _unv += 1
             continue               # ★ 认不出 ⇒ **记入"未验证"** ✓（不许静默跳过 ✗）
+        # ★★★ 2026-09-27 修 ✓（用户 2026-09-27 报：「Fritzing 里看没有任何错误」✓、
+        #   并建议"不改图，改检查程序" ✓）：
+        #   Fritzing 画腿用的是 **sketch 里 `<connector>` 下存的 `<leg><point>`** ✓
+        #   —— 我们那次"已批准修正"正是把**声称的孔**与**腿末点**一起改的 ✓
+        #   ⇒ 腿被**拉长 1 格去够新孔** ✓ ⇒ Fritzing 里看着完全正常 ✓。
+        #   而这里原来**只读零件 svg** ✗（算的是"没拉长的原腿"✗）⇒ 凭空差 1 格 ⇒ **误报** ✗
+        #   （实测：C1 两条腿都是 18.0031 ✓；C2 是 18.0033 / 27.0033 ✗ —— 差 9 ✓）。
+        #   ⇒ 有 `<leg>` 覆盖的脚：以 sketch 自己的账为准 ✓，**不做几何对账** ✓（照实报出个数 ✓）。
+        if _pleg.get(_cid2):
+            _legn += 1
+            continue
         _nchk += 1
         _lu, _lv = _p2[0] * k, _p2[1] * k
         _padx = num(g.get("x")) + m[0] * _lu + m[2] * _lv + m[4] - _subx
@@ -276,12 +291,13 @@ for el in root.iter("instance"):
             print("      ✗ 脚 %-16s 画在 (%7.1f,%7.1f)，孔 %-8s 在 (%7.1f,%7.1f)"
                   " ⇒ Δ=%.2f 单位 (%.2f mm) **悬空** ✗"
                   % (_cid2, _padx, _pady, _hid2, _xy2[0], _xy2[1], _dd, _dd * 25.4 / 90.0))
-    if _nchk or _unv:
+    if _nchk or _unv or _legn:
         _verdict = ("✓ 全落在孔上 ✓（最大 Δ=%.2f 单位）" % _maxd if not _bad else
                     "✗ **%d 个悬空** ✗（最大 Δ=%.2f 单位）" % (_bad, _maxd)) \
-            if _nchk else "**一个都没查到 ⇒ 未验证 ✗（别当它是对的 ✗）**"
-        print("      脚位自检：查到 %d 个脚 ⇒ %s ｜认不出/未验证 %d 个 %s"
-              % (_nchk, _verdict, _unv, "✓" if not _unv else "✗（这些件只能靠人眼 ✓）"))
+            if _nchk else "（本次没有需要几何对账的脚）✓"
+        print("      脚位自检：几何对账 %d 个脚 ⇒ %s ｜按 sketch 的 <leg> 绘制 %d 个 ✓"
+              "（Fritzing 口径 ✓）｜认不出/未验证 %d 个 %s"
+              % (_nchk, _verdict, _legn, _unv, "✓" if not _unv else "✗（这些件只能靠人眼 ✓）"))
     if _badref:
         print("      ⚠ 参考点没能算出来的：%s" % "；".join(_badref[:6]))
     a, b, c, d = k * m[0], k * m[1], k * m[2], k * m[3]
