@@ -840,13 +840,105 @@ if "verify-export" in opts:
         print("        ✗ 导出点了、我没点的位置 (%.3f,%.3f)" % q)
     for p in dextra[:5]:
         print("        ✗ 我点了、导出没点的位置 (%.3f,%.3f)" % p)
+    # ── ⑤ ★★ 引脚判别（2026-09-27 补 ✓ —— 起因就是"没有它"骗了我一整天 ✗）──
+    #   上面 ①②③ 只比"零件**锚点**"与"**导线自己**" ✗ —— 两边都用**我自己的坐标系** ⇒
+    #   自洽 ⇒ 永远通过 ✗（典型的"自证" ✗；`px` 那个 bug 就是这么躲过一整天的 ✓）。
+    #   下面两条**全在导出内部比** ✓ ⇒ **不需要任何标定** ✓（全局平移/缩放自动抵消 ✓）：
+    #     A. **同一零件内部**的脚向量：我算的 × s ↔ 导出画的 ✓
+    #        （抓"零件 k 算错" ✗、"镜像/旋转" ✗、"脚编号接错" ✗ —— `px` 那个 bug 正是它抓的 ✓）
+    #     B. **线到脚**：每条"导线→脚"的连接 ⇒ "导出画的线端" ↔ "导出画的脚" ✓
+    #        （抓"我按错的脚位画线" ✗ —— 用户看到的"网在一起、线却错位" ✓）
+    def _walk_exp(el, m, pid, pout, lout):
+        t2 = el.get("transform")
+        if t2:
+            m = PB.mul(m, PB.parse_tf(t2))
+        if el.get("partID"):
+            pid = el.get("partID")
+        i2 = el.get("id") or ""
+        m2 = re.fullmatch(r"connector(.+?)(terminal|pin)", i2)
+        if m2 and pid and el.get("x") is not None:
+            pout.setdefault(pid, {}).setdefault("connector" + m2.group(1),
+                                                PB.apply(m, float(el.get("x")), float(el.get("y"))))
+        if tag(el) == "line" and pid and el.get("x1") is not None:
+            lout.setdefault(pid, []).append((PB.apply(m, float(el.get("x1")), float(el.get("y1"))),
+                                             PB.apply(m, float(el.get("x2")), float(el.get("y2")))))
+        for cc in el:
+            _walk_exp(cc, m, pid, pout, lout)
+
+    exp_pins, exp_lines = {}, {}
+    try:
+        _walk_exp(ET.parse(exp).getroot(), (1.0, 0.0, 0.0, 1.0, 0.0, 0.0), None,
+                  exp_pins, exp_lines)
+    except Exception as ex:
+        print("   ⊘ 引脚判别跳过（导出解析不了：%s ✗）" % ex)
+
+    def pid_of(mi):
+        return next((k for k in exp_pins if k == mi or
+                     (k.startswith(mi) and len(k) == len(mi) + 1)), None)
+
+    pv_bad = []
+    for mi2, rel in sorted(PINS_REL.items()):
+        cats = [k for k in rel if not k.startswith("__")]
+        p2 = pid_of(mi2)
+        if p2 is None or len(cats) < 2:
+            continue
+        for a2, b2 in zip(cats, cats[1:]):
+            if a2 not in exp_pins[p2] or b2 not in exp_pins[p2]:
+                continue
+            mv = (s * (rel[b2][0] - rel[a2][0]), s * (rel[b2][1] - rel[a2][1]))
+            ev = (exp_pins[p2][b2][0] - exp_pins[p2][a2][0],
+                  exp_pins[p2][b2][1] - exp_pins[p2][a2][1])
+            if math.dist(mv, ev) > 0.05:
+                pv_bad.append((rel.get("__title__", mi2), a2, b2, mv, ev))
+    npin_chk = sum(1 for r in PINS_REL.values()
+                   if len([k for k in r if not k.startswith("__")]) >= 2)
+    print("   ⑤ 引脚判别：**同一零件内脚向量** %s"
+          % ("**全部一致** ✓✓（%d 件 ✓）" % npin_chk
+             if not pv_bad else "**%d 条对不上** ✗✗（下面是前 6 条 ✓）" % len(pv_bad)))
+    for ttl0, a2, b2, mv, ev in pv_bad[:6]:
+        print("        ✗ %-6s %s→%s 我(%7.2f,%7.2f) 导出(%7.2f,%7.2f) ⇒ 比值 %.3f"
+              % (ttl0, a2, b2, mv[0], mv[1], ev[0], ev[1],
+                 (abs(ev[0]) / abs(mv[0])) if abs(mv[0]) > 1e-6 else float("nan")))
+
+    wm = {el.get("modelIndex"): (el.findtext("title") or "").strip()
+          for el in root.iter("instance")
+          if (el.get("moduleIdRef") or "").startswith("Wire")}
+    links = []
+    for el in root.iter("instance"):
+        if not (el.get("moduleIdRef") or "").startswith("Wire"):
+            continue
+        for c in el.iter():
+            if tag(c) != "connect":
+                continue
+            if c.get("modelIndex") in wm:
+                continue
+            links.append((el.get("modelIndex"), c.get("modelIndex"), c.get("connectorId")))
+    tbad, tmax = [], 0.0
+    for wmi, pmi, cid in links:
+        wpid = next((k for k in exp_lines if k == wmi or
+                     (k.startswith(wmi) and len(k) == len(wmi) + 1)), None)
+        ppid = pid_of(pmi)
+        if wpid is None or ppid is None or cid not in exp_pins.get(ppid, {}):
+            continue
+        pts = [q for seg2 in exp_lines[wpid] for q in seg2]
+        pp = exp_pins[ppid][cid]
+        d2 = min(math.dist(pp, q) for q in pts)
+        tmax = max(tmax, d2)
+        if d2 > 0.5:
+            tbad.append((wm.get(wmi, wmi), ppid[:-1], cid, d2))
+    print("   ⑥ 引脚判别：**线到脚** %d 条 ⇒ 没接上的 %d 处（最大 %.3f 导出单位 = %.2f mm）%s"
+          % (len(links), len(tbad), tmax, tmax * 25.4 / 72, "✓✓" if not tbad else "✗✗"))
+    for ttl0, pmi, cid, d2 in tbad[:6]:
+        print("        ✗ %-13s 该接 %s.%s，线端离脚 **%.2f mm** ✗" % (ttl0, pmi, cid, d2 * 25.4 / 72))
+
     # ★ 判定分**三类**报 ✓：几何（尺寸/位置 ✓）｜装饰（接点圆点 ✓）｜文本（位号文字 ✓）
     #   —— 用一个 0.25mm 的圆点去掩盖"几何已逐点验平"是**把结论说糊**了 ✗，
     #     反过来也一样 ✗（几何错了就不能拿"就几个圆点"糊过去 ✗）。
-    geo_ok = (worst_p < 0.01 and worst_w < 0.05 and not unmatched and not extra and lw < 0.01)
+    geo_ok = (worst_p < 0.01 and worst_w < 0.05 and not unmatched and not extra and lw < 0.01
+              and not pv_bad and not tbad)
     dot_ok = not dmiss and not dextra
-    print("   ⇒ 几何（零件/导线/位号位置）：%s"
-          % ("✓✓ **与 Fritzing 逐点一致** ✓✓（四处 Δ 全部 ≤0.001 单位 = 0.0003 mm ✓）"
+    print("   ⇒ 几何（零件/导线/位号位置 **+ 引脚**）：%s"
+          % ("✓✓ **与 Fritzing 逐点一致** ✓✓（含引脚 ✓；四处 Δ 全部 ≤0.001 单位 = 0.0003 mm ✓）"
              if geo_ok else "✗ 有几何不一致项 ✗（上面已逐条列出 ✓ 别默认它没事 ✗）"))
     print("   ⇒ 装饰（接点圆点）：%s"
           % ("✓ 一致 ✓" if dot_ok else "⚠ 差 %d 个（纯装饰 ✓，半径 0.9 单位 = 0.25mm ✓；"
