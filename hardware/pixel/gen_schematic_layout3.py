@@ -40,8 +40,13 @@ import xml.etree.ElementTree as ET
 import sch_text as ST                 # ★ 字宽表（唯一实现 ✓，与渲染器同一份 ✓）
 
 GRID = 7.2                       # Fritzing 原理图网格 0.1in ✓（仅用于"整数格"美观 ✓）
-GAP_X = 2 * GRID                 # 相邻本体框水平间隙 ≈ 4.06mm ✓
-GAP_Y = 3 * GRID                 # 行间间隙 ≈ 3.05mm ✓
+GAP_X = 1 * GRID                 # 相邻本体框水平间隙 ≈ 2.03mm ✓
+GAP_Y = 2 * GRID                 # 行间间隙 ≈ 2.03mm ✓
+# ★ 这两个数是**扫出来的** ✓（2026-09-27 ✓，`_scratch/sweep_layout.py` 全流程实测 ✓）：
+#   起因：`px` 那个 bug 修掉后 `LED2`/`D3` 小了 20% ✓ ⇒ 旧间距（2/3 格）是照**错的尺寸**调的 ✗ ⇒
+#   布线器为了绕开空档，交叉升到 12 ✗、画布也撑大了 ✗。
+#   扫 6 组 ⇒ **1 格 / 2 格** 明显最优 ✓：交叉 **12 → 9** ✓、总长 **2386.9 → 2137.3**（−10% ✓）、
+#   画布 **97.0×96.6 → 90.9×90.5** ✓；位号压导线 3 处**与间距无关** ✗（要另修 ✓）。
 # ★ 插座（首尾两件）跟核心电路**再多留一段** ✓（2026-09-27 用户洞察 ✓：
 #   “接口插座要跟核心电路拉开更大的距离” ✓）。
 #   ★ 这个 **4 格**不是我拍的 ✓ —— 我把**用户手改的那一版**里 J1 的位移量出来 ✓：
@@ -296,6 +301,17 @@ if __name__ == "__main__":
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     opts = {a[2:].split("=")[0]: a[2:].split("=")[1] for a in sys.argv[1:]
             if a.startswith("--") and "=" in a}
+    # ★ 摆位参数可调 ✓（2026-09-27 加 ✓）：尺寸修正后（`px` 那个 bug ✓）原来的间距是照
+    #   **错的尺寸**调的 ✗ ⇒ 用这几个开关**扫一遍**、按指标挑 ✓（`_scratch/sweep_layout.py` ✓）。
+    if "gapx" in opts:
+        GAP_X = float(opts["gapx"]) * GRID
+        print("★ GAP_X ← %.2f 格（%.0f 单位 ✓）" % (float(opts["gapx"]), GAP_X))
+    if "gapy" in opts:
+        GAP_Y = float(opts["gapy"]) * GRID
+        print("★ GAP_Y ← %.2f 格（%.0f 单位 ✓）" % (float(opts["gapy"]), GAP_Y))
+    if "socket" in opts:
+        SOCKET_EXTRA = float(opts["socket"]) * GRID
+        print("★ SOCKET_EXTRA ← %.2f 格（%.0f 单位 ✓）" % (float(opts["socket"]), SOCKET_EXTRA))
     main(args[0], args[1],
          opts.get("pins", os.path.join(os.path.dirname(os.path.abspath(__file__)), "pins_v2.py")),
          snap=bool(opts.get("snap")))
