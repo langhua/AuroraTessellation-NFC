@@ -160,9 +160,20 @@ HARD_BODY = False
 #     （Fritzing 的连接只记在 `<connects>` 里 ✓ ⇒ `check_netlist.py` 结构上就看不见 ✗）。
 #   这正是用户那条「**贴脚必须是 0**」的**几何形态** ✓ —— 0.00 距离任何阈值都能杀掉 ✓。
 #   ★ 风格与 `body_hard_bad` 一致 ✓：**只删候选** ✗，不动代价函数与档位次序 ✓。
-#   `--hardpin` 打开 ⇒ A/B 对照（默认关 ✓）。
-HARD_PIN = False
+#   ★★ **默认开 ✓**（2026-09-28 ✓ **用户定** ✓）：实测它是**唯一**能把 (B) 假连线打到 **0**
+#      的开关 ✓（(A)/(B)：v14 = 0/9 ✗ ｜ v15 = 0/8 ✗ ｜ `--hardpin` = **0/0 ✓✓**）。
+#      ⇒ 旧基线仍可一键复现 ✓：`--nopin`（= v15 行为 ✓）。
+HARD_PIN = True
 PIN_EPS = 0.05
+# ★★ `HARD_OVL`：**导线不许与已布好的线压在同一条直线上** ✓（用户规则② 的**真闸门** ✓，2026-09-28 ✓）
+#   病症（实测 ✓，`t27_1` = v15 + `--hardpin` ✓）：用户规则②（「**不同的导线，不能重叠**」✓）
+#     原来**只靠软代价**压 ✗（`wt = INT_W[0]×nov + …` ✓）⇒ 一开 `--hardpin` 候选集变小 ⇒
+#     它**退回 1 对** ✗✗（`Wire90012917 (-6,9)→(22.6,9)` 与 `Wire90012918 (22.6,9)→(10.4,9)`
+#     在 `y=9` 上压了 12.2 单位 ✓）⇒ **硬规则不能用软代价表达** ✗（与 `HARD_BODY` 同一个理由 ✓）。
+#   ★ 与 `HARD_BODY`/`HARD_PIN` 同一套路 ✓：**只删候选** ✗，不动代价函数与档位次序 ✓；
+#     删到一条不剩 ⇒ 调用处保留旧候选集 + 告警 ✓（不许把端点接不上 ✗）。
+#   ★ 判据仍只有一份 ✓（`sch_geom.near_overlap` ✓）；`--noovl` 关掉 ⇒ A/B 对照 ✓。
+HARD_OVL = True
 USE_ESC = True
 NEW_ORDER = True
 # ★★ `OUTER_RING`：**元件外圈环廊** ✓（2026-09-28 ✓ 用户点名的第 **1** 条 ✓）
@@ -578,6 +589,25 @@ def pin_hard_bad(path, pin_all, own_pins=(), eps=PIN_EPS):
     return False
 
 
+def ovl_hard_bad(path, used):
+    r"""★ **硬规则**：这条路径**不许与已布好的线压在同一条直线上** ✓（用户规则② ✓，2026-09-28 ✓）
+
+    ★ 病症（实测 ✓，`t27_1` = v15 + `--hardpin` ✓）：用户规则②（「**不同的导线，不能重叠**」✓）
+      原来**只靠软代价**压 ✗（`wt = INT_W[0]×nov + …` ✓）⇒ 一开 `--hardpin` 候选集变小 ⇒
+      它**退回 1 对** ✗✗（`Wire90012917 (-6,9)→(22.6,9)` 与 `Wire90012918 (22.6,9)→(10.4,9)`
+      在 `y=9` 上压了 12.2 单位 ✓）⇒ **硬规则不能用软代价表达** ✗（与 `HARD_BODY` 同一个理由 ✓）。
+    ★ 与 `HARD_BODY`/`HARD_PIN` 同一风格 ✓：**只删候选** ✗，不动代价函数与档位次序 ✓；
+      删到一条不剩 ⇒ 调用处保留旧候选集 + 告警 ✓（不许把端点接不上 ✗）。
+    ★ 判据用**唯一一份** `sch_geom.near_overlap` ✓（渲染器报“压在一起”也是它 ✓）——
+      端点相接（接头 ✓）与十字交叉**都不算**重叠 ✓（口径见 `sch_geom` 头部 ✓）。
+    """
+    for k in range(len(path) - 1):
+        for (p2, q2) in used:
+            if SG.near_overlap(path[k], path[k + 1], p2, q2):
+                return True
+    return False
+
+
 def body_hard_bad(path, boxes, pin_all, r_touch=0.05):
     r"""★ **硬闸门**：不许进入**别的**元件的本体 ✓（2026-09-27 ✓，用户定「**穿体必须是 0**」✓）
 
@@ -786,10 +816,16 @@ def main(argv):
         global NEW_ORDER
         NEW_ORDER = False
         print("档位次序：**旧** ✓（`--oldorder`；两个都关 = A 基线 ✓ = v14 一字节不差 ✓）")
-    if "--hardpin" in argv:                    # 实验 ✓：线不许落在“别的脚”上（默认关 ✓）
+    if "--hardpin" in argv:                    # 兼容旧命令 ✓（2026-09-28 起**已默认开** ✓，用户定 ✓）
+        print("硬闸门 HARD_PIN：**已是默认 ✓**（`--hardpin` 留作兼容 ✓；要关掉用 `--nopin` ✓）")
+    if "--nopin" in argv:                      # A/B 用 ✓：关掉 ⇒ 回到 v15 行为 ✓
         global HARD_PIN
-        HARD_PIN = True
-        print("硬闸门 HARD_PIN：**开启** ✓（非自己两端の脚，线不许落在它上面 ✓）")
+        HARD_PIN = False
+        print("硬闸门 HARD_PIN：**关闭** ✓（`--nopin` ⇒ 可一键复现 v15 ✓）")
+    if "--noovl" in argv:                      # A/B 用 ✓：关掉规则②的真闸门 ✓
+        global HARD_OVL
+        HARD_OVL = False
+        print("硬闸门 HARD_OVL：**关闭** ✓（`--noovl` ⇒ 回到“重叠只靠软代价”✓）")
     if "--ring" in argv:                       # 实验 ✓：开“元件外圈环廊”（默认关 ✓）
         global OUTER_RING
         OUTER_RING = True
@@ -1031,6 +1067,13 @@ def main(argv):
                 cands = ok2
             else:
                 warn.append("%s：**没有一条候选**能避开别的引脚 ✗（保留旧候选集 ✓）" % tag)
+        if HARD_OVL:                   # ★ 用户规则②的真闸门 ✓：不许与已布的线压在同一条直线上 ✓
+            ok3 = [p for p in cands if not ovl_hard_bad(p, used)]
+            if ok3:
+                cands = ok3
+            else:
+                warn.append("%s：**没有一条候选**能与已布的线不重叠 ✗（保留旧候选集 ✓ 否则接不上 ✗）"
+                            % tag)
         best, best_key, alt, alt_key = None, None, None, None
         esc_best, esc_best_key = None, None
         for path in cands:
@@ -1234,6 +1277,15 @@ def main(argv):
     for (p1, q1), (p2, q2) in ov_pairs[:6]:
         print("      ✗ (%.1f,%.1f)→(%.1f,%.1f) 与 (%.1f,%.1f)→(%.1f,%.1f) 压在同一条直线上"
               % (p1[0], p1[1], q1[0], q1[1], p2[0], p2[1], q2[0], q2[1]))
+    #   ★★ **真闸门** ✓（2026-09-28 ✓ 用户定「要」✓）：这一条是**用户规则②** ✓，可它以前
+    #     只是**打印一行** ✗ —— 重叠 1 对时**照写文件、照常退出 0** ✗（实测 `t27_1` ✓）
+    #     ⇒ 等于没守 ✗（我因此一度把不合格那版当合格版用 ✓）。
+    #   ⇒ 现在：重叠非 0 ⇒ **退出码 = 1** ✓；合格 ⇒ 0 ✓。
+    #     ★ 文件**仍然写出** ✓（我们要能打开图看是哪儿压了 ✓）；口径与 `check_fake_wires.py`
+    #       「机器守用退出码说话」一致 ✓。
+    ov_fail = 1 if ov_pairs else 0
+    if ov_fail:
+        print("── ★★ ⇒ **退出码 1** ✓（“不同的导线重叠”必须 0 ✓；文件已照常写出 ✓ 供你打开看哪儿压了 ✓）")
 
     # ── ★ 布完线再重摆位号 ✓（2026-09-27 用户定 ✓）──
     relabel(insts, boxes, used)
@@ -1248,7 +1300,7 @@ def main(argv):
 
     if orig[0]:
         emit(sroot, insts, z, nets_segs, orig[0], out_path)
-    return 0
+    return ov_fail              # ★ 真闸门 ✓：重叠非 0 ⇒ 退出码 1 ✓（见上面那条自检 ✓）
 
 
 def fmt(v):
