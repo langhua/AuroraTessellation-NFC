@@ -102,7 +102,44 @@ OUT_MARGIN = 7.2      # 包围盒外扩（1 格 ✓）：小出界不算往外�
 #   取 **1 格（7.2 单位 = 2.03mm）** ✓（引脚间距本身是 9∼15 单位 ✓ ⇒ 7.2 能既留出可辨的距离、
 #   又不会无路可走 ✓）。规则放在**交叉数之前**的档位 ✓（它是可读性规则 ✓ 不是审美点缀 ✓）。
 CLEAR_PIN = 7.2
-ESC_PIN = CLEAR_PIN + 5.0      # “沿引脚轴向逃出去”的长度 ✓（出口就已超过安全距离 ✓）
+ESC_PIN = CLEAR_PIN + 5.0      # 第一条出脚长度 ✓（= 出去就已超过安全距离 ✓）
+# ★★ `ESC_OFFS`：**沿引脚法线出脚的长度**（两档 ✓ = 两条平行车道 ✓）
+#   （2026-09-27 ✓ —— 用户两条规则的**机器化**：① 导线与不相连的引脚要有安全距离 ✓
+#     ② 不同的导线不能重叠 ✓。两个病根是**同一个** ✓：主干直接**骑在引脚行列上** ✗。）
+#   ★★ 病史（三错一改 ✓，全写在里，不要重犯 ✗）：
+#     ✗ 错 1（早先）：只给**一条**逃出通道（`ESC_PIN` 单值 ✓）⇒ 侵入 13 → **15** ✗（回退 ✓）；
+#       当时我以为病根是“主干挤同一条车道” ✗（把两个现象接上了，但不完整 ✗）。
+#     ✗ 错 2：把“引脚列 ± ESC_OFFS”当成**普通通道**加进 `chx/chy` ✗ ⇒
+#        实测**四档（0 / 12.2 / 12.2,19.4 / ×3）结果一字节不差** ✗✗ —— **完全无效** ✗。
+#     ✗ 错 3（我当时的推断）：以为是被前面的档位一票否决 ✗ ⇒ 去写探针 ✓（而不是去改档位 ✗）✓。
+#     ✓ `--why` 探针给出了真相 ✓（第一次就问准了 ✓）：
+#        `GND U1.connector3→U1.connector20` 选中与亚军**贴脚都是 3** ✗ ⇒
+#        **根本没有一条候选能把 3 降下来** ✗ —— 不是档位问题 ✗，是**形状缺一种** ✗：
+#        · `[a,(x,a1),(x,b1),b]` 的**末段是横线** ⇒ 目标脚在**底排**时它**正好沿着底排引脚行**跑 ✗；
+#        · `[a,(a0,y),(b0,y),b]` 的**首段是竖线** ⇒ 起点在**左排**时它**正好沿着左排引脚列**跑 ✗。
+#     ✓ 正解 = **先沿引脚法线出脚 ✓ → 走“干净的”通道 ✓ → 再沿法线拐进脚 ✓**
+#        （= `esc_cands` ✓），且通道集里**不放任何引脚坐标** ✓（`chx_clean/chy_clean` ✓）。
+#     ★ 另有一处必须一起改 ✓（否则新形状还是用不上 ✗，实测推理 ✓）：
+#        出脚必然要**绕到别的元件附近**（例：从 U1 左排往左出，就靠近 J1 ✓）⇒
+#        我那条代理规则“离别的元件 6 单位以内算碰”排在第 2 档 ✗ ⇒ **会一票否决出脚** ✗。
+#        ⇒ 把这条**我自己加的代理规则**降到用户规则（贴脚+重叠 ✓）之后 ✓（新增次序 ✓）。
+#        两处都有实验开关可以分开测 ✓（`--esc` / `--neworder` ✓）⇒ 归因不靠猜 ✓。
+ESC_OFFS = (ESC_PIN, ESC_PIN + 7.2)
+# ★★ `USE_ESC` / `NEW_ORDER`：**默认都开** ✓（2026-09-27 **用户决定** ✓：“**重叠 0 优先**” ✓）
+#   ★ 四档实测（`_scratch/run_esc2.py` ✓ 一次跑完 ✓，同一摆位 / 同一套判据 ✓）：
+#     A 旧形状+旧次序（= v14 基线）  重叠 5 ｜ 贴脚 13 ｜ 交叉 13 ｜ **穿体 0** ✓
+#     B 只开 `USE_ESC`            **与 A 一字节不差** ✗ ⇒ 出脚候选**全被代理规则否决** ✗（解释被证实 ✓）
+#     D 只开 `NEW_ORDER`          重叠 2 ｜ 贴脚 11 ✓ ｜ 交叉 **15** ✗ ｜ **穿体 4** ✗
+#     C 两个都开                  重叠 **0** ✓✓ ｜ 贴脚 11 ｜ 交叉 **16** ✗ ｜ **穿体 5** ✗ ｜ 位号压线 **4** ✗
+#   ★ 所以这两处不是“技术修补” ✓ —— 它们是**规则之间的取舍** ✗：
+#     要让主干**离开引脚列**（= 安全距离 ✓，也是“不重叠”的前提 ✓）⇒ 它就得**借道别的元件旁边的空地** ✓
+#     （实测：从 U1 左排往左出，必经 J1 旁边 ✓）；而我那条代理规则“离任何元件 6 单位以内算碰” ✗
+#     ⇒ **天然冲突、二选一** ✓ ⇒ 不能我偷着选 ✗ ⇒ 已问过用户 ✓：
+#     **用户选“重叠 0 优先”** ✓（接受 穿体 5 / 交叉 16 / 位号压线 4 的代价 ✓）⇒ 两个开关**默认开** ✓。
+#   ★ 待办 ✓（用户同一次定的 ✓）：**贴脚要降到个位数** ✓（现在 11 ✗）—— 下一轮单独量、单独治 ✓。
+#   ★ 基线随时可回 ✓：`--noesc --oldorder`（= A ✓，实测与 v14 一字节不差 ✓）。
+USE_ESC = True
+NEW_ORDER = True
 P_STEP = 2.0          # 判定用的采样步长（单位 ✓，与其余判据同一套口径 ✓）
 # ★★ 抽出重排的轮数 ✓（2026-09-27 ✓，面包板验证过的最后一道工序 ✓）：
 #   把每段抽出来、在“看得见其它所有线”的条件下重算 ✓ ⇒ **只留更优的** ✓（单调改进 ✓）。
@@ -130,6 +167,17 @@ USE45 = True           # 是否允许 45° dogleg 候选 ✓（`--no45` 关掉 �
 #       （`bb_route4.py` 的 `DIAG_PEN` 同一个系数 ✓），让它只有在**躲开交叉/避让元件**
 #       时才被选中 ✓。`,
 
+# ★★ `--why` 决策探针 ✓（2026-09-27 ✓）—— **只观测、不改行为** ✓
+#   用途 ✓：字典序代价里“**候选为什么没被选中**”一直靠我猜 ✗（今天猜错两次 ✗）。
+#   它把“选中路径”与“亚军路径”的**代价元组**并排列出 ✓，并指出**第一处不同的档位** ✓
+#   ⇒ 一眼看出是哪一档一票否决的 ✓，不用再猜 ✓。
+WHY = False
+PHASE = ["greedy"]        # “greedy” = 首轮布线 ✓；“rip” = 抽出重排 ✓（探针只报首轮 ✓）
+TIER = ("穿自己本体", "靠别的元件", "出界格", "压线+贴脚", "交叉",
+        "穿自己本体2", "弯", "长度")      # 与 `route_key` 的元组一一对应 ✓
+# ★ 新次序对应的档名 ✓（`--oldorder` 时用上面那组 ✓）
+TIER_NEW = ("穿自己本体", "出界格", "压线+贴脚", "靠别的元件", "交叉",
+            "穿自己本体2", "弯", "长度")
 # ★ 标定过的脚位置（由 recal_pins.py 从 Fritzing 自己的渲染反推 ✓）：
 #   {modelIndex: {connectorId: (x, y)}} —— 有它就用它 ✓（逐元件公式跨元件不成立 ✗，2026-09-26）
 PINS_FIX = {}
@@ -343,6 +391,9 @@ def candidates(a, b, chx, chy):
         斜边 1.414 优于两边 2.0 ✓ ⇒ 对齐得好的地方会自然长出 45° ✓。
     """
     out = []
+    # ✗ 这里曾试过“把引脚自己的列左右各挪 `ESC_OFFS` 当车道”✗ ⇒
+    #   实测**四档结果一字节不差** ✗✗（完全无效 ✓）⇒ 已撤 ✓。
+    #   原因在 `ESC_OFFS` 那段注释里 ✓：“进 / 出引脚那一段在排内跑”✗ ⇒ 只能靠 `esc_cands` ✓。
     if abs(a[0] - b[0]) < 1e-6 or abs(a[1] - b[1]) < 1e-6:
         out.append([a, b])                     # ★ **只在轴对齐时**才给直连 ✓
         #   ✗ 非轴对齐的“直连”= **任意角** ✗ ⇒ 实测交叉 8 → 40 ✗✗（它会横穿全图 ✓）
@@ -365,6 +416,64 @@ def candidates(a, b, chx, chy):
         out.append([a, (x, a[1]), (x, b[1]), b])
     for y in chy:
         out.append([a, (a[0], y), (b[0], y), b])
+    return out
+
+
+def dedup_path(p):
+    r"""去掉重合点 ✓ + 合并共线段 ✓（否否则“弯”会被算多 ✗：
+
+    ★ 为什么要合并共线 ✓：`bends()` 数的是**点数** ✓ ⇒ 出脚后的第一段常与第二段共线 ✓
+      （如法线向左出脚 + 再向左横走 ✓）⇒ 不合并就会多算 1 个弯 ✗ ⇒ 出脚形状在“弯”
+      那一档亏分 ✗（不公平 ✓）。
+    """
+    q = [p[0]]
+    for r in p[1:]:
+        if math.dist(r, q[-1]) > 1e-9:
+            q.append(r)
+    if len(q) < 3:
+        return q
+    out = [q[0]]
+    for i in range(1, len(q) - 1):
+        (x0, y0), (x1, y1), (x2, y2) = out[-1], q[i], q[i + 1]
+        if abs((x1 - x0) * (y2 - y0) - (y1 - y0) * (x2 - x0)) > 1e-9:
+            out.append(q[i])
+    out.append(q[-1])
+    return out
+
+
+def esc_cands(a, b, na, nb, chx2, chy2):
+    r"""**出脚组合**候选 ✓（2026-09-27 ✓）—— 先沿引脚法线出脚 ✓ → 走**干净通道** ✓ → 再拐进脚 ✓
+
+    ★ 为什么需要它（`--why` 探针实测 ✓）：
+      实测 `GND U1.connector3→U1.connector20`：选中与亚军**贴脚都是 3** ✗ ⇒
+      **候选里没有一条能把 3 降下来** ✗ —— 不是被前面的档位压掉 ✗（我先猜的就是它 ✗，猜错 ✓）。
+      原因：原有“车道”形状**出脚方向不对** ✗ ——
+        · `[a,(x,a1),(x,b1),b]` 末段横的 ⇒ 目标脚在**底排**时它**沿底排引脚行**跑 ✗；
+        · `[a,(a0,y),(b0,y),b]` 首段竖的 ⇒ 起点在**左排**时它**沿左排引脚列**跑 ✗。
+    ★ `na/nb` = 两端引脚的**法线** ✓（由“脚贴在元件的哪条边上”算出 ✓；
+      元件内部的脚（如 D3 的 `AC1/AC2` ✓）法线为 (0,0) ⇒ 不出脚 ✓）。
+    ★ `chx2/chy2` = **干净通道** ✓（只含“元件边 ± `CH_OFFS`” ✓，**不含任何引脚坐标** ✗）⇒
+      主干不会骑在别人的引脚行列上 ✓；再把两端**出脚点自己的行列**加进去 ✓
+      （那是已离开引脚 `ESC_OFFS` 的平行车道 ✓ > `CLEAR_PIN` ✓）。
+    ★ 为什么要**卡根范围**（± 40 单位 ✓）：候选数直接决定跑得多快 ✓
+      （`route_key` 每条候选要扫全图 45 个脚 ✓）⇒ 只取端点附近的通道 ✓
+      （跑出包围范围很多的通道 = 绕远路 ✓，本来就会被长度项罚 ✓）。
+    """
+    aps = [a] if na == (0.0, 0.0) else [(a[0] + na[0] * o, a[1] + na[1] * o) for o in ESC_OFFS]
+    bps = [b] if nb == (0.0, 0.0) else [(b[0] + nb[0] * o, b[1] + nb[1] * o) for o in ESC_OFFS]
+    xs = [q[0] for q in aps + bps]
+    ys = [q[1] for q in aps + bps]
+    cx = [v for v in sorted(set(chx2) | set(xs)) if min(xs) - 40.0 <= v <= max(xs) + 40.0]
+    cy = [v for v in sorted(set(chy2) | set(ys)) if min(ys) - 40.0 <= v <= max(ys) + 40.0]
+    out = []
+    for ap in aps:
+        for bp in bps:
+            for x in cx:
+                out.append(dedup_path([a, ap, (x, ap[1]), (x, bp[1]), bp, b]))
+            for y in cy:
+                out.append(dedup_path([a, ap, (ap[0], y), (bp[0], y), bp, b]))
+            out.append(dedup_path([a, ap, (bp[0], ap[1]), bp, b]))
+            out.append(dedup_path([a, ap, (ap[0], bp[1]), bp, b]))
     return out
 
 
@@ -531,6 +640,28 @@ def main(argv):
         global RATIO
         RATIO = float(argv[argv.index("--ratio") + 1])
         print("尺子换算：RATIO = %.4f（导出尺子 1.25 ✓ / 渲染尺子 1.0 ✓）" % RATIO)
+    if "--choffs" in argv:                    # 走廊偏移可扫 ✓（逗号分隔 ✓，单位=sketch ✓）
+        global CH_OFFS
+        CH_OFFS = tuple(float(v) for v in argv[argv.index("--choffs") + 1].split(","))
+        print("走廊偏移 CH_OFFS = %s ✓（从“画出来的包围盒”往外量 ✓；第一条要 > CLEAR_PIN=%.1f 才能不贴脚 ✓）"
+              % (CH_OFFS, CLEAR_PIN))
+    if "--escs" in argv:                      # 出脚长度可扫 ✓（逗号分隔 ✓；一档 = 一条车道 ✓）
+        global ESC_OFFS
+        ESC_OFFS = tuple(float(v) for v in argv[argv.index("--escs") + 1].split(","))
+        print("出脚长度 ESC_OFFS = %s ✓（沿引脚法线往外量 ✓；%d 档 ⇒ %d 条平行车道 ✓；"
+              "第一档 > CLEAR_PIN=%.1f 才算离开安全距离 ✓）" % (ESC_OFFS, len(ESC_OFFS), len(ESC_OFFS), CLEAR_PIN))
+    if "--why" in argv:                       # 决策探针 ✓（只观测 ✓ 不改行为 ✓）
+        global WHY
+        WHY = True
+        print("决策探针 --why：报首轮**选中 vs 亚军**的代价元组 ✓（不改布线结果 ✓）")
+    if "--noesc" in argv:                      # A/B 用 ✓：关掉“出脚组合”候选（回到旧形状集 ✓）
+        global USE_ESC
+        USE_ESC = False
+        print("出脚组合候选：**关闭** ✓（`--noesc` = A 基线的一半 ✓）")
+    if "--oldorder" in argv:                   # A/B 用 ✓：回到旧档位次序（代理规则排在用户规则前 ✓）
+        global NEW_ORDER
+        NEW_ORDER = False
+        print("档位次序：**旧** ✓（`--oldorder`；两个都关 = A 基线 ✓ = v14 一字节不差 ✓）")
     if "--rip" in argv:                       # 抽出重排轮数 ✓（默认 3 ✓；0 = 关 ✓）
         global RIP_ROUNDS
         RIP_ROUNDS = int(argv[argv.index("--rip") + 1])
@@ -570,23 +701,37 @@ def main(argv):
              fit["y"][0], fit["y"][1], fit["y"][2]))
 
     chx, chy = set(), set()
+    # ★★ **干净通道** ✓（2026-09-27 ✓）：只收“元件边 ± `CH_OFFS`” ✓ —— **不放任何引脚坐标** ✗
+    #   ★ 为什么关键 ✗：用户那两条规则（安全距离 ✓ / 不重叠 ✓）的病根就是
+    #     “**主干骑在引脚行列上**” ✗（实测 x=22.6 / 0.0 / 1.7 ✓ = 引脚列 ✓）——
+    #     而 `chx/chy` 里的引脚坐标正是把主干引上去的那扇门 ✗。
+    #   ⇒ 出脚组合（`esc_cands` ✓）只准用干净通道 ✓；直连 / L 形 / 45° 仍可用 `chx/chy` ✓
+    #     （它们“进脚”那一段本来就必须落在引脚行列上 ✓ —— 那是连接点 ✓）。
+    chx_clean, chy_clean = set(), set()
     for d in insts.values():
         b = d["box"]
         # ✗ 试过把“走廊从含引脚的边界起算” ✗ ⇒ 实测侵入反而 13 → **19 处** ✗（回退 ✓）。
-        #   原因：通道集里本来就有“引脚自己的坐标” ✓（要能拐到脚上 ✓）⇒ 主干照样能挑中
-        #   那条刚好穿过一脚末端的列 ✗；真正要治的是“**谁该占哪条走廊**” ✗（面包板的“留路” ✓）
-        #   和“贪婪抢占” ✗（要“抽出重排” ✓）—— 按规矩“要叠第二个补偿改动就停手” ✓ 先回退 ✓。
+        #   ★ 为什么这条路走不通 ✓（同一天晚些时候由 `--why` 探针弄清 ✓）：
+        #     病根**不是**“谁占哪条走廊” ✗，而是**候选形状里没有“沿法线出脚”那一种** ✗
+        #     ⇒ 只能“进脚 / 出脚都在排内跑” ✗ ⇒ 怎么挪走廊都没用 ✗。
+        #     正解 = `esc_cands` + `chx_clean/chy_clean` ✓（见 `ESC_OFFS` 那段完整病史 ✓）。
+        #   ⇒ 这一条保持回退 ✓（不再往这个方向打补丁 ✗）。
         if b:
             chx.update(b[0] - o for o in CH_OFFS)
             chx.update(b[2] + o for o in CH_OFFS)
             chy.update(b[1] - o for o in CH_OFFS)
             chy.update(b[3] + o for o in CH_OFFS)
+            chx_clean.update(b[0] - o for o in CH_OFFS)
+            chx_clean.update(b[2] + o for o in CH_OFFS)
+            chy_clean.update(b[1] - o for o in CH_OFFS)
+            chy_clean.update(b[3] + o for o in CH_OFFS)
         for p in d["pins"].values():
             chx.add(p[0])
             chy.add(p[1])
-    # ✗ 另试过“沿引脚轴向逃出去”的通道（ESC_PIN ✓）⇒ 侵入 13 → **15** ✗（也回退 ✓）：
-    #   剩下的侵入不是“离开自己的脚时蹭到”✗，而是**主干型长线从一整排脚前面经过** ✗
-    #   （实测 `012917` 正好穿过 `U1.connector0/1/2` 三个脚末端 ✗）⇒ 那是“走廊归属”问题 ✓。
+    # ✗ 另试过“沿引脚轴向逃出去”的通道（`ESC_PIN` 单值 ✓）⇒ 侵入 13 → **15** ✗（也回退 ✓）。
+    #   当时的解释是“主干型长线从一整排脚前面经过 ⇒ 走廊归属问题” ✗ —— **不够准** ✓；
+    #   真正的毛病是：那种“车道形状”的**出脚方向是错的** ✗（横形状的末段会沿底排行跑 ✗、
+    #   竖形状的首段会沿左排列跑 ✗ ✓，实测见 `--why` ✓）⇒ 已由 `esc_cands` 修正 ✓。
     boxes = {t: d["box"] for t, d in insts.items() if d["box"]}
     # ★ 零件**总包围盒** ✓（“出界”代价项的参照 ✓）：
     UBOX = None
@@ -604,6 +749,27 @@ def main(argv):
                for cid, p in d["pins"].items()]
     print("引脚点表 %d 个 ✓；安全距离 CLEAR_PIN = %.1f 单位（%.2f mm ✓）"
           % (len(PIN_ALL), CLEAR_PIN, CLEAR_PIN * 25.4 / 90.0))
+    # ★ 引脚**法线**表 ✓（出脚方向 ✓，2026-09-27 ✓）：看这个脚贴在它元件包围盒的哪条边上 ✓。
+    #   ★ 为什么“贴边”能当法线用 ✓：`boxes` 是**画出来的东西**的包围盒 ✓ ⇒ 引脚线**末端**
+    #     就落在盒边上 ✓（实测：U1 左排脚末端的 x 就等于盒左缘 22.6 ✓）。
+    #   ★ 落在**盒内部**的脚（如 D3 的 `AC1/AC2` ✓）法线 = (0,0) ⇒ 不出脚 ✓
+    #     （否则 “出脚” 会跑进自己肚子里 ✗）。
+    PIN_N_BY_XY = {}
+    for t, cid, px, py in PIN_ALL:
+        bb = boxes.get(t)
+        n = (0.0, 0.0)
+        if bb:
+            if abs(px - bb[0]) < 1.0:
+                n = (-1.0, 0.0)
+            elif abs(px - bb[2]) < 1.0:
+                n = (1.0, 0.0)
+            elif abs(py - bb[1]) < 1.0:
+                n = (0.0, -1.0)
+            elif abs(py - bb[3]) < 1.0:
+                n = (0.0, 1.0)
+        PIN_N_BY_XY[(round(px, 3), round(py, 3))] = n
+    print("引脚法线表 %d 个 ✓（其中 %d 个能出脚 ✓ —— 贴在元件边上的；其它在元件内部 ✓ 不出脚 ✓）"
+          % (len(PIN_N_BY_XY), sum(1 for v in PIN_N_BY_XY.values() if v != (0.0, 0.0))))
     # ★ 布线**次序**：先把电源/地布完 ✓、再布信号 ✓（面包板规则 ⑩ ✓：
     #   “先布电源/地，但**要把中间走廊留给后面的信号线**” ✓）。
     #   这里先只做前半条（次序 ✓）；后半条（给电源/地的“走中间”加权 ✓）还没做 ✗。
@@ -618,9 +784,12 @@ def main(argv):
           ⇒ 每轮都误报“有改进” ✗、全局却一动不动 ✗（白转 8 轮 ✓）。
 
         代价是**字典序元组** ✓（面包板规则 ⑧ 的教训 ✓：写进最后一档（长度）的系数几乎不起作用 ✗）：
-          ① 不穿**自己**元件肚子 ✓ ② 不碰**别人**本体 ✓ ③ **不出零件包围盒**（按格数 ✓）
-          ④ 少贴**不相连的引脚** ✓（用户定的可读性规则 ✓）⑤ 少与别的线**重叠** ✓
-          ⑥ 少**十字交叉** ✓（头号指标 ✓）⑦ 少穿自己本体 ⑧ 弯少 ⑨ 短（含斜线小罚 ✓）
+          ① 不穿**自己**元件肚子 ✓
+          ② **不出零件包围盒**（按格数 ✓）
+          ③ **两条用户规则**（少贴不相连的引脚 ✓ + 少与别的线重叠 ✓，加权可交换 ✓）
+          ④ **离别的元件别太近**（★ 我加的**代理**规则 ✓，**降到这里** ✓）
+          ⑤ 少**十字交叉** ✓（头号指标 ✓）⑥ 少穿自己本体 ⑦ 弯少 ⑧ 短（含斜线小罚 ✓）
+          （`--oldorder` = 把 ④ 放回 ② 位 ⇒ A/B 对照 ✓）
         """
         own_boxes = [box for t, box in boxes.items() if t in mine]
         nv = 0                       # ② 碰到**别的元件**本体（越少越好 ✓）
@@ -645,28 +814,63 @@ def main(argv):
                   if math.dist((x, y), path[k]) < 0.05
                   or math.dist((x, y), path[k + 1]) < 0.05}
             pintr += pin_intr([path[k], path[k + 1]], sk, PIN_ALL)
-        return (1 if hits_own_body(path, own_boxes) else 0,
-                1 if nv else 0,
-                ostep,
-                # ★★ 两条**用户规则**合成**一个加权项** ✓（2026-09-27 ✓）：
-                #   ✗ 原来 `pintr` 与 `nov` 各占一档（字典序 ✗）⇒ 它们**不能互相交换** ✗
-                #     ⇒ “躲引脚”一路优先 ⇒ 重叠反而从 6 涨到 **10** ✗（实测 ✓）。
-                #   ✓ 改成 `INT_W[0]×重叠 + INT_W[1]×贴脚` ✓ —— 权重与“每轮全局验收”
-                #     的 `SNAP_WEIGHTS` **同一组** ✓（两把尺子同一个刻度 ✓ 避免又打架 ✗），
-                #     可交换 ⇒ 布线器能“少贴一个脚换少压一根线” ✓。
-                INT_W[0] * nov + INT_W[1] * pintr,
-                cross_count(path, used),
-                inside_count(path, own_boxes),
-                bends(path),
+        # ★★ 两条用户规则合成**一个加权项** ✓（2026-09-27 ✓）：
+        #   ✗ 原来 `pintr` 与 `nov` 各占一档（字典序 ✗）⇒ 它们**不能互相交换** ✗
+        #     ⇒ “躲引脚”一路优先 ⇒ 重叠反而从 6 涨到 **10** ✗（实测 ✓）。
+        #   ✓ 改成 `INT_W[0]×重叠 + INT_W[1]×贴脚` ✓ —— 权重与“每轮全局验收”的
+        #     `SNAP_WEIGHTS` **同一组** ✓（两把尺子同一个刻度 ✓），可交换 ✓。
+        # ★★ 次序（2026-09-27 ✓，四档扫描后改的 ✓）：用户规则（贴脚 + 重叠）
+        #   **必须排在**我自己加的代理规则“离别的元件 ≥6”**之前** ✗ ——
+        #   否则**出脚路线必然被一票否决** ✗（出脚就是要绕到别的元件附近 ✓：
+        #   实测从 U1 左排往左出、就会经过 J1 旁边的空档 ✓）。
+        wt = INT_W[0] * nov + INT_W[1] * pintr
+        nvb = 1 if nv else 0
+        if NEW_ORDER:                  # ★ 默认开 ✓：用户规则（贴脚+重叠）排在代理规则之前 ✓
+            return (1 if hits_own_body(path, own_boxes) else 0, ostep, wt, nvb,
+                    cross_count(path, used), inside_count(path, own_boxes), bends(path),
+                    plen(path) + diag_extra(path) + K_OUT * out_len(path, UBOX))
+        # ✗ 旧次序（`--oldorder` = A 基线 ✓，实测与 v14 一字节不差 ✓）
+        return (1 if hits_own_body(path, own_boxes) else 0, nvb, ostep, wt,
+                cross_count(path, used), inside_count(path, own_boxes), bends(path),
                 plen(path) + diag_extra(path) + K_OUT * out_len(path, UBOX))
 
-    def route_pair(a, b, mine, own_pins, used):
-        """在候选里挑最优路径 ✓（代价见 `route_key` ✓）"""
-        best, best_key = None, None
-        for path in candidates(a, b, sorted(chx), sorted(chy)):
+    def route_pair(a, b, mine, own_pins, used, tag=""):
+        """在候选里挑最优路径 ✓（代价见 `route_key` ✓）
+
+        ★ `tag` 非空 + `--why` + 首轮 ⇒ 把“选中 / 亚军”两个代价元组与**第一处不同的档位**
+          打到 stdout ✓（探针 ✓ 不改行为 ✓）。
+        """
+        cands = candidates(a, b, sorted(chx), sorted(chy))
+        if USE_ESC:                    # ★ 默认开 ✓（用户定：重叠 0 优先 ✓）
+            na = PIN_N_BY_XY.get((round(a[0], 3), round(a[1], 3)), (0.0, 0.0))
+            nb = PIN_N_BY_XY.get((round(b[0], 3), round(b[1], 3)), (0.0, 0.0))
+            if na != (0.0, 0.0) or nb != (0.0, 0.0):
+                cands = cands + esc_cands(a, b, na, nb, chx_clean, chy_clean)
+        seen, uniq = set(), []         # ★ 去掉重复候选 ✓（出脚形状会与直连/L 形撞车 ✓）
+        for p in cands:
+            t = tuple((round(q[0], 4), round(q[1], 4)) for q in p)
+            if t not in seen:
+                seen.add(t)
+                uniq.append(p)
+        cands = uniq
+        best, best_key, alt, alt_key = None, None, None, None
+        for path in cands:
             key = route_key(path, mine, own_pins, used)
             if best_key is None or key < best_key:
+                if best is not None:           # ★ 上一名降为“亚军” ✓
+                    alt, alt_key = best, best_key
                 best, best_key = path, key
+            elif alt_key is None or key < alt_key:
+                alt, alt_key = path, key
+        if WHY and tag and PHASE[0] == "greedy" and alt is not None:
+            dif = next((i for i in range(len(best_key))
+                        if best_key[i] != alt_key[i]), -1)
+            print("   [why] %-22s 候选 %2d 条" % (tag, len(cands)))
+            print("   [why] %-22s 选中 %s ｜ 路径 %s"
+                  % ("", best_key, " ".join("%.1f,%.1f" % (q[0], q[1]) for q in best)))
+            print("   [why] %-22s 亚军 %s ⇒ 第 %d 档「%s」定胜负"
+                  % ("", alt_key, dif + 1,
+                     (TIER_NEW if NEW_ORDER else TIER)[dif] if dif >= 0 else "全同"))
         return best, best_key
 
     for net in net_order:
@@ -686,7 +890,9 @@ def main(argv):
             own_pins = {(pts[i]["ref"], pts[i]["cid"]),
                         (pts[i + 1]["ref"], pts[i + 1]["cid"])}
             # 三级：① 不碰本体 + 不与已布线段共线重叠 ✓ ② 只要求不碰本体 ✓ ③ 兜底（否则端点接不上 ✗）
-            best, best_key = route_pair(a, b, mine, own_pins, used)
+            best, best_key = route_pair(a, b, mine, own_pins, used,
+                                        tag="%s %s.%s→%s.%s" % (net, pts[i]["ref"], pts[i]["cid"],
+                                                                 pts[i + 1]["ref"], pts[i + 1]["cid"]))
             if best is None:
                 warn.append("%s: %s→%s 没找到不碰本体的路径 ✗" % (net, pts[i]["ref"], pts[i + 1]["ref"]))
                 best = candidates(a, b, sorted(chx), sorted(chy))[0]
@@ -709,6 +915,7 @@ def main(argv):
     #   ★ 配参一致 ✓（面包板踩过的坑 ✗：旧路径必须用**同一组参数**重算 ✓，
     #     否则会出现“每轮都报有改进、全局一动不动”✗）。
     if RIP_ROUNDS > 0:
+        PHASE[0] = "rip"                       # ★ 探针只报首轮 ✓（重排会反复重算 ✓，报了就噪 ✓）
         allseg = [s for net in net_order for s in nets_segs.get(net, [])]
 
         def gstat(used_list, seg_list):
