@@ -104,6 +104,23 @@ OUT_MARGIN = 7.2      # 包围盒外扩（1 格 ✓）：小出界不算往外�
 CLEAR_PIN = 7.2
 ESC_PIN = CLEAR_PIN + 5.0      # “沿引脚轴向逃出去”的长度 ✓（出口就已超过安全距离 ✓）
 P_STEP = 2.0          # 判定用的采样步长（单位 ✓，与其余判据同一套口径 ✓）
+# ★★ 抽出重排的轮数 ✓（2026-09-27 ✓，面包板验证过的最后一道工序 ✓）：
+#   把每段抽出来、在“看得见其它所有线”的条件下重算 ✓ ⇒ **只留更优的** ✓（单调改进 ✓）。
+#   0 = 关掉 ✓（A/B 对照用 ✓）。
+#   ★ 实测（同一摆位 ✓，`_scratch/run_rip.py` ✓）：
+#     rip 0 ⇒ 交叉 15 / 重叠 6 / 贴脚 13 / 总长 2055
+#     rip 2 ⇒ 交叉 **13** ✓ / 重叠 **4** ✓ / 贴脚 16 ✗ / 总长 2059 ✓
+#   ⇒ “交叉 / 重叠”（头两条规则 ✓）都降 ✓ ⇒ **默认开 3 轮** ✓。
+#     ⚠ 贴脚 13→16 ✗：局部改进（每段只看自己 ✓）会让**别的**线贴脚 ✓ —— 同一个“局部 vs 全局”
+#       病 ✓；下一步用“**每轮全局验收**”（把贴脚也当全局指标重算 ✓，变差就把这轮撤回 ✓）。
+RIP_ROUNDS = 3
+# ★ 每轮"全局验收"的权重 ✓（一整行可调 ✓）：`w1×重叠 + w2×贴脚 + w3×交叉` ✓
+#   重叠 = 用户点名的**硬规则**（"不同的导线不能重叠" ✓）⇒ 给最高权 ✓
+#   贴脚 = 用户点名的**可读性规则** ✓；交叉 = 审美头号指标 ✓
+SNAP_WEIGHTS = (10, 1, 1)
+# ★ 布线时“两条用户规则”的权重 ✓（必须与 `SNAP_WEIGHTS` **同一组刻度** ✓，否则两把尺子打架 ✗）
+#   （重叠, 贴脚）与 `SNAP_WEIGHTS[0:2]` 一致 ✓。把重叠调大 ⇒ 更少压线 ✓；调小 ⇒ 更少贴脚 ✓。
+INT_W = (SNAP_WEIGHTS[0], SNAP_WEIGHTS[1])
 USE45 = True           # 是否允许 45° dogleg 候选 ✓（`--no45` 关掉 ✓，A/B 用 ✓）
 #   ★ 为什么是“罚”不是“禁” ✗（2026-09-27 用户定 ✓：“允许 45° 斜线” ✓）：
 #     · 用户指明了允许斜线 ✓；
@@ -514,6 +531,10 @@ def main(argv):
         global RATIO
         RATIO = float(argv[argv.index("--ratio") + 1])
         print("尺子换算：RATIO = %.4f（导出尺子 1.25 ✓ / 渲染尺子 1.0 ✓）" % RATIO)
+    if "--rip" in argv:                       # 抽出重排轮数 ✓（默认 3 ✓；0 = 关 ✓）
+        global RIP_ROUNDS
+        RIP_ROUNDS = int(argv[argv.index("--rip") + 1])
+        print("抽出重排轮数 RIP_ROUNDS = %d ✓" % RIP_ROUNDS)
     if "--Kout" in argv:                      # “出界长度”的倍率 ✓（默认 10 ✓）
         global K_OUT
         K_OUT = float(argv[argv.index("--Kout") + 1])
@@ -589,6 +610,65 @@ def main(argv):
     POWER_FIRST = ("GND", "5V")
     net_order = [n for n in POWER_FIRST if n in NETS] + \
                 [n for n in sorted(NETS) if n not in POWER_FIRST]
+    def route_key(path, mine, own_pins, used):
+        r"""**一条路径的代价** ✓ —— 唯一实现 ✓（首轮布线 / 抽出重排 / “旧路径重算”全用它 ✓）
+
+        ★★ 为什么必须只有一份 ✗（2026-09-27 ✓，面包板踩过的坑 ✓）：
+          重排时若给“新路径”和“旧路径”用**不同口径**（少传了“自己的元件豁免”之类 ✗）
+          ⇒ 每轮都误报“有改进” ✗、全局却一动不动 ✗（白转 8 轮 ✓）。
+
+        代价是**字典序元组** ✓（面包板规则 ⑧ 的教训 ✓：写进最后一档（长度）的系数几乎不起作用 ✗）：
+          ① 不穿**自己**元件肚子 ✓ ② 不碰**别人**本体 ✓ ③ **不出零件包围盒**（按格数 ✓）
+          ④ 少贴**不相连的引脚** ✓（用户定的可读性规则 ✓）⑤ 少与别的线**重叠** ✓
+          ⑥ 少**十字交叉** ✓（头号指标 ✓）⑦ 少穿自己本体 ⑧ 弯少 ⑨ 短（含斜线小罚 ✓）
+        """
+        own_boxes = [box for t, box in boxes.items() if t in mine]
+        nv = 0                       # ② 碰到**别的元件**本体（越少越好 ✓）
+        for k in range(len(path) - 1):
+            for t, box in boxes.items():
+                if t not in mine and seg_hits_box(path[k], path[k + 1], box, CLEAR):
+                    nv += 1
+        nov = 0                      # ⑤ 与已布好的线**压在同一条直线上** ✗
+        for k in range(len(path) - 1):
+            for (p2, q2) in used:
+                if SG.near_overlap(path[k], path[k + 1], p2, q2):
+                    nov += 1
+        ostep = int(out_len(path, UBOX) / 7.2 + 0.9999)          # ③ 出界几格 ✓
+        # ④ 贴到几个不相连的脚 ✓ —— ★ **按“段”算** ✓（与渲染器同一个口径 ✓✓）：
+        #   ✗ 原来按“**整条路径**”算 ✗ ⇒ 把这条网自己的脚**整条**豁免了 ✗ ⇒
+        #     中段（它不属于任何一个脚 ✓）蹭到别人的脚就不算 ✗ ⇒ 脚本口径 11 ✓ 而渲染器口径 16 ✗
+        #     （用户真正要的是后者 ✓：“不相连的引脚都要拉开距离” ✓）。
+        #   ⇒ 改成：每一段各自看“两端命中的脚” ✓ —— 中段两端不是脚 ⇒ 它蹭到谁都算 ✓。
+        pintr = 0
+        for k in range(len(path) - 1):
+            sk = {(t, c) for (t, c, x, y) in PIN_ALL
+                  if math.dist((x, y), path[k]) < 0.05
+                  or math.dist((x, y), path[k + 1]) < 0.05}
+            pintr += pin_intr([path[k], path[k + 1]], sk, PIN_ALL)
+        return (1 if hits_own_body(path, own_boxes) else 0,
+                1 if nv else 0,
+                ostep,
+                # ★★ 两条**用户规则**合成**一个加权项** ✓（2026-09-27 ✓）：
+                #   ✗ 原来 `pintr` 与 `nov` 各占一档（字典序 ✗）⇒ 它们**不能互相交换** ✗
+                #     ⇒ “躲引脚”一路优先 ⇒ 重叠反而从 6 涨到 **10** ✗（实测 ✓）。
+                #   ✓ 改成 `INT_W[0]×重叠 + INT_W[1]×贴脚` ✓ —— 权重与“每轮全局验收”
+                #     的 `SNAP_WEIGHTS` **同一组** ✓（两把尺子同一个刻度 ✓ 避免又打架 ✗），
+                #     可交换 ⇒ 布线器能“少贴一个脚换少压一根线” ✓。
+                INT_W[0] * nov + INT_W[1] * pintr,
+                cross_count(path, used),
+                inside_count(path, own_boxes),
+                bends(path),
+                plen(path) + diag_extra(path) + K_OUT * out_len(path, UBOX))
+
+    def route_pair(a, b, mine, own_pins, used):
+        """在候选里挑最优路径 ✓（代价见 `route_key` ✓）"""
+        best, best_key = None, None
+        for path in candidates(a, b, sorted(chx), sorted(chy)):
+            key = route_key(path, mine, own_pins, used)
+            if best_key is None or key < best_key:
+                best, best_key = path, key
+        return best, best_key
+
     for net in net_order:
         pins = NETS[net]
         if len(pins) < 2:
@@ -606,82 +686,103 @@ def main(argv):
             own_pins = {(pts[i]["ref"], pts[i]["cid"]),
                         (pts[i + 1]["ref"], pts[i + 1]["cid"])}
             # 三级：① 不碰本体 + 不与已布线段共线重叠 ✓ ② 只要求不碰本体 ✓ ③ 兜底（否则端点接不上 ✗）
-            best, best_key = None, None
-            own_boxes = [box for t, box in boxes.items() if t in mine]
-            for path in candidates(a, b, sorted(chx), sorted(chy)):
-                # ★ 一个代价函数排完所有候选 ✓（不再"先跳掉不合格的" ✗）——
-                #   因为放开斜线后，"第一条候选"可能正是最差的一条 ✗，
-                #   兜底绝不能瞎拿一条 ✗（2026-09-27 实测：那次兜底把线直穿元件 ✗）。
-                nv = 0                       # ① 碰到**别的元件**本体（越少越好 ✓）
-                for k in range(len(path) - 1):
-                    for t, box in boxes.items():
-                        if t not in mine and seg_hits_box(path[k], path[k + 1], box, CLEAR):
-                            nv += 1
-                # ② **与已布好的线压在同一条直线上** ✗✗ —— v5 实测 **18 对** ✗
-                #    （`J1` 三只脚的线**全在同一列上竖着走** ✗ ⇒ 图上像三只脚短路了 ✗）
-                #    判据用 `sch_geom.near_overlap` ✓（唯一实现 ✓，含斜线 ✓）
-                nov = 0
-                for k in range(len(path) - 1):
-                    for (p2, q2) in used:
-                        if SG.near_overlap(path[k], path[k + 1], p2, q2):
-                            nov += 1
-                # ★★ 目标函数 = **长度 + K × 交集** ✓（面包板规则 ⑧ ✓，2026-09-27 搬到原理图 ✓）
-                #   交集 = 碰别的元件本体 + 与已布线压同一条直线 + 十字交叉 ✓
-                #   （面包板当天修正过：“交集”= X 形 + T 形 + 从元件下穿过**三类都算** ✓）。
-                #   ★ 为什么要两段式：
-                #     · 先只按**交集数**排 ✓（头号指标 ✓）；
-                #     · 再按 `长度 + K×交集` 算账 ✓ —— 全程加权会到处加交叉 ✗（实测 ✓）。
-                #   ✗ 我先前后试过两个错版（都实测过 ✗，记下来别再试 ✗）：
-                #     ① `弯数` 排在 `长度` 前 ✗ ⇒ 宁可拉长斜线换弯 ✗；
-                #     ② `长度` 排在 `弯数` 前、且**没有 K** ✗ ⇒ 全变一根直线 ✓ 短 ✓
-                #        但**交叉 7 → 42** ✗✗（长直线开头就把后面的路全堵了 ✗）。
-                # ★ 代价顺序 = v5 验证过的那一套 ✓（先硬闸门 ✓、再交叉数 ✓、再弯/长 ✓）
-                #   · `nv`（碰别的元件）与 `nov`（压在同一条直线上）**当硬闸门** ✓ ——
-                #     ✗ 改成“小罚分”实测会把交叉从 8 拉到 40 ✗（漏一角的本体比交叉划算 ✗）✓
-                #   · 交叉数保持**头号指标** ✓（面包板教训 ✓）
-                # ★★ 代价是**字典序元组** ✗ —— 这是我一再踩的坑 ✓（面包板规则 ⑧ 也栽在这 ✓）：
-                #   写在最后一档（长度）里的系数，只有前面**全平**时才起作用 ✗ ⇒
-                #   实测 `K_OUT` 0→30 六组结果**一模一样** ✗、`DIAG_PEN` 1.25→1.00 也一样 ✗。
-                #   ⇒ “跑到零件外面去”要想真起作用，必须**跟交叉数同级** ✓（放在它**前面** ✓）。
-                #   ★ “出界几格”用**格数**（每 7.2 单位 ✓）而不是长度 ✓：
-                #     两档之间差一格 ✓ ⇒ “出界一点点”不会被当成“跑出去一大截” ✓。
-                ostep = int(out_len(path, UBOX) / 7.2 + 0.9999)
-                # ★ **贴近“不相连的引脚”几个** ✓（用户定的可读性规则 ✓ —— 放在交叉数之前 ✓）
-                pintr = pin_intr(path, own_pins, PIN_ALL)
-                # ✗ 试过把“不重叠”摆到**最早的一档**（`key0` ✓）⇒ 实测**全盘变差** ✗：
-                #   交叉 15→**17** ✗、穿本体 0→**3** ✗✗、可读性 13→**24** ✗、总长 +370 ✗ ——
-                #   因为它压过一切 ⇒ 布线器为了躲重叠去绕远路、撞别人 ✗。
-                #   ⇒ 已回退 ✓（按规矩：要叠第二个补偿改动就停手 ✓）。
-                #   ⇒ 真正的解法是“**抽出重排**” ✓（面包板验证过 ✓）：
-                #     贪婪布线下，**先布的线占住了 `x=0`/`x=22.6` 两条列** ✗，
-                #     后布的线看不见“未来的线” ✗ ⇒ 怎么罚都没用 ✓。
-                # ★★ `nov`（压在一条直线上）**单独提一档、排在交叉数前面** ✓
-                #   （2026-09-27 用户定 ✓）：两段压在同一条直线上 ⇒ 读图的人会以为
-                #   **那两根线是一根**（像短路 ✗），比"十字交叉"更该躲 ✓；
-                #   用户手改版就是这个取舍 ✓（交叉 12 ✓ 但压线只有 3 ✓）。
-                #   ✗ 原来写成 `nov + cross_count(...)` 合成一个数 ⇒ 1 个压线 = 1 个交叉 ✗
-                #     （实测压线 8 ✗、手改版 3 ✓）。
-                key = (1 if hits_own_body(path, own_boxes) else 0,
-                       1 if nv else 0,
-                       ostep,
-                       pintr,
-                       nov,
-                       cross_count(path, used),
-                       inside_count(path, own_boxes),
-                       bends(path),
-                       plen(path) + diag_extra(path) + K_OUT * out_len(path, UBOX))
-                if best_key is None or key < best_key:
-                    best, best_key = path, key
+            best, best_key = route_pair(a, b, mine, own_pins, used)
             if best is None:
                 warn.append("%s: %s→%s 没找到不碰本体的路径 ✗" % (net, pts[i]["ref"], pts[i + 1]["ref"]))
                 best = candidates(a, b, sorted(chx), sorted(chy))[0]
             for k in range(len(best) - 1):
                 used.append((best[k], best[k + 1]))
             segs.append({"a": best[0], "b": best[-1], "path": best,
-                         "from": pts[i], "to": pts[i + 1]})
+                         "from": pts[i], "to": pts[i + 1],
+                         # ★ 抽出重排要用同一套上下文 ✓（`mine`/`own_pins` ✓）
+                         "mine": mine, "own_pins": own_pins, "key": best_key})
         nets_segs[net] = segs
         print("网 %-9s %d 个脚 → %d 段（弯 %d）"
               % (net, len(pts), len(segs), sum(bends(s["path"]) for s in segs)))
+
+    # ── ★★ 抽出重排 ✓（2026-09-27 ✓，面包板验证过的那一步 ✓）──
+    #   ★ 要治的病 ✓：贪婪布线下**先布的线占住了走廊** ✗，后布的看不见“未来的线” ✗ ⇒
+    #     重叠/交叉/贴脚怎么罚都降不到 0 ✗（实测：罚、禁、加密走廊三种都试过 ✓ 无效 ✗）。
+    #   ★ 做法 ✓：把每段**抽出来**（从 `used` 里摘掉 ✓）⇒ 此刻它“**看得见其它所有线**” ✓
+    #     再算一遍 ✓；用**同一套代价**与旧路径比 ✓（`route_pair` 一份实现 ✓）⇒
+    #     只留**更优**的 ✓ —— 所以这是**单调改进** ✓，不会越改越差 ✓。
+    #   ★ 配参一致 ✓（面包板踩过的坑 ✗：旧路径必须用**同一组参数**重算 ✓，
+    #     否则会出现“每轮都报有改进、全局一动不动”✗）。
+    if RIP_ROUNDS > 0:
+        allseg = [s for net in net_order for s in nets_segs.get(net, [])]
+
+        def gstat(used_list, seg_list):
+            r"""**全局**评分 ✓（每轮验收用 ✓）—— 重叠 / 贴脚 / 交叉 / 总长 ✓
+
+            ★ 为什么要这一层 ✗（2026-09-27 ✓）：重排是**逐段**改进的 ✓（只看自己那根 ✓）
+              ⇒ 它降交叉时会**让别的线去贴脚** ✗（实测：重叠 6→4 ✓、交叉 15→13 ✓，
+              但贴脚 13→**16** ✗）。这就是"局部最优 ≠ 全局最优" ✗。
+              ⇒ 每轮结束再算一遍**全局** ✓，**变差就把整轮撤回** ✓。
+            ★ 加权和用 `10×重叠 + 贴脚 + 交叉` ✓（权重是我选的 ✓、一行可调 ✓）：
+              重叠是用户点名的**硬规则**（"不能重叠" ✓）⇒ 权重最高 ✓；
+              贴脚是用户点名的**可读性规则** ✓；交叉是审美头号指标 ✓。
+              实测标定 ✓：贪婪版 (重叠6,贴脚13,交叉15) = 88；重排后 (4,16,13) = 69 ✓
+              ⇒ 后者更好 ✓ 该接受 ✓（若用"逐项不许变差"就会把它拒掉 ✗ 那反而不对 ✓）。
+            """
+            ov = 0
+            n = len(used_list)
+            for i in range(n):
+                for j in range(i + 1, n):
+                    if SG.near_overlap(used_list[i][0], used_list[i][1],
+                                       used_list[j][0], used_list[j][1]):
+                        ov += 1
+            cr = 0
+            for i in range(n):
+                for j in range(i + 1, n):
+                    if SG.seg_cross(used_list[i][0], used_list[i][1],
+                                    used_list[j][0], used_list[j][1]):
+                        cr += 1
+            pc = 0
+            for (p2, q2) in used_list:            # ★ 按“段”算 ✓（= 渲染器口径 ✓）
+                own = {(t, c) for (t, c, x, y) in PIN_ALL
+                       if math.dist((x, y), p2) < 0.05 or math.dist((x, y), q2) < 0.05}
+                pc += pin_intr([p2, q2], own, PIN_ALL)
+            ln = sum(plen(s["path"]) for s in seg_list)
+            score = (SNAP_WEIGHTS[0] * ov + SNAP_WEIGHTS[1] * pc
+                     + SNAP_WEIGHTS[2] * cr)
+            return ov, pc, cr, ln, score
+
+        print("── ★★ 抽出重排：%d 段 × %d 轮（每段抽出来、在看得见其它所有线的条件下重算 ✓）"
+              % (len(allseg), RIP_ROUNDS))
+        g0 = gstat(used, allseg)
+        print("   起始全局：重叠 %d ｜ 贴脚 %d ｜ 交叉 %d ｜ 总长 %.1f ｜ 加权分 %.0f ✓"
+              % (g0[0], g0[1], g0[2], g0[3], g0[4]))
+        for rnd in range(RIP_ROUNDS):
+            nimp, ntry = 0, 0
+            snap = [(s, list(s["path"])) for s in allseg]
+            used_snap = list(used)
+            base = gstat(used, allseg)
+            for s in allseg:
+                a2, b2 = s["path"][0], s["path"][-1]
+                segl = [(s["path"][k], s["path"][k + 1]) for k in range(len(s["path"]) - 1)]
+                keep = [u for u in used if u not in segl]
+                new, nk = route_pair(a2, b2, s["mine"], s["own_pins"], keep)
+                oldk = route_key(s["path"], s["mine"], s["own_pins"], keep)
+                ntry += 1
+                if new is not None and nk < oldk:
+                    s["path"] = new
+                    segl = [(new[k], new[k + 1]) for k in range(len(new) - 1)]
+                    nimp += 1
+                used = keep + segl
+            now = gstat(used, allseg)
+            if now[4] > base[4]:                      # ★ 全局变差 ⇒ **整轮撤回** ✓
+                for s, p in snap:
+                    s["path"] = p
+                used = used_snap
+                print("   第 %d 轮：逐段改进 %d 段 ✓，但**全局变差** ⇒ **撤回** ✓"
+                      "（重叠/贴脚/交叉 %d/%d/%d → %d/%d/%d；加权 %.0f → %.0f ✗）"
+                      % (rnd + 1, nimp, base[0], base[1], base[2],
+                         now[0], now[1], now[2], base[4], now[4]))
+            else:
+                print("   第 %d 轮：接受 ✓ 改进 %d/%d 段 ✓（重叠/贴脚/交叉 %d/%d/%d → %d/%d/%d；"
+                      "加权 %.0f → %.0f ✓）"
+                      % (rnd + 1, nimp, ntry, base[0], base[1], base[2],
+                         now[0], now[1], now[2], base[4], now[4]))
 
     # ── ★ 规则自检（闸门 ✓）：“**不同的导线不能重叠**” ✓（2026-09-27 用户定 ✓）──
     #   ★★ 次序很重要 ✗（面包板那天的教训 ✓）：**先查“有没有重叠” ✓、再查连通 ✓** ——
