@@ -14,3 +14,7 @@ bom/
 hardware/pixel/_work/
 
 *.code-workspace
+
+*_图示.svg
+*_看.*
+**/_work/

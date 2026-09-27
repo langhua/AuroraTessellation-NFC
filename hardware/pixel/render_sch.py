@@ -49,112 +49,24 @@ import toolpaths                                                  # noqa: E402
 import part_box as PB                                             # noqa: E402
 import sch_text as ST                                            # ★ 字宽表（唯一实现 ✓）
 import sch_geom as SG                                            # ★ 几何判据（含斜线 ✓，唯一实现 ✓）
+import sch_box as SB                                             # ★ “本体盒”唯一实现 ✓
 
-SK_U_PER_MM = PB.MM                       # 3.5433 ✓（1/90 in ✓）
+# ★★ 下面这段常量与小工具（`UMM/HDR/ATTR_RE/tag/num/enum/attrs/inner/head_of/
+#   viewbox_of/scale_of/layer_of/to_sketch`）**已全部搬到 `sch_box.py`** ✓
+#   （2026-09-27 ✓ —— 因为“本体盒”原来在这里和布线器里**各算一套** ✗，实测同一件 `L1`
+#    两边差 **0.43 单位** ✗ ⇒ 布线器的硬闸门物理上看不见判据报的那一段 ✗✗）。
+#   ⇒ 这里只 import ✓，**不再本地定义** ✗（本地定义会盖掉共享实现 ✗ = 又是两套尺子 ✗）。
+from sch_box import (tag, num, enum, attrs, inner, head_of,      # noqa: E402
+                     viewbox_of, scale_of, layer_of, to_sketch, UMM, SK_U_PER_MM)
 # ★★ `px` = **1/90 in**（= 0.8 × 1/72 ✓）—— 2026-09-27 **实测**定的 ✓，不是查文档 ✗：
 #   把 v6 的导出与我的渲染逐件比"**同一零件内两个脚的向量**" ✓（这个量**不需要任何标定** ✓）
 #   ⇒ 只有 `LED2`（`width="48px"`）与 `D3`（`width="66px"`）对不上 ✗，比值恰好 **0.64 / 0.8 = 0.8** ✓
 #   ⇒ 我把 px 当 1/72in 算 ✗，Fritzing 按 1/90in 算 ✓（`1.25 × 0.8 = 1.0` ✓）。
 #   后果就是用户截图里那两处"线没接到脚上" ✗（误差 ~2.5mm ✓）。
 #   注：`pt` 仍是 1/72in ✓（只有 px 不同 ✓）。
-UMM = {"mm": 1.0, "cm": 10.0, "in": 25.4, "px": 25.4 / 90.0, "pt": 25.4 / 72.0,
-       "": 25.4 / 1000.0}                 # 无单位 = 1/1000in ✓（Fritzing 零件约定 ✓）
-HDR = re.compile(r"<(?:svg:svg|svg)\b[^>]*?/?>", re.S)            # ★ 单引号/`svg:` 前缀都要认 ✓
-ATTR_RE = re.compile(r"""([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')""")
-
-
-def tag(e):
-    return e.tag.split("}")[-1]
-
-
-def num(v, d=0.0):
-    try:
-        return float(v)
-    except (TypeError, ValueError):
-        return d
-
-
-def enum(el, n, d=0.0):
-    """读 **XML 元素**的属性 ✓"""
-    return num(el.get(n), d)
-
-
-def attrs(s):
-    """读 **文本**里的属性（单双引号通吃 ✓）"""
-    return {m.group(1).lower(): (m.group(2) if m.group(2) is not None else m.group(3))
-            for m in ATTR_RE.finditer(s)}
-
-
-def inner(svg_text):
-    t = re.sub(r"^\s*<\?xml[^>]*\?>\s*", "", svg_text or "")
-    t = re.sub(r"<!DOCTYPE[^>]*>", "", t, flags=re.S)
-    t = re.sub(r"<!--.*?-->", "", t, flags=re.S)
-    m = HDR.search(t)
-    if not m:
-        return ""
-    body = t[m.end():]
-    return body[:body.rfind("</svg>")] if "</svg>" in body else body
-
-
-def head_of(t):
-    m = HDR.search(t or "")
-    return attrs(m.group(0)) if m else {}
-
-
-def viewbox_of(t):
-    h = head_of(t)
-    vb = h.get("viewbox")
-    if not vb:
-        return None
-    p = [float(x) for x in re.split(r"[ ,]+", vb.strip()) if x]
-    return tuple(p) if len(p) == 4 else None
-
-
-def scale_of(t):
-    """零件/板子 svg 的 **k**（用户单位 → sketch 单位 ✓）与 `viewBox` 原点 ✓
-
-    ★ 只有**一条**规则 ✓：k = 声明物理尺寸（mm）/ viewBox宽 × 3.5433 ✓
-      （没有 viewBox ⇒ 用户单位本身就是长度 ✓；没有 width ⇒ 报错**不静默** ✓）
-    """
-    h = head_of(t)
-    wv = h.get("width")
-    vb = viewbox_of(t)
-    org = (vb[0], vb[1]) if vb else (0.0, 0.0)
-    if wv is None:
-        return None, org, "**没有 width** ✗"
-    m = re.match(r"\s*([\d.]+)\s*([a-z%]*)", wv)
-    if not m:
-        return None, org, "width=%r 认不出 ✗" % wv
-    w, unit = float(m.group(1)), (m.group(2) or "").lower()
-    if unit not in UMM:
-        return None, org, "没见过的单位 %r ✗" % unit
-    mm = w * UMM[unit]
-    if not vb or not vb[2]:
-        return mm * SK_U_PER_MM, org, "width=%s（无 viewBox ⇒ 单位即长度 ✓）" % wv
-    return mm / vb[2] * SK_U_PER_MM, org, "width=%s ÷ viewBox宽%s × 3.5433 ✓" % (wv, vb[2])
-
-
-def layer_of(txt, layer):
-    """取 `<g id="层名">` 的**内容** ✓（★ **按标签配平扫描** ✓ —— 非贪婪正则只截到第一个
-    `</g>` ✗；并且**必须认自闭合 `<g/>`** ✗，否则配平会跑飞 ✗）"""
-    body = inner(txt)
-    if not body:
-        return None, "**没有 <svg> 头** ✗"
-    toks = [(m.start(), m.end(), m.group(0))
-            for m in re.finditer(r"<g\b[^>]*>|</g>", body)]
-    depth, start, sdepth = 0, None, None
-    for s, e, tok in toks:
-        if tok == "</g>":
-            if start is not None and depth == sdepth:
-                return body[start:s], "层 `%s` ✓" % layer
-            depth -= 1
-        else:
-            selfc = tok.rstrip().endswith("/>")
-            if start is None and not selfc and (attrs(tok).get("id") or "") == layer:
-                start, sdepth = e, depth + 1
-            if not selfc:
-                depth += 1
-    return None, "层 `%s` **找不到** ✗" % layer
+UMM_MOVED_NOTE = True      # ★ 常量与小工具已搬去 `sch_box.py` ✓（见上面 import 那段 ✓）
+#   ✗ 搬家时多动手碰坏过一次 ✓：`layer_of` 的尾巴被切掉了一段 ✗（它现在整段在 `sch_box.py` ✓）
+#   ⇒ 教训（本仓旧规矩 ✓）：**一次只改一处** ✓ + 改完**读回** ✓ —— 这次是靠读回抓到的 ✓。
 
 
 def anchors(txt_root):
@@ -194,29 +106,7 @@ def anchors(txt_root):
     return term, pin, bad
 
 
-def resolve(fzp_path, image):
-    """按 fzp 的 `image=` 找真 svg ✓；顺带报出**试过哪些地方** ✓（不静默 ✗）"""
-    base = os.path.dirname(os.path.dirname(fzp_path))
-    tried = []
-    for sub in ("user", "core", "contrib", ""):
-        cand = os.path.normpath(os.path.join(base, "svg", sub, (image or "").replace("/", os.sep)))
-        tried.append(cand)
-        if os.path.isfile(cand):
-            return cand, tried
-    return None, tried
-
-
-def to_sketch(g, A, p):
-    """零件 svg 的**用户坐标** `p` → sketch 绝对坐标 ✓
-
-    ★ 仿射是**完整**的 2×3：`x' = A0·x + A2·y + A4` ✓ —— **`A4/A5` 不能漏** ✗✗
-      （它们就是 `−k×viewBox原点` ✓）。我在第一版漏过 ✗，症状**很隐蔽**：
-      原点为 (0,0) 的件**看不出来** ✓，只有 `U1`（`viewBox="-190 -190 …"` ✓）的脚
-      **一律偏 17.124 单位** ✗（= 0.09×190 ✓ ⇒ 恰好被自检的"离最近脚还差 17.124"抓出来 ✓）。
-      ⇒ 教训：**自检要能报出"差多少"** ✓ —— 17.124 这个数直接把算式指出来了 ✓。
-    """
-    return (enum(g, "x") + A[0] * p[0] + A[2] * p[1] + A[4],
-            enum(g, "y") + A[1] * p[0] + A[3] * p[1] + A[5])
+resolve = SB.resolve_parts_svg       # ★ 唯一实现已搬去 `sch_box.py` ✓（本地不再定义 ✗）
 
 
 # ═══════════════ 主流程 ═══════════════
@@ -274,18 +164,11 @@ for el in root.iter("instance"):
         continue
     txt, src = None, None
     if image:
-        # ★ **磁盘上零件本体优先** ✓（Fritzing 就是从 fzp 旁边加载 ✓）；包内副本只是备份 ✓（会注明 ✓）
-        cand, tried = resolve(fzp, image)
-        if cand:
-            txt, src = open(cand, encoding="utf-8", errors="replace").read(), cand
-        else:
-            want = os.path.basename(image)
-            for n, t in packed.items():
-                if n.endswith(want):
-                    txt, src = t, n + "（**包内副本** ✓）"
-                    break
+        # ★ **磁盘优先** ✓（Fritzing 就是从 fzp 旁边加载 ✓）；包内副本只是备份 ✓（会注明 ✓）
+        #   ★ 这两句现在走**共享实现** ✓（`sch_box.part_svg_text` ✓ —— 布线器用同一份 ✓）
+        txt, src = SB.part_svg_text(fzp, packed, image)
         if txt is None:
-            skipped.append((ttl, "svg 取不到（image=%s；找过 %s）" % (image, " ; ".join(tried))))
+            skipped.append((ttl, "svg 取不到（image=%s；%s）" % (image, src)))
             continue
     if txt is None:
         skipped.append((ttl, "fzp 里 `%s/layers@image` 为空 ✗" % VIEW))
@@ -298,8 +181,8 @@ for el in root.iter("instance"):
     laytxt, lnote = layer_of(txt, want_layer)
     if laytxt is None:
         laytxt, lnote = inner(txt), lnote + " ⇒ 退回整张 svg 的 body ⚠"
-    m = PB.tf_of(g)
-    A = PB.mul(m, (k, 0.0, 0.0, k, -k * org[0], -k * org[1]))
+    m = PB.tf_of(g)                       # hmm：`m` 已不再直接用 ✓（改用共享的 `SB.A_of` ✓）
+    A = SB.A_of(txt, g)                   # ★ **唯一实现** ✓（与布线器同一份 ✓）
     e, f = enum(g, "x") + A[4], enum(g, "y") + A[5]
     # ★★ 多包两层 ✓（`partID` + `id="schematic"` ✓）—— 不是为了好看 ✗，是为了**当尺子** ✓：
     #   既有接线管线 `gen_schematic_wires.py` 的 `build_ruler()` 就是按 Fritzing **导出**里
@@ -321,15 +204,14 @@ for el in root.iter("instance"):
     pins, kind = (term, "terminal") if term else (pin, "pin")
     for cid, p in pins.items():
         PIN_SK.append((ttl, cid, to_sketch(g, A, p)))
-    # 本体包围盒（sketch ✓）—— 同样走 `A` ✓
-    bb = PB.shape_bbox(ET.fromstring(txt))
-    if bb:
-        for cx, cy in ((bb[0], bb[1]), (bb[2], bb[1]), (bb[0], bb[3]), (bb[2], bb[3])):
-            ALL_PTS.append(to_sketch(g, A, (cx, cy)))
-        _bx = [to_sketch(g, A, (cx, cy)) for cx, cy in
-               ((bb[0], bb[1]), (bb[2], bb[1]), (bb[0], bb[3]), (bb[2], bb[3]))]
-        PART_BOX[ttl] = (min(p[0] for p in _bx), min(p[1] for p in _bx),
-                         max(p[0] for p in _bx), max(p[1] for p in _bx))
+    # 本体包围盒（sketch ✓）—— ★ 只调共享实现 ✓（原来这里和布线器**各算一套** ✗）
+    _box, _A2, _note = SB.box_of(txt, g, A)
+    bb = None
+    if _box:
+        for cx, cy in ((_box[0], _box[1]), (_box[2], _box[1]),
+                       (_box[0], _box[3]), (_box[2], _box[3])):
+            ALL_PTS.append((cx, cy))
+        PART_BOX[ttl] = _box
         PINS_REL.setdefault(str(el.get("modelIndex")), {})["__title__"] = ttl
         for cid, p in pins.items():                      # ★ 各脚 → **相对锚点**（sketch 单位 ✓）
             PINS_REL.setdefault(str(el.get("modelIndex")), {})[cid] = \
@@ -371,6 +253,129 @@ for el in root.iter("instance"):
 print("── 导线 %d 根 ｜ 颜色 %s ｜ 线宽 %s ──"
       % (len(wires), dict(collections.Counter(w[3] for w in wires)),
          sorted({round(w[4], 6) for w in wires})))
+
+# ══ ②b ★★ **假连线**检查 ✓（2026-09-28 ✓，用户发现 ✓）══════════════════════════
+#   ★ 为什么要它 ✗：本仓记过一条硬事实 —— **Fritzing 的连接显式记在 `<connects>` 里** ✓
+#     ⇒ `check_netlist.py`（只看连接表 ✗）**永远看不见“图上的假象”** ✗✗：
+#       (A) 声明接某只脚，而**线根本没画到那只脚上** ✗（图上看着**断开** ✓ —— px/1-90in 那个
+#           bug 就是这种 ✓，我当时只查连接表 ⇒ 报了“45/45 全配上”而用户截图里线没到脚 ✗✗）；
+#       (B) 线**画在**某只脚上（端点落在脚上 ✓、或线身**正好穿过**脚 ✓）而连接表里**没有**那条 ✗
+#           ⇒ 读图的人以为接上了 ✓、电气上却是**断的** ✗（这是最阴的一种 ✓）。
+#   ★ 判据（客观 ✓）：线端 / 线身 到脚的距离 ≤ 0.05 单位（= 1.4e-3 mm ✓）就算“碰上” ✓。
+#   ★ 免责 ✗：`sch_edges` 的解析与 `check_netlist.py` **同源** ✓（理想是抽成共享模块 ✓，
+#     已记为待办 ✓；这里为了“几何 vs 表”的对照而**再读一遍文件** ✓）。
+SCH_LAYERS = {"schematic", "schematicTrace"}
+
+
+def _p2seg(p, a, b):
+    """点到线段距离 ✓（**一份实现** ✓ —— 已搬进 `sch_geom.p2seg` ✓，这里只是别名 ✓）"""
+    return SG.p2seg(p, a, b)
+
+
+def _fz_edges(inst):
+    out = []
+    vw = next((c for c in inst if tag(c) == "views"), None)
+    sub = next((c for c in vw if tag(c) == VIEW), None) if vw is not None else None
+    if sub is None:
+        return out
+    for cbox in sub.iter():
+        if tag(cbox) != "connectors":
+            continue
+        for con in cbox:
+            if tag(con) != "connector":
+                continue
+            for cs in con:
+                if tag(cs) != "connects":
+                    continue
+                for c in cs:
+                    if tag(c) == "connect" and (c.get("layer") or "") in SCH_LAYERS:
+                        out.append((con.get("connectorId"), c.get("connectorId"),
+                                    c.get("modelIndex")))
+    return out
+
+
+FZ_TITLE, FZ_EDGE, FZ_ISWIRE = {}, {}, {}
+for _el in root.iter("instance"):
+    _mi = _el.get("modelIndex")
+    FZ_TITLE[_mi] = (_el.findtext("title") or "").strip()
+    FZ_ISWIRE[_mi] = (_el.get("moduleIdRef") or "").startswith("Wire")
+    FZ_EDGE[_mi] = _fz_edges(_el)
+
+# 线**画**在哪只脚上：端点 + 线身（分两类 ✓）
+geom_end, geom_body = [], []
+for ttl_w, a, b, _c, _w in wires:
+    pa = [(t, c) for (t, c, q) in PIN_SK if math.dist(q, a) <= 0.05]
+    pb = [(t, c) for (t, c, q) in PIN_SK if math.dist(q, b) <= 0.05]
+    geom_end.append((ttl_w, a, b, pa, pb))
+    if len(a) and len(b):                      # 线身：**中段**正好穿过某只脚（端点不算 ✓）
+        for (t3, c3, q3) in PIN_SK:
+            if math.dist(q3, a) <= 0.05 or math.dist(q3, b) <= 0.05:
+                continue
+            d3 = _p2seg(q3, a, b)
+            if d3 <= 0.05:
+                geom_body.append((ttl_w, t3, c3, q3))
+
+# 连接表**说**接谁（把线端的两个目标摊平 ✓）
+declared = {}                                  # ttl_w → {端点: {(标题, 脚)}}
+for ttl_w, _a, _b, _c, _w in wires:
+    _mi = next((m for m, t in FZ_TITLE.items() if t == ttl_w), None)
+    d = {}
+    for own, tcid, tmi in FZ_EDGE.get(_mi, []):
+        tgt = (FZ_TITLE.get(tmi, "?"), tcid)
+        if FZ_ISWIRE.get(tmi):
+            continue                           # ★ 与另一根**导线**相连（链 ✓）⇒ 不算脚 ✓
+        d.setdefault(own, set()).add(tgt)
+    declared[ttl_w] = d
+
+fake_a, fake_b = [], []
+W_END = {t: (a, b) for (t, a, b, _pa, _pb) in geom_end}      # 每根线的两个端点 ✓（查接头用 ✓）
+for ttl_w, a, b, pa, pb in geom_end:
+    d = declared.get(ttl_w, {})
+    tall = set().union(*d.values()) if d else set()
+    # (A) 表里说了某只脚，可几何**完全不在这只脚上** ✗✗
+    for (t4, c4) in tall:
+        if (t4, c4) not in pa and (t4, c4) not in pb:
+            fake_a.append((ttl_w, t4, c4, a, b))
+    # (B) 端点落在某脚上，而**没有任何导线贴在那一点**声明接它 ✗
+    #   ★★ 修正 ✓（2026-09-28 ✓，`t27_1` 三坐标实测后定的 ✓）：
+    #     ✗ 旧版只查**本根**的声明 ✗ ⇒ 链式接法里“拐点正好落在脚点上”时会**误报** ✗
+    #       （实测 4 处一一对应：`Wire90012892` 的一端在 `C2.c0` 点上 ✓，而声明
+    #        `C2.c0` 的是**链上相邻的那根** `Wire90012893` ✓ ⇒ 电气上是接上的 ✓）。
+    #     ✓ 新版：只要有**任意一根**导线**在该点**声明接这只脚 ⇒ 就算接上 ✓。
+    for (t5, c5) in (pa + pb):
+        if (t5, c5) in tall:
+            continue
+        q5 = [q[2] for q in PIN_SK if q[0] == t5 and q[1] == c5]
+        ok_chain = any(math.dist(q5[0], e) <= 0.05
+                       for tw in declared
+                       for _own2, tg2 in declared[tw].items()
+                       if (t5, c5) in tg2
+                       for e in W_END.get(tw, ())) if q5 else False
+        if not ok_chain:
+            fake_b.append((ttl_w, t5, c5, a, b))
+print("── ★★ **假连线**检查（几何 vs 连接表 ✓）：")
+print("   (A) 表里声明接了某脚，而线**没画到**那只脚上：**%d 处** %s"
+      % (len(fake_a), "✓" if not fake_a else "✗✗"))
+for ttl_w, t4, c4, a, b in fake_a[:10]:
+    print("      ✗ %-14s 声明接 %s.%s ✗ ｜ 实际画在 (%.1f,%.1f)→(%.1f,%.1f)"
+          % (ttl_w, t4, c4, a[0], a[1], b[0], b[1]))
+print("   (B) 线**画在**某脚上（端点 ✓ 或线身穿心 ✓），表里却没有这一条：**%d 处** %s"
+      % (len(fake_b) + len(geom_body), "✓" if not (fake_b or geom_body) else "✗✗"))
+for ttl_w, t5, c5, a, b in fake_b[:10]:
+    # ★ 把**三方坐标**一起打出来 ✓（2026-09-28 ✓）—— 上一版只报“看着接上某脚” ✗
+    #   ⇒ 无法判断到底是**图真错** ✗ 还是**我认错线** ✗。现在：线端坐标 ✓ + 被指脚坐标 ✓
+    #     + 表里声明的伙伴及其坐标 ✓ ⇒ 一眼看出归属 ✓。
+    _q = [q[2] for q in PIN_SK if q[0] == t5 and q[1] == c5]
+    _d = declared.get(ttl_w, {})
+    _tall = sorted(set().union(*_d.values())) if _d else []
+    print("      ✗ %-14s 端点看着接上 %s.%s @%s ✗；线端 (%.2f,%.2f)/(%.2f,%.2f)；"
+          "表里声明 = %s @%s"
+          % (ttl_w, t5, c5, ["(%.2f,%.2f)" % q for q in _q], a[0], a[1], b[0], b[1],
+             ["%s.%s" % t for t in _tall] or ["（空 ✗）"],
+             ["(%.2f,%.2f)" % q[2] for q in PIN_SK if (q[0], q[1]) in _tall]))
+for ttl_w, t3, c3, q3 in geom_body[:10]:
+    print("      ✗ %-14s **线身穿过** %s.%s（%.1f,%.1f）✗ ⇒ 图上像接上了 ✓ 实际没连 ✗"
+          % (ttl_w, t3, c3, q3[0], q3[1]))
 tot = sum(math.dist(w[1], w[2]) for w in wires)
 print("   总长 %.1f 单位 = %.1f mm" % (tot, tot * MMU))
 
@@ -495,7 +500,7 @@ for t, why in skipped:
 #   两类都算 ✓：① 导线×导线的**十字交叉**（内部相交 ✓；共端点/共线不算 ✓）；
 #   ② 导线**穿过零件本体框**的段数 ✓（导线从元件肚子里穿过 = 用户点过名的毛病 ✓）。
 
-SEGS2 = [(a, b) for _t, a, b, _c, _w in wires]
+SEGS2 = [(a, b, t) for t, a, b, _c, _w in wires]      # ★ 带上导线编号 ✓（重合对要点名 ✓）
 nx = 0
 for i in range(len(SEGS2)):
     for j in range(i + 1, len(SEGS2)):
@@ -504,10 +509,12 @@ for i in range(len(SEGS2)):
 # ★ 第三类毛病：两段**几乎压在一条线上** ✗（看着像一根 ✓ 读图分不清 ✓）
 #   —— 手改版里就有一对（斜率 0.08° 与 0.28° ✓）⇒ 必须能报出来 ✓（`sch_geom` 唯一实现 ✓）
 nov = 0
+OV2 = []                                  # ★ 重合对（带导线编号与坐标 ✓，供**手工修改**定位 ✓）
 for i in range(len(SEGS2)):
     for j in range(i + 1, len(SEGS2)):
         if SG.near_overlap(SEGS2[i][0], SEGS2[i][1], SEGS2[j][0], SEGS2[j][1]):
             nov += 1
+            OV2.append((SEGS2[i], SEGS2[j]))
 
 
 def _hits_box(p, q, box, infl=1.0, need=4):
@@ -544,14 +551,30 @@ for ttl_w, a, b, _c, _w in wires:
             continue
         if _hits_box(a, b, box):
             nb += 1
-            HITS.append((ttl_w, t, a, b))
+            HITS.append((ttl_w, t, a, b, own))
 print("── ★ 美学指标：导线**十字交叉 %d 处** ✓｜导线**穿过别的元件本体 %d 段** ✓"
       "｜导线**几乎压在一起 %d 对** ✓（判据含斜线 ✓ —— `sch_geom` 唯一实现 ✓；"
       "面包板那条教训：交叉数是头号指标 ✓）" % (nx, nb, nov))
-# ★ **点名** ✓（2026-09-27 用户定的规矩：结论必须可查 ✓ —— 只给个数 ✗ 我没法判它是真毛病
+# ★ 重合对**点名** ✓（2026-09-28 ✓ —— 用户要**手工**修 v14 那 4 对 ✓）：
+#   报出**两根导线的编号** ✓ + 各自坐标区间 ✓ ⇒ 手工时直接看出“该挪哪一根” ✓，不用自己找 ✗。
+for (a1, b1, w1), (a2, b2, w2) in OV2[:10]:
+    print("      ✗ 重合：%-14s (%.1f,%.1f)→(%.1f,%.1f)  ｜  %-14s (%.1f,%.1f)→(%.1f,%.1f)"
+          % (w1, a1[0], a1[1], b1[0], b1[1], w2, a2[0], a2[1], b2[0], b2[1]))
+if len(OV2) > 10:
+    print("      …… 另有 %d 对（看报告 ✓）" % (len(OV2) - 10))# ★ **点名** ✓（2026-09-27 用户定的规矩：结论必须可查 ✓ —— 只给个数 ✗ 我没法判它是真毛病
 #   还是"脚本来就在本体内部"的必然情形 ✗）+ 给出**穿进去多深** ✓（越深越像真毛病 ✓）
-for ttl_w, t, a, b in HITS[:12]:
+for ttl_w, t, a, b, own in HITS[:12]:
     bb = PART_BOX[t]
+    # ★ 顺手把“这一段距离该元件的**每只脚**多远”也报出来 ✓（只加信息 ✓）：
+    #   ⇒ 能直接看出“它到底蹭着别人的脚没有”✗（= 我的闸门是不是把它错当“脚边那一段”豁免了✗）
+    near = sorted((math.dist(q[2], a) if math.dist(q[2], a) < math.dist(q[2], b)
+                   else math.dist(q[2], b), "%s.%s" % (q[0], q[1]))
+                  for q in PIN_SK if q[0] == t)[:2]
+    print("      ⚠ %-14s 穿进 **%s** ｜ 该段端点 (%.1f,%.1f)→(%.1f,%.1f) ｜ 豁免名单 %s ｜ 离 %s 的脚最近 %s"
+          " ｜ **渲染器用的盒子** (%s)"
+          % (ttl_w, t, a[0], a[1], b[0], b[1], sorted(own) or "(空)", t,
+             " / ".join("%.2f(%s)" % (d, n) for d, n in near) or "?",
+             "%.2f,%.2f→%.2f,%.2f" % bb))
     deep = 0
     n = max(2, int(max(abs(b[0] - a[0]), abs(b[1] - a[1]))) + 1)
     for i in range(n + 1):
@@ -572,13 +595,7 @@ if len(HITS) > 12:
 CLEAR_PIN = 7.2
 
 
-def _p2seg(p, a, b):
-    dx, dy = b[0] - a[0], b[1] - a[1]
-    L2 = dx * dx + dy * dy
-    if L2 < 1e-9:
-        return math.dist(p, a)
-    t = max(0.0, min(1.0, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2))
-    return math.dist(p, (a[0] + t * dx, a[1] + t * dy))
+# ✗ 原来 `_p2seg` 定义在这儿 ✗ —— 已**上移**到首次使用处之前（假连线判据要用它 ✓）✓
 
 
 pc_hits = []
@@ -599,6 +616,9 @@ for ttl_w, a, b, _c, _w in wires:
             else:
                 why = "擦过"
             pc_hits.append((ttl_w, t2, cid2, d2, a, b, why, sorted(own)))
+print("── ★ 本体盒（**唯一实现** ✓ `sch_box.box_of` ✓）：%s"
+      % ", ".join("%s(%.2f,%.2f→%.2f,%.2f)" % ((t,) + tuple(PART_BOX[t]))
+                  for t in sorted(PART_BOX)))
 print("── ★ 可读性：导线贴近**不相连的引脚**（< %.1f 单位 = %.2f mm ✓）**%d 处** %s"
       % (CLEAR_PIN, CLEAR_PIN * MMU, len(pc_hits), "✓✓" if not pc_hits else "✗✗"))
 for ttl_w, t2, cid2, d2, a, b, why, own in sorted(pc_hits, key=lambda z: z[3])[:6]:

@@ -29,6 +29,12 @@ import sch_geom as SG                           # ★ 几何判据（唯一实�
 import sch_text as ST                           # ★ 字宽表（与渲染器、摆位脚本同一份 ✓）
 import pins_ref as PR                           # ★ 生成的位号数据（行/字号 ✓，入库 ✓）
 from pin_ruler import apply, mul, parse_tf       # noqa: E402
+# ★★ “本体盒”的唯一实现 ✓（2026-09-27 ✓）—— 必须放在 `import toolpaths` **之后** ✓
+#   （`part_box` 在库仓那边 ✓，路由靠 `toolpaths` 把路径接好 ✓）。
+#   ✗ 原来本文件自己 walk 尺子 svg 算盒 ✗ ⇒ 实测与判据（渲染器）差 **0.43 单位** ✗ ⇒
+#     硬闸门物理上看不见判据报的那一段 ✗✗（详见 `sch_box.py` 开头那段血教训 ✓）。
+import part_box as PB                           # noqa: E402
+import sch_box as SB                            # noqa: E402
 
 # ── 网表（照 `hardware/pixel/pixel-netlist.md` §2 ✓；脚名按 .fzp 的连接器名，
 #    大小写不敏感 ✓；"#N" = 第 N 个脚（core 件没有名字 ✓））────────────────────────
@@ -138,8 +144,40 @@ ESC_OFFS = (ESC_PIN, ESC_PIN + 7.2)
 #     **用户选“重叠 0 优先”** ✓（接受 穿体 5 / 交叉 16 / 位号压线 4 的代价 ✓）⇒ 两个开关**默认开** ✓。
 #   ★ 待办 ✓（用户同一次定的 ✓）：**贴脚要降到个位数** ✓（现在 11 ✗）—— 下一轮单独量、单独治 ✓。
 #   ★ 基线随时可回 ✓：`--noesc --oldorder`（= A ✓，实测与 v14 一字节不差 ✓）。
+# ★★ `HARD_BODY`：**硬闸门** —— 非“脚边一小段”的部分不许进入别的元件本体 ✓
+#   （2026-09-27 ✓ 用户定「穿体必须是 0」✓；例外与判据见 `body_hard_bad` ✓）
+#   ★★ 实测结论（2026-09-27 ✓，**盒子对齐之后**的干净数据 ✓）：
+#     打开它 ⇒ 穿体 **8** ✗（v15 是 6 ✗）、**68 对网“找不到候选”** ✗✗ ⇒
+#       **反而变差** ✓ —— 因为闸门删到没路时只能兜底退回旧候选集 ✓。
+#     而 v14 曾经做到**穿体 0** ✓（不靠闸门 ✓，靠**代价函数自己躲** ✓ = 旧档位次序 ✓）。
+#     ⇒ 所以“重叠 0”与“穿体 0”**在当前候选集 + 当前摆位下不能兼得** ✓（两版都有硬数据 ✓）：
+#         v14 = 穿体 0 ✓ / 重叠 4 ✗；v15 = 重叠 0 ✓ / 穿体 6 ✗；硬闸门 = 两者都做不到 ✗。
+#   ⇒ **默认关** ✓（保持 v15 的干净基线 ✓）；留 `--hardbody` 供以后配合“换拓扑/换候选集”再试 ✓。
+HARD_BODY = False
+# ★★ `HARD_PIN`：**线不许落在“别的脚”上** ✓（2026-09-28 ✓ 用户发现 v14 有 **9 处线身穿心** ✗）
+#   病症（实测 ✓，`_scratch/fake_conn.py` ✓）：一根竖线正好从 `U1` 左排三只脚的**坐标点**上
+#     穿过去（`(22.6,-18/-9/0)` ✓）⇒ **图上看着接上了 ✓、电气上是断的** ✗✗
+#     （Fritzing 的连接只记在 `<connects>` 里 ✓ ⇒ `check_netlist.py` 结构上就看不见 ✗）。
+#   这正是用户那条「**贴脚必须是 0**」的**几何形态** ✓ —— 0.00 距离任何阈值都能杀掉 ✓。
+#   ★ 风格与 `body_hard_bad` 一致 ✓：**只删候选** ✗，不动代价函数与档位次序 ✓。
+#   `--hardpin` 打开 ⇒ A/B 对照（默认关 ✓）。
+HARD_PIN = False
+PIN_EPS = 0.05
 USE_ESC = True
 NEW_ORDER = True
+# ★★ `OUTER_RING`：**元件外圈环廊** ✓（2026-09-28 ✓ 用户点名的第 **1** 条 ✓）
+#   病症（实测 ✓）：硬闸门一开就有 **68 对网“找不到候选”** ✗ ⇒ 主干**没有任何绕出去的路** ✓。
+#   现有通道 `CH_OFFS = 6/12/22/34` **全部贴着元件** ✗ ⇒ 在**全体零件的总包围盒 `UBOX`**
+#   **外面**再给几圈通道 ✓ ⇒ 主干可以“绕外围走” ✓。每档一格 = 7.2 单位 ✓。
+OUTER_RING = False
+RING_OFFS = (7.2, 14.4, 21.6, 28.8)
+# ★★ `STAR_NETS`：**星形拓扑** ✓（2026-09-28 ✓ 用户点名的第 **2** 条 ✓）
+#   病症（实测 ✓）：`GND` 是一条长链 ✓ 按 (x,y) 逐个串 ✓ ⇒ 必然出现“沿引脚行列长跑” ✗
+#     （实测 8 处 **0.00 距离**的贴脚 ✓ 就是这么来的 ✓）。
+#   做法 ✓：这些网**不走链** ✗，而是**每只脚各拉一根到公共汇点** ✓（汇点从干净通道里挑 ✓，
+#     挑法见 `pick_hub` ✓）。★ 汇点是**没有连接器的裸端点** ✓ ⇒ 到底成不成连接 ✓
+#     由 `check_netlist.py` **当场判定** ✓（不猜 ✗）—— 若不成立我就如实报出来 ✓。
+STAR_NETS = set()
 # ★★ 已证伪并回退（2026-09-27 ✓）——“出脚车道过滤”这一整轴 ✗：
 #   做法：把出脚候选的车道按“**跨度内会贴着别的脚** ⇒ 丢掉”精确过滤 ✓（比全局砍通道准得多 ✓）
 #   ⇒ `_scratch/t17.py` 两档 A/B 实测：① 带过滤 与 ② `--escraw` **一字节不差** ✗ ⇒ **零效果** ✗
@@ -250,16 +288,12 @@ def pm_mul(m, t):
 def load_geom(fzz, svg):
     ruler = build_ruler(svg)
     root = ET.parse(svg).getroot()
-    boxes = {}
+    BOX_MISS = []
 
     def walk(el, m, pid):
         m2 = pm_mul(m, el.get("transform"))
         if el.get("partID"):
             pid = el.get("partID")
-        if pid and el.get("id") == "schematic" and pid not in boxes:
-            pts = []
-            body_pts(el, m2, pts)
-            boxes[pid] = pts
         for c in el:
             walk(c, m2, pid)
     walk(root, (1, 0, 0, 1, 0, 0), None)
@@ -267,6 +301,12 @@ def load_geom(fzz, svg):
     z = zipfile.ZipFile(fzz)
     sroot = ET.fromstring(z.read([n for n in z.namelist() if n.endswith(".fz")][0]))
     conname, con_of = {}, {}
+    # ★ 零件的**原理图 svg 文本** ✓（算“本体盒”用 ✓，2026-09-27 ✓）：
+    #   `.fzp` 里 `<schematicView image="schematic/xx.svg">` ✓ ⇒ 去 zip 里找同名条目 ✓。
+    svg_by_mid = {}          # ★ 已废弃 ✗（见下面那段教训 ✓）—— 保留空字典是为少改一行 ✓
+    packed = {n: z.read(n).decode("utf-8", "replace")
+              for n in z.namelist() if n.endswith(".svg")}
+    print("零件 svg：包内有 %d 份副本 ✓（磁盘取不到时兜底 ✓）" % len(packed))
     for n in z.namelist():
         if n.startswith("part.") and n.endswith(".fzp"):
             r = ET.fromstring(z.read(n))
@@ -309,11 +349,28 @@ def load_geom(fzz, svg):
             for cid, p in PINS_FIX[mi].items():
                 if cid in pins:
                     pins[cid] = p
-        pts = [sk(x, y) for (x, y) in boxes.get(pid, [])] if pid else []
-        box = None
-        if pts:
-            box = (min(p[0] for p in pts), min(p[1] for p in pts),
-                   max(p[0] for p in pts), max(p[1] for p in pts))
+        # ★★ 本体盒：**只调共享实现** ✓（2026-09-27 ✓）
+        #   ✗ 第一版我在这里猜错了取 svg 的写法 ✗ ⇒ 10 件全取不到 ✗ ⇒ 盒子全空 ✗ ⇒ 闸门失效 ✗
+        #   ✓ 正解（= 渲染器那一套 ✓，已搬进 `sch_box.part_svg_text` ✓）：
+        #     ① 实例的 **`path=`** 给的是磁盘 fzp ✓；② svg 名在它的 `<schematicView><layers image=…>` ✓；
+        #     ③ **磁盘优先** ✓、包内副本兜底 ✓。
+        box, _note = None, ""
+        _fzp = (e.get("path") or "").replace("/", os.sep)
+        _txt, _src = None, None
+        if _fzp and os.path.isfile(_fzp):
+            try:
+                _lay = ET.parse(_fzp).getroot().find(".//schematicView/layers")
+                _img = _lay.get("image") if _lay is not None else None
+            except Exception as ex:
+                _img, _note = None, "fzp 解析不了：%s" % ex
+            if _img:
+                _txt, _src = SB.part_svg_text(_fzp, packed, _img)
+        if _txt and g is not None:
+            box, _A, _note = SB.box_of(_txt, g)      # ★ 共享实现 ✓（与判据同一份 ✓）
+        else:
+            _note = _note or "零件 svg 取不到 ✗（本体盒算不出 ⇒ 闸门拦不住它 ✗）"
+        if box is None:
+            BOX_MISS.append("%s：%s" % (title or (pid or "?"), _note))
         # ★ 位号框避让 —— **试过、实测不划算、已回退** ✗（2026-09-27 ✓）：
         #   让布线器认识位号框后，位号压导线只从 **3 → 2** ✗（剩下的是 `L1`：
         #   它旁边根本没有别的通道 ✓），代价却是 **压线 8 → 10** ✗、总长 +13 ✗
@@ -342,6 +399,9 @@ def load_geom(fzz, svg):
             xp.append((sx, ex))
             yp.append((sy, ey))
     fit = {"x": lin_fit(xp), "y": lin_fit(yp), "n": len(xp)}
+    if BOX_MISS:                              # ★ 算不出的件要**吭声** ✓（闸门对它们失效 ✓ 不静默 ✗）
+        print("⚠ 本体盒算不出的件 %d 个 ✗（那些件闸门拦不住 ✓）：%s"
+              % (len(BOX_MISS), "；".join(BOX_MISS)))
     return sroot, insts, z, fit
 
 
@@ -491,6 +551,58 @@ def esc_cands(a, b, na, nb, chx2, chy2):
 
 def bends(path):
     return max(0, len(path) - 2)
+
+
+def pin_hard_bad(path, pin_all, own_pins=(), eps=PIN_EPS):
+    r"""★ **硬规则**：**非自己两端**的脚，线**不许**落在它上面 ✓（含“线身穿心” ✗）
+    （2026-09-28 ✓ —— 用户发现 v14 有 **9 处线身穿心** ✗ ≤ 图上像接上、实际没连 ✗✗）
+
+    ★ 为什么必须有它 ✗：Fritzing 的连接只记在 `<connects>` 里 ✓ ⇒ `check_netlist.py`
+      **结构上看不见“图上的假象”** ✗✗；而本仓今天刚把“几何 vs 连接表”拉出来对（`fake_conn` ✓）
+      ⇒ 实测 (A)=0 ✓ 而 **(B)=13** ✗。
+    ★★ 豁免 = **这一跳真正的两只脚**（`own_pins` ✓ = 网表里那一对 ✓）：
+      ✗ 第一版按“**坐标**落在路径端点上的脚”豁免 ✗ ⇒ **太宽** ⇒ 一根线的**拐点**正好
+        落在别人脚上时 ✓ 那个脚也被放行 ✗✗（实测 `--hardpin` 后 (B) 只降到 **4** ✗，
+        残留的正是这类“端点看着接上” ✓）⇒ 已改成按**网表**豁免 ✓。
+    ★ 与 `body_hard_bad` 同一风格 ✓：**只删候选** ✗，不动代价函数与档位次序 ✓。
+    ★ 判据用**唯一一份**点到线段距离 `sch_geom.p2seg` ✓（渲染器的可读性那条也是它 ✓）。
+    """
+    own = set(own_pins)
+    for k in range(len(path) - 1):
+        p, q = path[k], path[k + 1]
+        for (t, c, x, y) in pin_all:
+            if (t, c) in own:
+                continue
+            if SG.p2seg((x, y), p, q) <= eps:
+                return True
+    return False
+
+
+def body_hard_bad(path, boxes, pin_all, r_touch=0.05):
+    r"""★ **硬闸门**：不许进入**别的**元件的本体 ✓（2026-09-27 ✓，用户定「**穿体必须是 0**」✓）
+
+    ★ 取向（用户已定 ✓）：**硬约束优先，指标该让就让** ✓ —— 闸门**只删候选** ✗，
+      **不动**代价函数与档位次序 ✓（保住“重叠 0”的机制 ✓）。
+    ★★ 判据的**三版教训** ✓（都写这儿，别再走回去 ✗）：
+      ✗ 第一版：豁免“整段两端都在端点 19.4 单位以内” ✗ ⇒ 太宽 ⇒ 实测穿体只降到 **1** ✗；
+      ✗ 第二版：**完全不豁免** ✗ ⇒ 穿体**仍是 1** ✗ —— 根因：豁免是**按整条路径**的 ✗
+        （`mine` = 这条线两端是谁 ⇒ **整条**都不查那些元件 ✗）⇒ 只要 `L1` 出现在任一端，
+        整条线穿 `L1` 都放行 ✗✗（实测 `Wire90012918` 就钻了 **52** 单位深 ✗）。
+      ✓ 第三版（现在）：**按段豁免** ✓ —— 只豁免“**这一段**的端点上正好有它的脚”的元件 ✓
+        ★ 这一条**与渲染器报“穿体”的口径完全一致** ✓（那边也是按段建 `own` ✓）
+          ⇒ “过了这道门 ⇒ 渲染器必不报” 才真的成立 ✓（本仓规矩：判据只能一份口径 ✓）。
+    ★ 判据用**内缩**的盒子 ✓（`-0.25` ✓）：比渲染器（内缩 0.5 ✓ + 至少 4 个采样点 ✓）**更严** ✓。
+    """
+    for k in range(len(path) - 1):
+        p, q = path[k], path[k + 1]
+        own = {t for (t, _c, x, y) in pin_all
+               if math.dist((x, y), p) <= r_touch or math.dist((x, y), q) <= r_touch}
+        for t, box in boxes.items():
+            if t in own:
+                continue
+            if seg_hits_box(p, q, box, -0.6):     # ★ (b) 内缩 0.6 > 判据的 0.5 ✓（更保守）
+                return True
+    return False
 
 
 def out_len(path, ubox, margin=OUT_MARGIN):
@@ -674,6 +786,22 @@ def main(argv):
         global NEW_ORDER
         NEW_ORDER = False
         print("档位次序：**旧** ✓（`--oldorder`；两个都关 = A 基线 ✓ = v14 一字节不差 ✓）")
+    if "--hardpin" in argv:                    # 实验 ✓：线不许落在“别的脚”上（默认关 ✓）
+        global HARD_PIN
+        HARD_PIN = True
+        print("硬闸门 HARD_PIN：**开启** ✓（非自己两端の脚，线不许落在它上面 ✓）")
+    if "--ring" in argv:                       # 实验 ✓：开“元件外圈环廊”（默认关 ✓）
+        global OUTER_RING
+        OUTER_RING = True
+        print("外圈环廊 OUTER_RING：**开** ✓（从 UBOX 往外 %s ✓）" % (RING_OFFS,))
+    if "--star" in argv:                       # 实验 ✓：指定星形拓扑的网（默认空 ✓）
+        global STAR_NETS
+        STAR_NETS = set((argv[argv.index("--star") + 1] or "").split(",")) - {""}
+        print("星形拓扑 STAR_NETS = %s ✓" % (sorted(STAR_NETS) or "(空)"))
+    if "--hardbody" in argv:                   # 实验 ✓：开启“不许进别人本体”的硬闸门（默认关 ✓）
+        global HARD_BODY
+        HARD_BODY = True
+        print("硬闸门 HARD_BODY：**开启** ✓（`--hardbody` 实验 ✓；实测会多出 68 处“没候选” ✗）")
     if "--rip" in argv:                       # 抽出重排轮数 ✓（默认 3 ✓；0 = 关 ✓）
         global RIP_ROUNDS
         RIP_ROUNDS = int(argv[argv.index("--rip") + 1])
@@ -755,9 +883,23 @@ def main(argv):
                 max(b[2] for b in boxes.values()), max(b[3] for b in boxes.values()))
         print("零件总包围盒 %.1f,%.1f → %.1f,%.1f（外扩 %.1f 单位 ✓；出界的长按 K_OUT=%.1f 倍罚 ✓）"
               % (UBOX[0], UBOX[1], UBOX[2], UBOX[3], OUT_MARGIN, K_OUT))
-    print("keep-out 盒: %s" % ", ".join("%s(%.1f,%.1f→%.1f,%.1f)" % ((t,) + b)
-                                       for t, b in sorted(boxes.items())))
+    print("keep-out 盒: %s" % ", ".join("%s(%.2f,%.2f→%.2f,%.2f)" % ((t,) + b)
+                                         for t, b in sorted(boxes.items())))
 
+    if OUTER_RING:                             # ★ 外圈环廊 ✓（用户点名的第 1 条 ✓）
+        added = 0
+        for o in RING_OFFS:
+            for s, v in ((chx, UBOX[0] - o), (chx, UBOX[2] + o),
+                         (chy, UBOX[1] - o), (chy, UBOX[3] + o)):
+                if v not in s:
+                    s.add(v)
+                    added += 1
+            chx_clean.add(UBOX[0] - o)
+            chx_clean.add(UBOX[2] + o)
+            chy_clean.add(UBOX[1] - o)
+            chy_clean.add(UBOX[3] + o)
+        print("外圈环廊 ✓：UBOX 外各加 %d 条通道（x %d / y %d ✓）"
+              % (len(RING_OFFS), len(chx), len(chy)))
     used, nets_segs, warn = [], {}, []
     # ★ 全图的**引脚点表** ✓（安全距离规则用 ✓）：绝对 sketch 坐标 ✓
     PIN_ALL = [(t, cid, p[0], p[1]) for t, d in insts.items()
@@ -871,6 +1013,24 @@ def main(argv):
                 seen.add(t)
                 uniq.append(p)
         cands = uniq
+        # ★★ 硬闸门 ✓（2026-09-27 ✓，用户定「**穿体必须是 0**」✓）：
+        #   非“脚边一小段”的部分进别人本体 ⇒ 这条候选**直接不要** ✓。
+        #   ★ 为什么不靠调档位 ✗：档位只能表达“先后”✗，表达不了“**必须**”✗；
+        #     而且一动档位次序，费了很大劲才拿到的“**重叠 0**”就可能没了 ✗
+        #     （重叠和贴脚合在同一个加权项里 ✓ ⇒ 次序一改，两项就互相让位 ✗）。
+        #   ⇒ 用**闸门**：代价函数、档位次序**一个字不动** ✓，只在候选集上删 ✓。
+        if HARD_BODY:
+            ok = [p for p in cands if not body_hard_bad(p, boxes, PIN_ALL)]
+            if ok:
+                cands = ok
+            else:
+                warn.append("%s：**没有一条候选**能避开别人的本体 ✗（保留旧候选集 ✓ 否则会接不上 ✗）" % tag)
+        if HARD_PIN:                   # ★ 线不许落在“别的脚”上（含线身穿心 ✗，2026-09-28 ✓）
+            ok2 = [p for p in cands if not pin_hard_bad(p, PIN_ALL, own_pins)]
+            if ok2:
+                cands = ok2
+            else:
+                warn.append("%s：**没有一条候选**能避开别的引脚 ✗（保留旧候选集 ✓）" % tag)
         best, best_key, alt, alt_key = None, None, None, None
         esc_best, esc_best_key = None, None
         for path in cands:
@@ -902,6 +1062,34 @@ def main(argv):
                 print("   [why] %-22s 出脚候选：**一条未生成** ✗（法线缺失 / 被去重吃掉 ✗）" % "")
         return best, best_key
 
+    def pick_hub(plist):
+        r"""星形网的**公共汇点** ✓（2026-09-28 ✓ 用户点名的第 2 条 ✓）
+
+        ★ 选法（客观 ✓）：① 取各脚几何中心 ✓；② 在**干净通道**里取离中心最近的 6×6 个交点 ✓；
+          ③ 合格的 = **不在任何别的元件盒里**（内缩 0.5 ✓）且**离任何引脚 ≥ CLEAR_PIN** ✓；
+          ④ 在合格里取**离中心最近**的 ✓；一个都不合格 ⇒ 退回中心 ✓（并印告警 ✓ 不静默 ✗）。
+        ★ 为什么从通道交点里挑 ✓：汇点落在通道上 ✓ ⇒ 每根枝都能沿正交/45° 到它 ✓，
+          而不会因为“汇点在没通道的野地”被迫绕远 ✗。
+        """
+        cx0 = sum(d["p"][0] for d in plist) / len(plist)
+        cy0 = sum(d["p"][1] for d in plist) / len(plist)
+        xs = sorted(chx_clean, key=lambda v: abs(v - cx0))[:6]
+        ys = sorted(chy_clean, key=lambda v: abs(v - cy0))[:6]
+
+        def bad(x, y):
+            for t2, bb in boxes.items():
+                if bb and (bb[0] + 0.5 <= x <= bb[2] - 0.5 and bb[1] + 0.5 <= y <= bb[3] - 0.5):
+                    return True
+            return any(math.dist((x, y), (q[2], q[3])) < CLEAR_PIN for q in PIN_ALL)
+
+        ok = [(math.hypot(x - cx0, y - cy0), x, y)
+              for x in xs for y in ys if not bad(x, y)]
+        if ok:
+            _d, x, y = min(ok)
+            return (x, y)
+        warn.append("星形汇点：**通道交点上全不合格** ✗ ⇒ 退回几何中心 (%.1f,%.1f) ✓" % (cx0, cy0))
+        return (cx0, cy0)
+
     for net in net_order:
         pins = NETS[net]
         if len(pins) < 2:
@@ -913,22 +1101,35 @@ def main(argv):
             pts.append({"ref": ref, "cid": cid, "p": p})
         pts.sort(key=lambda d: (round(d["p"][0], 3), round(d["p"][1], 3)))
         segs = []
-        for i in range(len(pts) - 1):
-            a, b = pts[i]["p"], pts[i + 1]["p"]
-            mine = {pts[i]["ref"], pts[i + 1]["ref"]}
-            own_pins = {(pts[i]["ref"], pts[i]["cid"]),
-                        (pts[i + 1]["ref"], pts[i + 1]["cid"])}
+        # ★ 连接**对** ✓：默认 = 相邻两脚（链 ✓）；`STAR_NETS` 里的 = 每脚 → 汇点（星 ✓）
+        pairs = []
+        if net in STAR_NETS and len(pts) >= 2:
+            hub = pick_hub(pts)
+            print("网 %-9s **星形** ✓：汇点 (%.1f,%.1f) ✓（%d 根枝 ✓）" % (net, hub[0], hub[1], len(pts)))
+            for d in pts:
+                pairs.append({"a": d["p"], "ra": d["ref"], "ca": d["cid"],
+                              "b": hub, "rb": None, "cb": None})
+        else:
+            for i in range(len(pts) - 1):
+                pairs.append({"a": pts[i]["p"], "ra": pts[i]["ref"], "ca": pts[i]["cid"],
+                              "b": pts[i + 1]["p"], "rb": pts[i + 1]["ref"],
+                              "cb": pts[i + 1]["cid"]})
+        for pr in pairs:
+            a, b = pr["a"], pr["b"]
+            mine = {pr["ra"]} | ({pr["rb"]} if pr["rb"] else set())
+            own_pins = {(pr["ra"], pr["ca"])} | ({(pr["rb"], pr["cb"])} if pr["rb"] else set())
+            tt = "%s %s.%s→%s" % (net, pr["ra"], pr["ca"],
+                                   ("%s.%s" % (pr["rb"], pr["cb"])) if pr["rb"] else "汇点")
             # 三级：① 不碰本体 + 不与已布线段共线重叠 ✓ ② 只要求不碰本体 ✓ ③ 兜底（否则端点接不上 ✗）
-            best, best_key = route_pair(a, b, mine, own_pins, used,
-                                        tag="%s %s.%s→%s.%s" % (net, pts[i]["ref"], pts[i]["cid"],
-                                                                 pts[i + 1]["ref"], pts[i + 1]["cid"]))
+            best, best_key = route_pair(a, b, mine, own_pins, used, tag=tt)
             if best is None:
-                warn.append("%s: %s→%s 没找到不碰本体的路径 ✗" % (net, pts[i]["ref"], pts[i + 1]["ref"]))
+                warn.append("%s: 没找到不碰本体的路径 ✗" % tt)
                 best = candidates(a, b, sorted(chx), sorted(chy))[0]
             for k in range(len(best) - 1):
                 used.append((best[k], best[k + 1]))
             segs.append({"a": best[0], "b": best[-1], "path": best,
-                         "from": pts[i], "to": pts[i + 1],
+                         "from": {"ref": pr["ra"], "cid": pr["ca"]},
+                         "to": ({"ref": pr["rb"], "cid": pr["cb"]} if pr["rb"] else None),
                          # ★ 抽出重排要用同一套上下文 ✓（`mine`/`own_pins` ✓）
                          "mine": mine, "own_pins": own_pins, "key": best_key})
         nets_segs[net] = segs
@@ -1255,6 +1456,8 @@ def emit(sroot, insts, z, nets_segs, orig_path, out_path):
                 continue
             if tgt[0] == "pin":
                 p = tgt[1]
+                if p is None:                    # ★ 星形的汇点端 = **裸端点** ✓（没有连接器 ✓）
+                    continue                     #   ⇒ 连接性由 `check_netlist.py` 当场判 ✓
                 links.append((w["mi"], cid, "schematicTrace",
                               insts[p["ref"]]["mi"], p["cid"], "schematic"))
             else:
