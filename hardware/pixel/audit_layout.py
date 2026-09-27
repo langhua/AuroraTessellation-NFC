@@ -74,7 +74,11 @@ def board_buses(fzz):
 
 
 def net_terminals(fzz):
-    """net → [孔 id 或 "pin@<元件标号>.<脚名>" ✓]（网表来自项目的 gen_schematic_wires.NETS ✓）"""
+    """⇒ (net → [孔 id 或 "pin@<元件标号>.<脚名>" ✓], {孔 → (标号, connectorId)} ✓)
+
+    网表来自项目的 `gen_schematic_wires.NETS` ✓；第二个返回值（`plug_of` ✓）给 ⑥ 用：
+    它能把"某个孔上插的是谁的哪只脚"反查出来 ✓（2026-09-27 加 ✓）。
+    """
     src = open(NETS_PATH, encoding="utf-8").read()
     blk = src[src.index("NETS = {"):src.index("\n}\n", src.index("NETS = {")) + 2]
     nets = eval(blk.split("=", 1)[1].strip())                 # noqa: S307
@@ -113,7 +117,7 @@ def net_terminals(fzz):
             hits = sorted(h for h, v in plug_of.items() if v == (ref, cid))
             terms.append(hits[0] if hits else "pin@%s.%s" % (ref, cid))
         out[net] = terms
-    return out
+    return out, plug_of
 
 
 def body_rects(fzz):
@@ -244,8 +248,9 @@ def check(path):
     #    §5b-5② 的"实物短接"（同一块 5 孔/50 孔铜片上挂两个网 ✓）根本查不出来 ✗）
     #    ★ 用的孔→网映射来自 `net_terminals()` ✓（与 ⑥ 连通检查**同一份** ✓，不另写 ✗）。
     v5 = []
+    nets_map, plug_of = net_terminals(path)      # ★ 一份 ✓（⑤/⑥/豁免判据都用它 ✓）
     net_of_hole = {}
-    for net, terms in net_terminals(path).items():
+    for net, terms in nets_map.items():
         for t in terms:
             if re.match(r"^pin\d+[A-Za-z]$", t):
                 net_of_hole.setdefault(t, set()).add(net)
@@ -295,10 +300,60 @@ def check(path):
                 continue
             # 线接在元件脚上（例如裸焊盘 EPAD ✓）⇒ 把那个脚和这条线的孔并到一起 ✓
             uni("pin@%s.%s" % (ref, cid), hs[0])
+    # ★★ 2026-09-27 补（用户 2026-09-27 追问：「C2 有极性吗？如果没有，何来接反一说？」✓）：
+    #   ⑥ 比的是"**规格说的成员** ↔ **实际接线**"✓ ⇒ **两脚、无极性元件**（电容/电阻 ✓）
+    #   的两只脚落在**同一对网络的两条 bus** 上时 ✓，"账实不符"必然出现 ✓ ——
+    #   但电气上**完全等价** ✓（电容跨在 5V/GND 之间，哪只脚在哪条轨都一样 ✓）
+    #   ⇒ 这类**只提示、不算违规** ✗ ✓。
+    #   ★ 判据必须**成对** ✓：要"这只脚住进了对方的网 ✓ **且** 那只脚也住进了对方的网 ✓"
+    #     ⇒ 真孤岛（只一只脚没接上 ✗）**不会**被豁免 ✓（不放过真断网 ✓）。
+    def _swap_info():
+        """⇒（提示行 ✓，要豁免的成员集合 ✓）"""
+        spec, real = {}, {}
+        for net2, terms2 in nets_map.items():
+            for t2 in terms2:
+                if t2.startswith("pin@"):
+                    ref2, cid2 = t2[4:].split(".", 1)
+                else:
+                    ref2, cid2 = plug_of.get(t2, ("?", "?"))
+                spec.setdefault(ref2, {})[cid2] = net2
+        for h2, (ref2, cid2) in plug_of.items():
+            real.setdefault(ref2, {})[cid2] = h2
+        notes, excused = [], set()
+        for ref2, cmap in sorted(spec.items()):
+            if len(cmap) != 2:
+                continue                      # 只看两脚件 ✓
+            (c1, n1), (c2, n2) = sorted(cmap.items())
+            if n1 == n2:
+                continue
+            h1, h2 = real.get(ref2, {}).get(c1), real.get(ref2, {}).get(c2)
+            if not h1 or not h2:
+                continue
+
+            def _nbr_nets(hid, skip):
+                c0, got = find(hid), set()
+                for net3, terms3 in nets_map.items():
+                    for t3 in terms3:
+                        if t3 in skip:
+                            continue
+                        if find(t3) == c0:
+                            got.add(net3)
+                return got
+
+            if n2 in _nbr_nets(h1, {h1, h2}) and n1 in _nbr_nets(h2, {h1, h2}):
+                notes.append("%s 两只脚对调：（规格 %s=%s / %s=%s；实际 %s 在 %s 的轨上、"
+                             "%s 在 %s 的轨上 ✓）⇒ **无极性两脚件 ⇒ 电气等价 ✓**"
+                             "（⚠ 若它其实是有极性件 ⇒ 必须人看 ✗）"
+                             % (ref2, c1, n1, c2, n2, c1, n2, c2, n1))
+                excused.update((h1, h2))
+        return notes, excused
+
+    v6_notes, _excused = _swap_info()
     v6 = []
-    for net, terms in sorted(net_terminals(path).items()):
+    for net, terms in sorted(nets_map.items()):
+        use = [t for t in terms if t not in _excused]
         comps = {}
-        for t in terms:
+        for t in use:
             comps.setdefault(find(t), []).append(t)
         if len(comps) > 1:
             v6.append("%s 不连通：%s" % (net, " | ".join(sorted(",".join(v) for v in comps.values()))))
@@ -310,6 +365,9 @@ def check(path):
         print("   %s %-14s %d 处" % (mark, k, len(v)))
         for line in v[:6]:
             print("        %s" % line)
+    # ★ 已解释的"两脚件对调"⇒ **提示**（不计入违规数 ✓，退出码也不受影响 ✓）
+    for nt in v6_notes:
+        print("   ~ %-14s %s   ← 提示：不算违规 ✓" % ("⑥ 说明", nt))
     return sum(len(v) for k, v in bad.items())
 
 
