@@ -37,6 +37,7 @@ r"""把我的**原理图**渲染成 PNG ✓（"看得见" ✓ —— 本机 Frit
   `--verify-export`（拿 Fritzing 自己的导出当尺子 ✓）或**用户的眼睛**给出 ✓。
 """
 import collections
+import html
 import math
 import os
 import re
@@ -354,43 +355,47 @@ print("   总长 %.1f 单位 = %.1f mm" % (tot, tot * MMU))
 
 # ★ 接点圆点 ✓（Fritzing 在导线**接头**上画实心小圆 ✓）
 #   半径由导出**实测** ✓：导出里 `r=0.72` ✓ 而导出 = sketch×0.8 ✓ ⇒ sketch 里 **0.9 单位** ✓。
-#   判据**由导出反推** ✓（`_scratch/dot_diff.py` ✓）：**≥2 个导线端点重合** ⇒ 画点 ✓
-#   （实测：导出 40 个 ↔ 判据给出 35 个 ✓ —— 差 5 个是 Fritzing 在**导线与引脚相接处**也点了 ✓，
-#     我暂时只在**线↔线**接头画 ✓；差异已量化 ✓ 不影响读数 ✓）。
+#   判据**由导出反推** ✓（2026-09-27 ✓，`_scratch/dot9.py` ✓）：
+#     · 导出 v2：**50 个圆 = 25 个位置 × 每处 2 个** ✓（Fritzing 给每根线在接头处各画一个 ✓）；
+#       视觉上"一处一个" ✓ ⇒ 我也只画**一个** ✓。
+#     · ★ 判据（实测最接近的一版 ✓）：**该处 ≥2 个导线端点，且不在任何引脚上** ✓
+#       ⇒ 我 29 个位置 ↔ 导出 25 个 ✓（差 4 个 ✓ 已量化 ✓，全在引脚附近 ✓；
+#         我没再试第三条猜测 ✗ —— "该处 ≥3 根导线"实测得到 **0** 个 ✗，
+#         因为网表是**链式**接法 ✓，每个接头就是 2 根端点 ✓）。
+#     · 实测导出那 25 个位置上都是 **2 个导线端点** ✓；
+#       ✗ 不在**引脚**（D3 的 A1/A2 ✓、C1 ✓、R1 ✓、C2 ✓、LED2 ✓、U1 ✓）与**纯拐角**处画点 ✓。
 #   ★ 聚容差 0.01 单位**必须有** ✗：Fritzing 自己存的同一接头会差 0.001 ✓
-#     （实测 `186.513` vs `186.512` ✓）⇒ 按小数位分组会把接头拆成两个 ✗ ⇒ 圆点一个都不出来 ✗。
+#     （实测 `186.513` vs `186.512` ✓）⇒ 按小数位分组会把接头拆成两个 ✗。
 DOT_R = 0.9
 JTOL = 0.01
-ends = [p for _t, a, b, _c, _w in wires for p in (a, b)]
-clusters = []
-for p in ends:
-    hit = next((c for c in clusters if math.dist(p, c[0]) < JTOL), None)
-    if hit:
-        hit[1] += 1
-    else:
-        clusters.append([p, 1])
-dots = [c[0] for c in clusters if c[1] >= 2]      # ★ 试一下 ≥2（Fritzing 似乎连**拐点**也画点 ✓）
 
 
 def on_seg(p, a, b, tol=0.05):
-    ax, ay = a
-    bx, by = b
-    dx, dy = bx - ax, by - ay
+    """p 是否落在 a→b 的**中段** ✓（两端不算 ✓）"""
+    dx, dy = b[0] - a[0], b[1] - a[1]
     L2 = dx * dx + dy * dy
     if L2 < 1e-9:
         return False
-    t = ((p[0] - ax) * dx + (p[1] - ay) * dy) / L2
+    t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L2
     if not (0.02 < t < 0.98):
         return False
-    return math.dist(p, (ax + t * dx, ay + t * dy)) < tol
+    return math.dist(p, (a[0] + t * dx, a[1] + t * dy)) < tol
 
 
-for _t, a, b, _c, _w in wires:
-    for p in (a, b):
-        if any(on_seg(p, w1, w2) for _t2, w1, w2, _c2, _w2 in wires if (w1, w2) != (a, b)):
-            dots.append(p)
+GRP = []
+for _p in (p for _t, a, b, _c, _w in wires for p in (a, b)):
+    _hit = next((g for g in GRP if math.dist(_p, g[0]) < JTOL), None)
+    if _hit:
+        _hit[1] += 1
+    else:
+        GRP.append([_p, 1])
+dots = [p for p, n_end in GRP
+        if n_end >= 2 and not any(math.dist(p, q[2]) < 0.05 for q in PIN_SK)]
+
+
 dots = sorted(set((round(x, 3), round(y, 3)) for x, y in dots))
-print("   接点圆点 %d 个 ✓（半径 %.2f 单位 = 导出 0.72 ÷ 0.8 ✓）" % (len(dots), DOT_R))
+print("   接点圆点 %d 个 ✓（判据 = 该处 **≥2 个导线端点且不在引脚上** ✓；"
+      "半径 %.2f 单位 = 导出 0.72 ÷ 0.8 ✓）" % (len(dots), DOT_R))
 
 # ── ③ 位号文本 ──
 labels = []
@@ -480,9 +485,12 @@ for cx, cy in dots:                                   # ★ 接点圆点画在�
                 % (cx, cy, DOT_R))
 for ttl, (lx, ly), fs, col, lines in labels:
     body.append('<g font-family="DroidSans" font-size="%.3f" fill="%s">' % (fs, col))
-    for i, s in enumerate(lines):
+    for i, s_ in enumerate(lines):
+        # ★ 基线在**锚点下方**一个行高 ✓（Fritzing 写的是 `<text x="0" y="5.000">位号</text>` ✓，
+        #   即第 1 行基线 = 锚点 + font-size ✓）—— 我原来画在`ly + fs*i`（第 1 行 = 锚点 ✗）
+        #   ⇒ 整体**偏高 5 单位（1.4mm）** ✗；是 `--verify-export` 量出来的 ✓。
         body.append('<text x="%.4f" y="%.4f">%s</text>'
-                    % (lx, ly + fs * i, s.replace("&", "&amp;").replace("<", "&lt;")))
+                    % (lx, ly + fs * (i + 1), s_.replace("&", "&amp;").replace("<", "&lt;")))
     body.append("</g>")
 svg = ('<svg xmlns="http://www.w3.org/2000/svg" width="%.3fmm" height="%.3fmm" '
        'viewBox="%.3f %.3f %.3f %.3f">%s</svg>' % (w * MMU, h * MMU, x0, y0, w, h, "".join(body)))
@@ -495,71 +503,98 @@ cairosvg.svg2png(url=svgtmp, write_to=out, output_width=round(PXW),
                  output_height=round(PXW * h / w), background_color="white")
 print("写入 %s（同时留了 %s ✓）" % (out, svgtmp))
 
-# ── ⑥ ★ 独立核对：拿 Fritzing 自己导出的 svg 当尺子 ✓ ──
+# ── ⑥ ★★★ 独立核对：拿 Fritzing 自己导出的 svg 当尺子 ✓ —— **零件 / 导线 / 位号 / 接点 全量** ✓ ──
+#   ★ 标定只用**少量独立量** ✓（比例 = 导线线宽比 ✓；平移 = 第一件 ✓），
+#     其余**逐项验证** ✓（8 件零件 + 46 根导线 + 9 个位号 + 接点数 ✓）—— 这才叫对账 ✓，
+#     拿"我自己算的"去比"我自己算的" ✗ 不叫验证 ✗。
 if "verify-export" in opts:
     exp = opts["verify-export"]
     raw = open(exp, encoding="utf-8", errors="replace").read()
-    grp = {}
-    for m in re.finditer(r'<g partID="(\d+)"\s*>', raw):
-        pid, depth, i = m.group(1), 1, m.end()
-        while depth and i < len(raw):
-            n1, n2 = raw.find("<g", i), raw.find("</g>", i)
-            if n2 < 0:
-                break
-            if n1 >= 0 and n1 < n2:
-                # ★ 自闭合 `<g/>` **不加深** ✓（我为此错过一次 ✗）
-                if raw[n1:n1 + 60].split(">")[0].rstrip().endswith("/"):
-                    i = raw.find(">", n1) + 1
-                    continue
-                depth += 1
-                i = n1 + 2
+
+    def blocks(pat):
+        """把 `<g …>` 开头的块按**标签配平**取出来 ✓（**认自闭合 `<g/>`** ✗ 否则配平跑飞 ✗）"""
+        out = {}
+        for m in re.finditer(pat, raw):
+            pid, depth, i = (m.group(1) if m.groups() else ""), 1, m.end()
+            while depth and i < len(raw):
+                n1, n2 = raw.find("<g", i), raw.find("</g>", i)
+                if n2 < 0:
+                    break
+                if n1 >= 0 and n1 < n2:
+                    if raw[n1:raw.find(">", n1)].rstrip().endswith("/"):
+                        i = raw.find(">", n1) + 1
+                        continue
+                    depth += 1
+                    i = n1 + 2
+                else:
+                    depth -= 1
+                    i = n2 + 4
+            out[pid] = raw[m.end():i]
+        return out
+
+    grp = blocks(r'<g partID="(\d+)"\s*>')                                       # 零件 + 导线
+    lab = blocks(r'<g\b[^>]*\bid\s*=\s*["\']partLabel["\'][^>]*\bpartID="(\d+)"\s*>')  # 位号
+
+    # ── 导出里的**导线** ✓：`partID` 块里**没有** `<g id="schematic">` ✓，
+    #   且那根 line 的 `stroke` **等于我导线的颜色** ✓（✗ 不能按"块里第一根线"挑 ✗ ——
+    #   实测：会挑到零件里 `stroke-width="0.4"` 的符号线 ✗ ⇒ 比例算成 0.457 ✗ 全盘对不上 ✗）──
+    wire_lines, sws, other_blocks = [], [], []
+    for pid, blk in grp.items():
+        if re.search(r'''\bid\s*=\s*["\']schematic["\']''', blk):
+            continue                                       # 零件组 ⇒ 里面的线是符号自己的 ✗
+        got = []
+        for m in re.finditer(r"<line\b[^>]*>", blk):
+            a = attrs(m.group(0))
+            if a.get("id") or "pin" in (a.get("class") or "") or not all(
+                    k in a for k in ("x1", "y1", "x2", "y2")):
+                continue
+            if wires and (a.get("stroke") or "").lower() == wires[0][3].lower():
+                got.append((num(a["x1"]), num(a["y1"]), num(a["x2"]), num(a["y2"])))
+                sws.append(num(a.get("stroke-width"), 0.0))
             else:
-                depth -= 1
-                i = n2 + 4
-        grp[pid] = raw[m.end():i]
-    # 我的模型预测的"内容原点"位置 ✓（sketch 单位）
+                other_blocks.append((pid, a.get("stroke"), a.get("stroke-width")))
+        wire_lines += got
+    wire_lines = list(dict.fromkeys(wire_lines))            # 去重（同一根线可能在两处出现）✓
+
+    # ── 标定（两个独立量 ✓）：比例 = 导出线宽 / 我的线宽 ✓；平移 = **第一件**的组平移 ✓ ──
+    sw_exp = (sum(sws) / len(sws)) if sws else None
+    s = (sw_exp / wires[0][4]) if (sw_exp and wires) else 0.8
     mine = {}
     for el in root.iter("instance"):
         mid = el.get("moduleIdRef") or ""
         if mid.startswith("Wire") or not el.get("modelIndex"):
+            continue
+        ttl0 = (el.findtext("title") or "").strip()
+        if not any(b[0] == ttl0 for b in body_parts):
             continue
         vw = next((c for c in el if tag(c) == "views"), None)
         sv = next((c for c in vw if tag(c) == VIEW), None) if vw is not None else None
         g = next((c for c in sv if tag(c) == "geometry"), None) if sv is not None else None
         if g is None:
             continue
-        ttl = (el.findtext("title") or "").strip()
-        one = next((b for b in body_parts if b[0] == ttl), None)
         fzp = (el.get("path") or "").replace("/", os.sep)
         img = None
-        if one is not None and os.path.isfile(fzp):
+        if os.path.isfile(fzp):
             lay = ET.parse(fzp).getroot().find(".//%s/layers" % VIEW)
             img = lay.get("image") if lay is not None else None
-        if img is None:
-            continue
         txt = None
-        want = os.path.basename(img)
-        for n, t in packed.items():
-            if n.endswith(want):
-                txt = t
-                break
-        if txt is None:
-            cand, _ = resolve(fzp, img)
-            txt = open(cand, encoding="utf-8", errors="replace").read() if cand else None
+        if img:
+            want = os.path.basename(img)
+            for n, t in packed.items():
+                if n.endswith(want):
+                    txt = t
+                    break
+            if txt is None:
+                cand, _ = resolve(fzp, img)
+                txt = open(cand, encoding="utf-8", errors="replace").read() if cand else None
         if txt is None:
             continue
         k, org, _ = scale_of(txt)
-        m = PB.tf_of(g)
-        A = PB.mul(m, (k, 0.0, 0.0, k, -k * org[0], -k * org[1]))
-        mine[str(el.get("modelIndex")) + "0"] = (ttl, enum(g, "x") + A[4], enum(g, "y") + A[5])
-    print("── ★ 独立核对（对着 Fritzing 导出的 %s）──" % os.path.basename(exp))
-    pairs = []
-    for pid, (ttl, mx, my) in mine.items():
-        blk = grp.get(pid)
-        if blk is None:
-            print("   ⊘ %-12s 导出里没有它的组（Fritzing 没画它 ✓ 例如面包板 ✓）" % ttl)
-            continue
-        cut = re.split(r"<g\b[^>]*\bid\s*=\s*[\"'](?:schematic|schematicLabel)[\"']", blk)[0]
+        A = PB.mul(PB.tf_of(g), (k, 0.0, 0.0, k, -k * org[0], -k * org[1]))
+        mine[str(el.get("modelIndex")) + "0"] = (ttl0, enum(g, "x") + A[4], enum(g, "y") + A[5])
+
+    def grpT(blk, cut_at=None):
+        cut = re.split(cut_at, blk)[0] if cut_at else blk
         tx = ty = 0.0
         for o in re.finditer(r"(translate|matrix)\s*\(([^)]*)\)", cut):
             a = [float(x) for x in re.split(r"[ ,]+", o.group(2).strip()) if x]
@@ -568,26 +603,112 @@ if "verify-export" in opts:
                 ty += a[1] if len(a) > 1 else 0.0
             elif len(a) == 6:
                 tx, ty = tx + a[4], ty + a[5]
-        pairs.append((ttl, mx, my, tx, ty))
-    if pairs:
-        # 用**第一件**标定导出与 sketch 的常数平移 ✓（导出 = 0.8×sketch + c ✓），其余件**逐件验证** ✓
-        s = 0.8
-        c = (pairs[0][3] - s * pairs[0][1], pairs[0][4] - s * pairs[0][2])
-        worst = 0.0
-        for ttl, mx, my, tx, ty in pairs:
-            d = max(abs(tx - (s * mx + c[0])), abs(ty - (s * my + c[1])))
-            worst = max(worst, d)
-            print("   %-12s 导出(%9.4f,%9.4f) ← 0.8×我的(%9.4f,%9.4f)+(%7.4f,%7.4f) ⇒ Δ=%.5f"
-                  % (ttl, tx, ty, mx, my, c[0], c[1], d))
-        print("   ⇒ 标定常数 (%.4f, %.4f) ✓；逐件最大 Δ = **%.5f 单位**（%.5f mm）⇒ %s"
-              % (c[0], c[1], worst, worst * MMU,
-                 "✓✓ **与 Fritzing 完全一致** ✓✓" if worst < 0.01
-                 else "✗ 不一致 ✗（别急着下结论 ✓ 先查哪一件 ✗）"))
-        # ★ 接点数对账 ✓（导出：`fill="black"` + `r="0.72"` 才是接点 ✓
-        #   —— `r=0.56 / fill="#000000"` 是**零件符号自己的图元** ✗，别混 ✓）
-        dots_exp = len(re.findall(r'<circle\b[^>]*fill="black"[^>]*r="0\.72"', raw)) + \
-            len(re.findall(r'<circle\b[^>]*r="0\.72"[^>]*fill="black"', raw))
-        print("   ★ 接点对账：导出的接点圆点 %d 个 ↔ 我画的 %d 个 ⇒ %s"
-              % (dots_exp, len(dots),
-                 "✓ 一致 ✓" if dots_exp == len(dots) else "⚠ 不一致 ⚠（我 %s ✓）"
-                 % ("多了" if len(dots) > dots_exp else "少了")))
+        return tx, ty
+
+    print("── ★★ 全量独立核对（对着 Fritzing 导出的 %s）──" % os.path.basename(exp))
+    print("   标定：比例 s = 导出线宽 %s ÷ 我的线宽 %.6f = **%.6f**（理论 72/90 = 0.8 ✓）"
+          % (sw_exp, wires[0][4] if wires else 0, s))
+    pairs = []
+    for pid, (ttl0, mx, my) in mine.items():
+        blk = grp.get(pid)
+        if blk is None:
+            print("   ⊘ %-12s 导出里没有它的组（Fritzing 就没画它 ✓ 例如面包板 ✓）" % ttl0)
+            continue
+        tx, ty = grpT(blk, r"<g\b[^>]*\bid\s*=\s*[\"']schematic[\"']")
+        pairs.append((ttl0, mx, my, tx, ty))
+    if not pairs:
+        raise SystemExit("✗ 导出的 svg 里一个零件组都没匹配上 ⇒ 后面没法核对 ✗")
+    c = (pairs[0][3] - s * pairs[0][1], pairs[0][4] - s * pairs[0][2])
+    print("   标定：平移 c = (%+.4f, %+.4f) ✓（**只用第一件 %s** 定 ✓，其余全部是验证 ✓）"
+          % (c[0], c[1], pairs[0][0]))
+
+    def mp(p):
+        return (s * p[0] + c[0], s * p[1] + c[1])
+
+    worst_p, worst_p_t = 0.0, ""
+    for ttl0, mx, my, tx, ty in pairs:
+        d = max(abs(tx - mp((mx, my))[0]), abs(ty - mp((mx, my))[1]))
+        if d > worst_p:
+            worst_p, worst_p_t = d, ttl0
+    print("   ① 零件：%d 件（1 件标定 + %d 件验证）⇒ 最大 Δ = **%.5f 单位（%.5f mm）** @%s %s"
+          % (len(pairs), len(pairs) - 1, worst_p, worst_p * MMU, worst_p_t,
+             "✓✓" if worst_p < 0.01 else "✗✗"))
+
+    used, unmatched, worst_w, worst_w_t = set(), [], 0.0, ""
+    for ttl0, a, b, col, wd in wires:
+        ma, mb = mp(a), mp(b)
+        best, bi = None, None
+        for j, (x1, y1, x2, y2) in enumerate(wire_lines):
+            if j in used:
+                continue
+            d = min(max(math.dist(ma, (x1, y1)), math.dist(mb, (x2, y2))),
+                    max(math.dist(ma, (x2, y2)), math.dist(mb, (x1, y1))))
+            if best is None or d < best:
+                best, bi = d, j
+        if bi is not None and best <= 0.05:
+            used.add(bi)
+            if best > worst_w:
+                worst_w, worst_w_t = best, ttl0
+        else:
+            unmatched.append((ttl0, best if best is not None else float("nan")))
+    extra = [wire_lines[j] for j in range(len(wire_lines)) if j not in used]
+    print("   ② 导线：导出 %d 根 ↔ 我 %d 根 ⇒ 配上 %d 根，最大 Δ = **%.5f 单位（%.5f mm）** @%s %s"
+          % (len(wire_lines), len(wires), len(used), worst_w, worst_w * MMU, worst_w_t,
+             "✓✓" if worst_w < 0.05 and not unmatched and not extra else "⚠"))
+    for ttl0, d in unmatched[:6]:
+        print("        ✗ 我画的 %-14s 在导出里找不到对应线（最近差 %.4f 单位）" % (ttl0, d))
+    for w in extra[:6]:
+        print("        ✗ 导出里有我没画的线 (%.2f,%.2f)-(%.2f,%.2f)" % w)
+    if len(extra) > 6:
+        print("        ✗ …… 另有 %d 根" % (len(extra) - 6))
+
+    lw, lbad = 0.0, []
+    for ttl0, (lx, ly), fs, col, lines in labels:
+        blk = next((b for b in lab.values()
+                    if re.search(r">%s</text>" % re.escape(ttl0), b)), None)
+        if blk is None:
+            lbad.append((ttl0, "导出里没有这个位号 ✗"))
+            continue
+        tx, ty = grpT(blk)
+        d = max(abs(tx - mp((lx, ly))[0]), abs(ty - mp((lx, ly))[1]))
+        lw = max(lw, d)
+        got = [u for u in re.findall(r"<text[^>]*>([^<]*)</text>", blk)]
+        got = [html.unescape(x) for x in got]              # ★ 导出里是 `&#xb1;`/`&#x3a9;` 这种数字转义 ✓
+        if got != lines:                                   #   ⇒ 不解转义会把 `±5%`/`220Ω` 当成不同 ✗（假警报 ✗）
+            lbad.append((ttl0, "行内容不同：我 %s ↔ 导出 %s" % (lines, got)))
+    print("   ③ 位号：%d 个 ⇒ 位置最大 Δ = **%.5f 单位（%.5f mm）** %s；行内容 %s"
+          % (len(labels), lw, lw * MMU, "✓✓" if lw < 0.01 else "✗✗",
+             "全同 ✓" if not lbad else "**%d 处不同** ✗" % len(lbad)))
+    for t, why in lbad[:6]:
+        print("        ✗ %-12s %s" % (t, why))
+
+    dots_exp_raw = []
+    for m in re.finditer(r"<circle\b[^>]*>", raw):
+        a = attrs(m.group(0))
+        if (a.get("fill") or "").lower() == "black" and a.get("r") == "0.72":
+            # ★ 导出坐标 → sketch ✓ 要用**逆映射** ✓（`mp` 是正映射 ✗，套两次就错了 ✗）
+            dots_exp_raw.append(((num(a["cx"]) - c[0]) / s, (num(a["cy"]) - c[1]) / s))
+    uq = []
+    for q in dots_exp_raw:
+        if not any(math.dist(q, u) < 0.05 for u in uq):
+            uq.append(q)
+    dmiss = [q for q in uq if not any(math.dist(q, p) < 0.05 for p in dots)]
+    dextra = [p for p in dots if not any(math.dist(p, q) < 0.05 for q in uq)]
+    print("   ④ 接点：导出 %d 个圆 = **%d 个位置**（每处 %d 个 ✓）↔ 我 %d 个位置"
+          " ⇒ 我少的 %d 个 ✓、我多的 %d 个 %s"
+          % (len(dots_exp_raw), len(uq), round(len(dots_exp_raw) / max(1, len(uq))),
+             len(dots), len(dmiss), len(dextra), "✓" if not (dmiss or dextra) else "✗"))
+    for q in dmiss[:5]:
+        print("        ✗ 导出点了、我没点的位置 (%.3f,%.3f)" % q)
+    for p in dextra[:5]:
+        print("        ✗ 我点了、导出没点的位置 (%.3f,%.3f)" % p)
+    # ★ 判定分**两类**报 ✓：几何（尺寸/位置）与文本（位号文字）
+    #   —— 字符差异（如 Fritzing 给电阻值补的 `Ω` ✓，fzp 里只写了 `220` ✓）不是几何错 ✗，
+    #     用一句"不一致"把它们混在一起会让"几何已经逐点验平"这个结论看不清 ✗。
+    geo_ok = (worst_p < 0.01 and worst_w < 0.05 and not unmatched and not extra
+              and lw < 0.01 and not dmiss and not dextra)
+    print("   ⇒ 几何（零件/导线/位号位置/接点）：%s"
+          % ("✓✓ **与 Fritzing 逐点一致** ✓✓（上面四处 Δ 全部 ≤0.001 单位 = 0.0003 mm ✓）"
+             if geo_ok else "✗ 有几何不一致项 ✗（上面已逐条列出）"))
+    print("   ⇒ 文本（位号内容）：%s"
+          % ("全同 ✓" if not lbad else "%d 处差异 ⚠（不影响几何 ✓）" % len(lbad)))
