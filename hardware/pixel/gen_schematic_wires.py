@@ -85,6 +85,14 @@ DIAG_PEN = 1.25        # ★ 斜线的小罚分（“长度 × 1.25 才等于”
 #     调大 = 更看重少交叉 ✓；调小 = 更看重短而直 ✓。代码里就这一行 ✓。
 #   单位换算：10mm × 3.5433 = **35.4 sketch 单位** ✓。
 K_INTER = 35.4
+# ★★ K_OUT：**一根线跑到"所有零件包围盒之外"的那部分长度**值多少倍 ✓
+#   （2026-09-27 ✓，从**用户手改版**里学来的性格 ✓）
+#   ✗ 我的 v8 有一根线先向左跑 **61 单位**（比 J1 还左 ✗）再横着回来 ⇒
+#     画布被撑到 90.9×90.5mm ✗、中间空出一大块 ✗、还横穿 3 根线 ✗（用户：“扎眼” ✗）；
+#   ✓ 他的手改版：画布 **78.7×83.1mm** ✓、每根线都待在零件之间 ✓。
+#   ⇒ 跑出去的长度按 K_OUT 倍罚 ✓（只罚“出去”那一段 ✓，出界一点点（标签/45° 小拐角）不受怨 ✓）。
+K_OUT = 10.0
+OUT_MARGIN = 7.2      # 包围盒外扩（1 格 ✓）：小出界不算往外跑 ✓
 USE45 = True           # 是否允许 45° dogleg 候选 ✓（`--no45` 关掉 ✓，A/B 用 ✓）
 #   ★ 为什么是“罚”不是“禁” ✗（2026-09-27 用户定 ✓：“允许 45° 斜线” ✓）：
 #     · 用户指明了允许斜线 ✓；
@@ -336,11 +344,38 @@ def bends(path):
     return max(0, len(path) - 2)
 
 
+def out_len(path, ubox, margin=OUT_MARGIN):
+    """路径**跑在“所有零件包围盒”之外**的那部分长度 ✓（2026-09-27 ✓，从用户手改版学的 ✓）
+
+    ★ 为什么只罚“出去的那段”而不是禁 ✗：标签、45° 小拐角、引脚伸出的线都会
+      略微出框 ✓ —— 那不算往外跑 ✗；真正要打的是“跑到比所有元件还左/还下”的长途绕行 ✓。
+    ★ 采样口径与别的判据一致 ✓（每 2 单位一个中点 ✓，用段长 × 命中数 ✓）。
+    """
+    if not ubox:
+        return 0.0
+    x0, y0, x1, y1 = (ubox[0] - margin, ubox[1] - margin,
+                      ubox[2] + margin, ubox[3] + margin)
+    tot = 0.0
+    for i in range(len(path) - 1):
+        p, q = path[i], path[i + 1]
+        seg = math.dist(p, q)
+        if seg < 1e-9:
+            continue
+        n = max(2, int(max(abs(q[0] - p[0]), abs(q[1] - p[1])) / 2) + 1)
+        step = seg / n
+        for k in range(n):
+            tm = (k + 0.5) / n
+            x, y = p[0] + (q[0] - p[0]) * tm, p[1] + (q[1] - p[1]) * tm
+            if not (x0 <= x <= x1 and y0 <= y <= y1):
+                tot += step
+    return tot
+
+
 def diag_extra(path):
     """斜线比正交**多算**的那部分长度 ✓（= `DIAG_PEN` 罚分 ✓；正交段为 0 ✓）
 
-    ★ 只在**最后一档**（长度）里加 ✓ ⇒ 它压不过“少交叉”“不穿本体” ✓
-      —— “正交比斜线好看” ✓ 但“斜线能换掉一个交叉”时仍然选斜线 ✓。
+    ★ 只在**最后一档**（长度）里加 ✓ ⇒ 它压不过"少交叉""不穿本体""不出界" ✓
+      —— "正交比斜线好看" ✓，但"斜线能换掉一个交叉 / 缩短一截"时仍然选斜线 ✓。
     """
     e = 0.0
     for i in range(len(path) - 1):
@@ -437,6 +472,10 @@ def main(argv):
         global RATIO
         RATIO = float(argv[argv.index("--ratio") + 1])
         print("尺子换算：RATIO = %.4f（导出尺子 1.25 ✓ / 渲染尺子 1.0 ✓）" % RATIO)
+    if "--Kout" in argv:                      # “出界长度”的倍率 ✓（默认 10 ✓）
+        global K_OUT
+        K_OUT = float(argv[argv.index("--Kout") + 1])
+        print("出界代价 K_OUT = %.1f（越大越不许线跑出零件包围盒 ✓）" % K_OUT)
     if "--K" in argv:                         # 一个“交集”值多少长度 ✓（默认 35.4 = 10mm ✓）
         global K_INTER
         K_INTER = float(argv[argv.index("--K") + 1])
@@ -479,6 +518,13 @@ def main(argv):
             chx.add(p[0])
             chy.add(p[1])
     boxes = {t: d["box"] for t, d in insts.items() if d["box"]}
+    # ★ 零件**总包围盒** ✓（“出界”代价项的参照 ✓）：
+    UBOX = None
+    if boxes:
+        UBOX = (min(b[0] for b in boxes.values()), min(b[1] for b in boxes.values()),
+                max(b[2] for b in boxes.values()), max(b[3] for b in boxes.values()))
+        print("零件总包围盒 %.1f,%.1f → %.1f,%.1f（外扩 %.1f 单位 ✓；出界的长按 K_OUT=%.1f 倍罚 ✓）"
+              % (UBOX[0], UBOX[1], UBOX[2], UBOX[3], OUT_MARGIN, K_OUT))
     print("keep-out 盒: %s" % ", ".join("%s(%.1f,%.1f→%.1f,%.1f)" % ((t,) + b)
                                        for t, b in sorted(boxes.items())))
 
@@ -537,11 +583,20 @@ def main(argv):
                 #   · `nv`（碰别的元件）与 `nov`（压在同一条直线上）**当硬闸门** ✓ ——
                 #     ✗ 改成“小罚分”实测会把交叉从 8 拉到 40 ✗（漏一角的本体比交叉划算 ✗）✓
                 #   · 交叉数保持**头号指标** ✓（面包板教训 ✓）
+                # ★★ 代价是**字典序元组** ✗ —— 这是我一再踩的坑 ✓（面包板规则 ⑧ 也栽在这 ✓）：
+                #   写在最后一档（长度）里的系数，只有前面**全平**时才起作用 ✗ ⇒
+                #   实测 `K_OUT` 0→30 六组结果**一模一样** ✗、`DIAG_PEN` 1.25→1.00 也一样 ✗。
+                #   ⇒ “跑到零件外面去”要想真起作用，必须**跟交叉数同级** ✓（放在它**前面** ✓）。
+                #   ★ “出界几格”用**格数**（每 7.2 单位 ✓）而不是长度 ✓：
+                #     两档之间差一格 ✓ ⇒ “出界一点点”不会被当成“跑出去一大截” ✓。
+                ostep = int(out_len(path, UBOX) / 7.2 + 0.9999)
                 key = (1 if hits_own_body(path, own_boxes) else 0,
                        1 if nv else 0,
+                       ostep,
                        nov + cross_count(path, used),
                        inside_count(path, own_boxes),
-                       bends(path), plen(path) + diag_extra(path))
+                       bends(path),
+                       plen(path) + diag_extra(path) + K_OUT * out_len(path, UBOX))
                 if best_key is None or key < best_key:
                     best, best_key = path, key
             if best is None:
