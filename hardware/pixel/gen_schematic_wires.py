@@ -785,10 +785,32 @@ def ovl_hard_bad(path, used):
       端点相接（接头 ✓）与十字交叉**都不算**重叠 ✓（口径见 `sch_geom` 头部 ✓）。
     """
     for k in range(len(path) - 1):
-        for (p2, q2) in used:
-            if SG.near_overlap(path[k], path[k + 1], p2, q2):
+        for _u in used:
+            # ★ `used` 每一项 = **`(p, q, net)`** ✓（2026-09-28 ✓ 带网名 ✓，T 形搭接要用 ✓）
+            #   ⇒ 这里**按下标取** ✓（不写死元数 ✗ ⇒ 以后再加字段不用改消费者 ✓）。
+            if SG.near_overlap(path[k], path[k + 1], _u[0], _u[1]):
                 return True
     return False
+
+
+def ovl_partners(path, used, limit=4):
+    r"""★ **诊断**：这条路径与 `used` 里**哪些段**共线重叠 ✓（连双方坐标一起报出 ✓）
+
+    ★ 判据仍调**唯一一份** `sch_geom.near_overlap` ✓（判碰只许一份实现 ✗ —— 面包板那天的
+      教训 ✓：两套实现混用 ⇒ 数字对不上、还找不到原因 ✗）。
+    ★ 为什么需要它 ✗（2026-09-28 ✓）：`GND D3.connector0` 的 12 个候选**全**报
+      「与已布线重叠 True」✗ ⇒ 可**跟谁**重叠、是**同网还是异网**，报告里没有 ✗ ⇒
+      没法判断「能不能学用户手改版那根」✓（Task 2 ✓）。
+    """
+    out = []
+    for k in range(len(path) - 1):
+        for _u in used:
+            p2, q2 = _u[0], _u[1]
+            if SG.near_overlap(path[k], path[k + 1], p2, q2):
+                out.append((path[k], path[k + 1], p2, q2))
+                if len(out) >= limit:
+                    return out
+    return out
 
 
 def body_hard_bad(path, boxes, pin_all, r_touch=0.05):
@@ -845,6 +867,38 @@ def out_len(path, ubox, margin=OUT_MARGIN):
     return tot
 
 
+def pin_intr_list(path, own, pins_all):
+    r"""路径**贴到的引脚清单** ✓（**唯一实现** ✓；`pin_intr` = 它的长度 ✓）
+
+    ★ 为什么拆出来 ✓（2026-09-28 ✓）：实测**同一个形状**（`D3.connector0` 的 T 形搭接候选 ✓）
+      在**两档里给出不同贴脚数** ✗（socket0 = 1 ✗、socket4 = 0 ✓）—— 因为这里判距原来是**采样**的 ✗
+      ⇒ 结果会被**采样步长**决定 ✗ ⇒ 必须能**点名**是哪只脚、精确距离多少 ✓（用仓里唯一那份
+      `sch_geom.p2seg` ✓）才能判它是"真太近"还是"采样跳过去了" ✗。
+    ★★ 判距现在**用精确值** ✓（`sch_geom.p2seg` ✓ —— 仓里唯一那一份 ✓）：
+      ✗ 原来抽样（每 `P_STEP` 取点 ✗）⇒ `7.2000` 这种**正好压在阈值上**的情形
+        会因采样落点不同而 0/1 翻转 ✗✗（同一个形状两档结果不同 ✗）。
+      ★ 阈值口径**不变**（仍 `< CLEAR_PIN` ✓）⇒ 与渲染器那条 ④c2 **完全同一口径** ✓。
+    """
+    if not pins_all:
+        return []
+    out = []
+    for (ref, cid, px, py) in pins_all:
+        if (ref, cid) in own:
+            continue
+        for i in range(len(path) - 1):
+            # ★★ 临界上**必须带容差** ✗（2026-09-28 ✓ 实测证据 ✓）：本仓这桩案子
+            #   （T 形搭接的搭点**正好落在离伙伴脚 7.2000 单位**处 ✓）里，**同一个形状**
+            #   在两档算出 `7.199999999999999` ✗ 与 `7.200000000000003` ✓ —— 纯浮点末位 ✗✗
+            #   ⇒ 不带容差时“算不算侵入”就由浮点噪声决定 ✗（socket0 判 1 ✗ / socket4 判 0 ✓）。
+            #   ✓ 用全仓既有的那个容差 `PIN_EPS = 0.05` 单位（= 0.014 mm ✓ 肉眼无差 ✓）
+            #     ⇒ 有效安全距离 7.15 单位 = 2.02 mm ✓（名义 7.2 = 2.03 mm ✓）。
+            #   ★ 渲染器那条 ④c2 已改**同口径** ✓（否则闸门与报告对不上 ✗）。
+            if SG.p2seg((px, py), path[i], path[i + 1]) < CLEAR_PIN - PIN_EPS:
+                out.append((ref, cid, px, py))
+                break
+    return out
+
+
 def pin_intr(path, own, pins_all):
     r"""路径**贴到几个“不相连的引脚”**上 ✓（< CLEAR_PIN 就算 ✓）
 
@@ -853,27 +907,7 @@ def pin_intr(path, own, pins_all):
       "接上了"还是"路过" ✗ ⇒ 必须拉开一段可辨的距离 ✓。
     ★ `own` = 这根线自己两端的引脚 ✓ ⇒ 它们当然要“贴上” ✓（那是连接点 ✓ 不算侵入 ✗）。
     """
-    if not pins_all:
-        return 0
-    n = 0
-    for (ref, cid, px, py) in pins_all:
-        if (ref, cid) in own:
-            continue
-        hit = False
-        for i in range(len(path) - 1):
-            p, q = path[i], path[i + 1]
-            steps = max(2, int(max(abs(q[0] - p[0]), abs(q[1] - p[1])) / P_STEP) + 1)
-            for k in range(steps + 1):
-                tt = k / steps
-                x, y = p[0] + (q[0] - p[0]) * tt, p[1] + (q[1] - p[1]) * tt
-                if math.dist((x, y), (px, py)) < CLEAR_PIN:
-                    hit = True
-                    break
-            if hit:
-                break
-        if hit:
-            n += 1
-    return n
+    return len(pin_intr_list(path, own, pins_all))
 
 
 def diag_extra(path):
@@ -934,7 +968,8 @@ def cross_count(path, used):
     """这条路径会与**已布好的线**十字交叉几处 ✓（用于代价排序 ✓）"""
     n = 0
     for k in range(len(path) - 1):
-        for (p2, q2) in used:
+        for _u in used:
+            p2, q2 = _u[0], _u[1]
             if seg_cross(path[k], path[k + 1], p2, q2):
                 n += 1
     return n
@@ -1317,7 +1352,7 @@ def main(argv):
     net_order = [n for n in POWER_FIRST if n in NETS] + \
                 [n for n in sorted(NETS) if n not in POWER_FIRST]
 
-    def trim_on_rail(seg_list):
+    def trim_on_rail(seg_list, net):
         r"""把“脚→轨”支线里**趴在轨上的多余点**删掉 ✓，并**同步 `used`** ✓（2026-09-28 ✓）
 
         ★ 为什么要点 ✓（明细实测 ✓，不是推的 ✗）：支线为了避开别人的线，会**沿着轨横走一段**
@@ -1339,7 +1374,7 @@ def main(argv):
             if len(p) < 2:
                 continue
             _ny = p[-1][1]
-            _old = [(p[k], p[k + 1]) for k in range(len(p) - 1)]
+            _old = [(p[k], p[k + 1], net) for k in range(len(p) - 1)]
             _k = next((i for i, q in enumerate(p) if abs(q[1] - _ny) < 1e-6), None)
             if _k is None or _k >= len(p) - 1:
                 continue                      # 没碰到轨 / 终点就是第一次碰轨 ⇒ 本来就好 ✓
@@ -1352,7 +1387,7 @@ def main(argv):
             #     而“沿轨挪”的那一截交给轨 ✓（同网、同一条水平线 ✓）—— 那一段本来就多余 ✓。
             del p[_k + 1:]
             s["b"] = p[-1]
-            _new = [(p[k], p[k + 1]) for k in range(len(p) - 1)]
+            _new = [(p[k], p[k + 1], net) for k in range(len(p) - 1)]
             for _sg in _old:                      # ★ 同步 used ✓（陈旧段必须拔掉 ✗）
                 if _sg not in _new and _sg in used:
                     used.remove(_sg)
@@ -1392,8 +1427,8 @@ def main(argv):
                     nv += 1
         nov = 0                      # ⑤ 与已布好的线**压在同一条直线上** ✗
         for k in range(len(path) - 1):
-            for (p2, q2) in used:
-                if SG.near_overlap(path[k], path[k + 1], p2, q2):
+            for _u in used:
+                if SG.near_overlap(path[k], path[k + 1], _u[0], _u[1]):
                     nov += 1
         ostep = int(out_len(path, UBOX) / 7.2 + 0.9999)          # ③ 出界几格 ✓
         # ④ 贴到几个不相连的脚 ✓ —— ★ **按“段”算** ✓（与渲染器同一个口径 ✓✓）：
@@ -1618,6 +1653,7 @@ def main(argv):
                 pairs.append({"a": pts[i]["p"], "ra": pts[i]["ref"], "ca": pts[i]["cid"],
                               "b": pts[i + 1]["p"], "rb": pts[i + 1]["ref"],
                               "cb": pts[i + 1]["cid"]})
+        _tjs = []                       # ★ T 形搭接清单 ✓（本网 ✓，报告里逐条列 ✓）
         for pr in pairs:
             a, b = pr["a"], pr["b"]
             mine = {pr["ra"]} | ({pr["rb"]} if pr["rb"] else set())
@@ -1649,6 +1685,47 @@ def main(argv):
                     for _sgn in (_s0, -_s0):
                         for _k in (1, 2, 3, 4, 5, 6):
                             _q = (a[0] + _sgn * _k * 7.2, a[1])
+                            # ★★ 先试 **T 形搭接** ✓（2026-09-28 ✓ 学用户手改版 ✓，用户选 A✓）
+                            #   病灶（实测 ✓）：同网、**同一条竖直车道**上的两条支线里，
+                            #     后布的那条**一路画到轨** ✗ ⇒ 整条盖住先布的那条 ✗ ⇒
+                            #     硬闸门判「与已布线重叠」✗（实测 `GND D3.connector0`：
+                            #     **12 档全灭** ⇒ 退回 `route_pair` 绕成 **6 段** ✗✗）。
+                            #   用户手改版（`t72` 逐步明细 ✓）：后布的那条**停在先布那条的端点上** ✓
+                            #     ⇒ `(x,84.0)→(x,98.0)` 与既有 `(x,98.0)→(x,157.8)` **只共一个端点** ✓
+                            #     ⇒ 不算重叠 ✓（`near_overlap` 的投影重叠≈0 ✓）、
+                            #     电学上**端点对端点真连上** ✓、少画 37 单位 ✓（GND 29 段→26 段 ✓）。
+                            #   ★ 安全条件 = **我能验证的那一条** ✓：被搭接的那段必须
+                            #     **自己有一端正好落在轨 y 上** ✓ ⇒ 它**必定通到轨** ✓ ⇒
+                            #     不会“搭在死胡同桩子上”✗（那会重新长出飞线 ✗✗）。
+                            #     链条式搭接（搭在“也是搭来的”那条上）**这一轮不做** ✗。
+                            for _u in used:
+                                if _u[2] != net:                    # 只搭**同网** ✓
+                                    continue
+                                _p2, _q2 = _u[0], _u[1]
+                                if (abs(_p2[0] - _q[0]) > 1e-6
+                                        or abs(_q2[0] - _q[0]) > 1e-6):
+                                    continue                        # 必须**同一条竖直车道** ✓
+                                # ★ 轨可能在**下方**（y 更大 ✓）也可能在**上方** ✗ ⇒ 判据要**对称** ✓：
+                                #   ✗ 第一版写成 `abs(min(_p2[1], _q2[1]) - b[1])` ✗ ⇒ 只有"轨在上方"
+                                #     才成立 ✗ ⇒ 本仓这桩案子（GND 下轨 y=157.8，轨端是 **max** ✗）
+                                #     **永远不触发** ✗（实测：两档数字与改前**逐字相同** ✗）。
+                                #   ✓ 正解 = **任一端落在轨 y 上** ✓、搭**另一端** ✓。
+                                _e1, _e2 = _p2[1], _q2[1]
+                                if (abs(_e1 - b[1]) > 1e-6 and abs(_e2 - b[1]) > 1e-6):
+                                    continue                        # 它必须**自己通到轨** ✓
+                                _ye = _e2 if abs(_e1 - b[1]) < 1e-6 else _e1
+                                if not (min(a[1], b[1]) + 1e-6 < _ye
+                                        < max(a[1], b[1]) - 1e-6):
+                                    continue                        # 搭点要在**脚与轨之间** ✓
+                                _c4 = [a, _q, (_q[0], _ye)]
+                                if (not body_hard_bad(_c4, boxes, PIN_ALL)
+                                        and not pin_hard_bad(_c4, PIN_ALL, own_pins)
+                                        and not ovl_hard_bad(_c4, used)
+                                        and pin_intr(_c4, own_pins, PIN_ALL) == 0):
+                                    _L = _c4
+                                    break
+                            if _L is not None:
+                                break
                             _cand = [a, _q, (_q[0], b[1])]
                             if (not body_hard_bad(_cand, boxes, PIN_ALL)
                                     and not pin_hard_bad(_cand, PIN_ALL, own_pins)
@@ -1660,17 +1737,32 @@ def main(argv):
                             break
             if _L is not None:
                 best, best_key = _L, route_key(_L, mine, own_pins, used)
-                print("   ★ 支线 **L 形** ✓：%-22s 出脚 %s %.1f ✓ 拐 1 次 ✓ "
-                      "贴脚 0 ✓ 不重叠 ✓ 不穿体 ✓"
-                      % (tt, "向右" if _L[1][0] > a[0] else "向左", abs(_L[1][0] - a[0])))
+                # ★ 形状**从几何自己读** ✓（不加标志位 ✗ —— 两处记账早晚失步 ✗）：
+                #   2 点 = 直连 ✓；3 点且末点落在轨 y 上 = L 形到轨 ✓；
+                #   3 点而末点**不在轨上** = **T 形搭接** ✓（搭在别人的端点上 ✓）。
+                _tjpt = None
+                if len(_L) == 2:
+                    _shape, _det = "直连（0 拐）", "直上/直下到轨"
+                elif abs(_L[-1][1] - b[1]) < 1e-6:
+                    _shape = "L 形（1 拐）"
+                    _det = "出脚 %s %.1f" % ("向右" if _L[1][0] > a[0] else "向左",
+                                            abs(_L[1][0] - a[0]))
+                else:
+                    _shape = "T 形搭接（1 拐）"
+                    _det = ("出脚 %s %.1f ⇒ 搭在同网同车道的端点 (%.1f,%.1f) ✓"
+                            % ("向右" if _L[1][0] > a[0] else "向左",
+                               abs(_L[1][0] - a[0]), _L[-1][0], _L[-1][1]))
+                    _tjpt = _L[-1]
+                print("   ★ 支线 **%s** ✓：%-22s %s ✓ 贴脚 0 ✓ 不重叠 ✓ 不穿体 ✓"
+                      % (_shape, tt, _det))
+                if _tjpt is not None:
+                    _tjs.append((tt, _tjpt))
             else:
                 # ★ 诊断 ✓（2026-09-28 ✓ 用户选方案 1 后实测："加大到 6 格 + 双向" 仍只成功 3 条 ✗
                 #   ⇒ 说明**瓶颈不是档位** ✗ ⇒ 把 4 个闸门在**第一档**上的结果**如实打出来** ✓，
                 #   别猜 ✗。`False` = 该闸门通过 ✓。）
                 if rail_ys and pr["rb"] is None:
                     _n2 = PIN_N_BY_XY.get((round(a[0], 3), round(a[1], 3)), (0.0, 0.0))
-                    # ★ 只对**法线水平**的打（那才是"本可以做 L 形却被穿体挡住"的那批 ✓）；
-                    #   法线垂直的那些**本质上必须绕** ✗（直上会压同列别的脚 ✓），不在此列 ✓。
                     if abs(_n2[0]) > 0.5 and abs(_n2[1]) < 1e-6:
                         _s2 = 1.0 if _n2[0] > 0 else -1.0
                         _c2 = [a, (a[0] + _s2 * 7.2, a[1]), (a[0] + _s2 * 7.2, b[1])]
@@ -1682,32 +1774,126 @@ def main(argv):
                                  pin_hard_bad(_c2, PIN_ALL, own_pins),
                                  ovl_hard_bad(_c2, used),
                                  pin_intr(_c2, own_pins, PIN_ALL)))
-                        # ★★ 探针 ✓（2026-09-28 ✓ —— “穿体 True”到底是**哪一段命中哪个盒子** ✗，
-                        #   不猜 ✗）：逐段复算 `body_hard_bad` 的内部逻辑 ✓，把命中的打出来 ✓。
-                        for _k2 in range(len(_c2) - 1):
-                            _p2, _q2 = _c2[_k2], _c2[_k2 + 1]
-                            _own2 = {t for (t, _c, x, y) in PIN_ALL
-                                     if math.dist((x, y), _p2) <= 0.05
-                                     or math.dist((x, y), _q2) <= 0.05}
-                            for _t2, _b2 in boxes.items():
-                                if _t2 in _own2:
-                                    continue
-                                if seg_hits_box(_p2, _q2, _b2, -0.6):
-                                    print("      ↳ 第 %d 段 (%.2f,%.2f)→(%.2f,%.2f) 命中盒子 "
-                                          "**%s** (%.2f,%.2f→%.2f,%.2f) ｜ 该段豁免集 %s ✓"
-                                          % (_k2, _p2[0], _p2[1], _q2[0], _q2[1], _t2,
-                                             _b2[0], _b2[1], _b2[2], _b2[3], sorted(_own2)))
-                best, best_key = route_pair(a, b, mine, own_pins, used, tag=tt)
+                        # ★ 细诊 ✓（`STEM_DIAG=<子串>` 命中该支线时才打 ✓，免得报告被淹 ✗）：
+                        #   逐档（**2 方向 × 6 档 = 12 档** ✓）报出**每个闸门**与**跟谁重叠** ✓
+                        #   ⇒ 一眼看出卡在哪道门、对手是**同网的轨**还是**别的线** ✓（Task 2 ✓）。
+                        _sd = os.environ.get("STEM_DIAG", "")
+                        if _sd and _sd in tt:
+                            print("      ↳ 逐档细诊 ✓（`STEM_DIAG=%s` ✓）：脚 (%.1f,%.1f) ✓ "
+                                  "落点 x 候选 %s ✓ ｜ `used` 现有 %d 段 ✓"
+                                  % (_sd, a[0], a[1], "右/左各 6 档", len(used)))
+                            for _sgn in (_s2, -_s2):
+                                for _k in (1, 2, 3, 4, 5, 6):
+                                    _q = (a[0] + _sgn * _k * 7.2, a[1])
+                                    _cc = [a, _q, (_q[0], b[1])]
+                                    _ps = ovl_partners(_cc, used)
+                                    print("        · 出脚 %s %.1f ⇒ 垂直到轨 y=%.1f："
+                                          "穿体 %s ｜ 压别人脚 %s ｜ 重叠 %d 段 ｜ 贴脚 %d"
+                                          % ("右" if _sgn > 0 else "左", _k * 7.2, b[1],
+                                             body_hard_bad(_cc, boxes, PIN_ALL),
+                                             pin_hard_bad(_cc, PIN_ALL, own_pins),
+                                             len(_ps), pin_intr(_cc, own_pins, PIN_ALL)))
+                                    for (_m, _n, _p2, _q2) in _ps:
+                                        print("            ↳ 候选段 (%.1f,%.1f)→(%.1f,%.1f) "
+                                              "压住已布段 (%.1f,%.1f)→(%.1f,%.1f) ✗"
+                                              % (_m[0], _m[1], _n[0], _n[1],
+                                                 _p2[0], _p2[1], _q2[0], _q2[1]))
+                            # ★★ T 形搭接**为什么没触发** ✓（2026-09-28 ✓ 实测 socket0 没触发、
+                            #   socket4 触发了 ✗ ⇒ 别猜原因 ✗）：把 `used` **全量** + 每条
+                            #   「同网 + 同竖直车道 + 自己通到轨」的候选**逐门**打出来 ✓。
+                            #   ★ 判据仍调**同一批函数** ✓（不自证 ✗）。
+                            print("      ↳ `used` 全量 ✓（%d 段 ✓）：" % len(used))
+                            for _u3 in used:
+                                print("        · [%s] (%.3f,%.3f)→(%.3f,%.3f)"
+                                      % (_u3[2], _u3[0][0], _u3[0][1], _u3[1][0], _u3[1][1]))
+                            _any = False
+                            for _sgn2 in (_s2, -_s2):
+                                for _k2 in (1, 2, 3, 4, 5, 6):
+                                    _q2 = (a[0] + _sgn2 * _k2 * 7.2, a[1])
+                                    for _u2 in used:
+                                        if _u2[2] != net:
+                                            continue
+                                        if (abs(_u2[0][0] - _q2[0]) > 1e-6
+                                                or abs(_u2[1][0] - _q2[0]) > 1e-6):
+                                            continue
+                                        _e1, _e2 = _u2[0][1], _u2[1][1]
+                                        if (abs(_e1 - b[1]) > 1e-6
+                                                and abs(_e2 - b[1]) > 1e-6):
+                                            continue
+                                        _ye2 = _e2 if abs(_e1 - b[1]) < 1e-6 else _e1
+                                        if not (min(a[1], b[1]) < _ye2 < max(a[1], b[1])):
+                                            continue
+                                        _any = True
+                                        _c5 = [a, _q2, (_q2[0], _ye2)]
+                                        _pn5 = pin_intr_list(_c5, own_pins, PIN_ALL)
+                                        print("        ★ T 候选 车道 x=%.3f（%s出脚 %.1f）"
+                                              "搭点 (%.3f,%.3f)：穿体 %s ｜ 压脚 %s ｜ "
+                                              "重叠 %s ｜ 贴脚 %d"
+                                              % (_q2[0], "右" if _sgn2 > 0 else "左", _k2 * 7.2,
+                                                 _q2[0], _ye2,
+                                                 body_hard_bad(_c5, boxes, PIN_ALL),
+                                                 pin_hard_bad(_c5, PIN_ALL, own_pins),
+                                                 ovl_hard_bad(_c5, used),
+                                                 len(_pn5)))
+                                        # ★ **点名**是哪只脚 ✓ + 精确距离 ✓（用仓里唯一那份
+                                        #   `sch_geom.p2seg` ✓）⇒ 分清"真太近"✗ 与"采样误报"✗
+                                        for (_r3, _c3n, _x3, _y3) in _pn5:
+                                            _dd = min(SG.p2seg((_x3, _y3), _c5[_j], _c5[_j + 1])
+                                                      for _j in range(len(_c5) - 1))
+                                            print("            ↳ 贴到 %s.%s (%.3f,%.3f) ⇒ 精确距离 "
+                                                  "%.6f 单位（阈值 < %.1f ⇒ %s）"
+                                                  % (_r3, _c3n, _x3, _y3, _dd, CLEAR_PIN,
+                                                     "确实太近 ✗" if _dd < CLEAR_PIN
+                                                     else "其实够远 ✓ ⇒ **采样误报** ✗"))
+                            if not _any:
+                                print("        ✗ **没有**任何「同网 + 同竖直车道 + 自己通到轨」"
+                                      "的已布段 ⇒ T 形搭接无从发起 ✗")
+                    else:
+                        # ★★★ 垂直法线 ⇒ **优先试"直连（0 拐）"** ✓（2026-09-28 ✓ 用户选 A ✓）：
+                        #   实测（`t58_report.txt` ✓）：`GND C1.c1` 与 `GND U1.c20`（EPAD ✗）
+                        #   的直连**四个闸门全过** ✓（贴脚 0 ✓、不穿体 ✓、不压别人的脚 ✓、不重叠 ✓）
+                        #   ⇒ 却**没被 `route_pair` 选中** ✗ ⇒ 白绕了一截 ✗。
+                        #   ✓ 所以支线**优先试直连** ✓（最短最简单 ✓）；不合格才交回通用路由 ✓。
+                        #   ★ 安全 ✓：若法线**背向**轨（直连会穿自己的元件 ✗）⇒
+                        #     `body_hard_bad` 会拒 ✓ ⇒ 自动回落 ✓，不必另写判据 ✓。
+                        _c3 = [a, (a[0], b[1])]
+                        if (not body_hard_bad(_c3, boxes, PIN_ALL)
+                                and not pin_hard_bad(_c3, PIN_ALL, own_pins)
+                                and not ovl_hard_bad(_c3, used)
+                                and pin_intr(_c3, own_pins, PIN_ALL) == 0):
+                            _L = _c3
+                        else:
+                            print("   · 支线**法线不是水平** ⇒ L 形不适用 ✓、直连也不合格 ✗："
+                                  "%-22s 法线 (%.3f,%.3f) ✓ 脚 (%.1f,%.1f) ✓ ｜ 四个闸门 = "
+                                  "穿体 %s ｜ 压别人脚 %s ｜ 与已布线重叠 %s ｜ **贴脚数 %d** ✓"
+                                  % (tt, _n2[0], _n2[1], a[0], a[1],
+                                     body_hard_bad(_c3, boxes, PIN_ALL),
+                                     pin_hard_bad(_c3, PIN_ALL, own_pins),
+                                     ovl_hard_bad(_c3, used),
+                                     pin_intr(_c3, own_pins, PIN_ALL)))
+                # ★★★ `_L` **必须在这里再判一次** ✓（2026-09-28 ✓ 修死代码 ✗）：
+                #   ✗ 上一版把"用 `_L`"写在 `if _L is not None:`（在本块**之前**）里 ✗
+                #     ⇒ "法线不是水平"这一支里设的 `_L` **被本行 `route_pair` 无条件覆盖** ✗
+                #     = **死代码** ✗（既不打印、也不生效 ✗）。
+                #   实测症状 ✓（自证的错 ✗，用报告对出来的 ✓）：`GND C1.c1` 与 `GND U1.c20`
+                #     两条**四门全过**的直连在报告里**连"不合格"都不打** ✗，两档数字与改前**逐字相同** ✗。
+                #   ★ 次序仍是"**直连优先、不合格才交回通用路由**"✓（与上面注释同义 ✓）。
+                if _L is not None:
+                    best, best_key = _L, route_key(_L, mine, own_pins, used)
+                    print("   ★ 支线 **直连（0 拐）** ✓：%-22s 直上/直下到轨 ✓ "
+                          "贴脚 0 ✓ 不重叠 ✓ 不穿体 ✓" % tt)
+                else:
+                    best, best_key = route_pair(a, b, mine, own_pins, used, tag=tt)
             if best is None:
                 warn.append("%s: 没找到不碰本体的路径 ✗" % tt)
                 best = candidates(a, b, sorted(chx), sorted(chy))[0]
             for k in range(len(best) - 1):
-                used.append((best[k], best[k + 1]))
+                used.append((best[k], best[k + 1], net))
             segs.append({"a": best[0], "b": best[-1], "path": best,
                          "from": {"ref": pr["ra"], "cid": pr["ca"]},
                          "to": ({"ref": pr["rb"], "cid": pr["cb"]} if pr["rb"] else None),
-                         # ★ 抽出重排要用同一套上下文 ✓（`mine`/`own_pins` ✓）
-                         "mine": mine, "own_pins": own_pins, "key": best_key})
+                         # ★ 抽出重排要用同一套上下文 ✓（`mine`/`own_pins`/`net` ✓）
+                         "mine": mine, "own_pins": own_pins, "net": net, "key": best_key})
         # ── ★★ 修“重叠 6 对” ✓（2026-09-28 ✓ 明细实测 ✓，不是推的 ✗）─────────────────
         #   病状 ✓（`t57` 的 6 对**全是同一个形态** ✓）：
         #       支线 `(0.0,-57.6)→(83.8,-57.6)` 与 轨段 `(49.4,-57.6)→(83.8,-57.6)` **共线** ✗
@@ -1718,9 +1904,15 @@ def main(argv):
         #       ⇒ 轨再按**这些接口点**去连 ✓ ⇒ 谁都不与谁共线 ✓✓
         #   ★ 电气上等价 ✓（截掉的那截与轨同网、且被轨覆盖 ✓）；用户规则②“不许重叠”直接归零 ✓。
         if rail_ys:
-            _nt = trim_on_rail(segs)
+            _nt = trim_on_rail(segs, net)
             print("   支线清理 ✓：%d 条支线“趴在轨上”的多余点已删 ✓（落点保持不变 ✓；`used` 同步 ✓）"
                   % _nt)
+        # ★ T 形搭接清单 ✓（用户要求“把被改动的支线清单打出来” ✓，2026-09-28 ✓）
+        if _tjs:
+            print("   ★ T 形搭接清单 ✓（%d 条 ✓，网 %s ✓）：%s"
+                  % (len(_tjs), net,
+                     "; ".join("%s→搭点(%.1f,%.1f)" % (t2.split()[1], p2[0], p2[1])
+                               for t2, p2 in _tjs)))
 
         # ★★ 电源轨**本身** = 这条网的**预置线段** ✓（`fixed` ✓ ⇒ 不参与抽出重排 ✗）
         #   ★ 断点 = **支线真正落到轨上的那些点** ✓（= 截断后的终点 ✓，**不是**“脚的 x” ✗）——
@@ -1760,10 +1952,10 @@ def main(argv):
                     continue                      # 这条轨上一条支线都没有 ⇒ 不必画 ✗
                 _path = ([(_x0, _y)] + [(v, _y) for v in _xs] + [(_x1, _y)])
                 for _k in range(len(_path) - 1):
-                    used.append((_path[_k], _path[_k + 1]))
+                    used.append((_path[_k], _path[_k + 1], net))
                 segs.append({"a": _path[0], "b": _path[-1], "path": _path,
                              "from": None, "to": None, "mine": set(), "own_pins": set(),
-                             "key": None, "fixed": True})
+                             "net": net, "key": None, "fixed": True})
                 _drawn.append(_y)
                 _rx[_y] = _x0
 
@@ -1779,10 +1971,10 @@ def main(argv):
                 _vx = _x0
                 _vp = [(_vx, _y) for _y in sorted(_drawn)]
                 for _k in range(len(_vp) - 1):
-                    used.append((_vp[_k], _vp[_k + 1]))
+                    used.append((_vp[_k], _vp[_k + 1], net))
                 segs.append({"a": _vp[0], "b": _vp[-1], "path": _vp,
                              "from": None, "to": None, "mine": set(), "own_pins": set(),
-                             "key": None, "fixed": True})
+                             "net": net, "key": None, "fixed": True})
                 print("   ★ 同网两条轨**互连** ✓：竖线 x=%.3f ✓（y %.1f → %.1f ✓）"
                       "—— 不连就是**两个网** ✗（Fritzing 底部**看不出** ✗）"
                       % (_vx, min(_drawn), max(_drawn)))
@@ -1829,7 +2021,8 @@ def main(argv):
                                     used_list[j][0], used_list[j][1]):
                         cr += 1
             pc = 0
-            for (p2, q2) in used_list:            # ★ 按“段”算 ✓（= 渲染器口径 ✓）
+            for _u in used_list:                  # ★ 按“段”算 ✓（= 渲染器口径 ✓）
+                p2, q2 = _u[0], _u[1]
                 own = {(t, c) for (t, c, x, y) in PIN_ALL
                        if math.dist((x, y), p2) < 0.05 or math.dist((x, y), q2) < 0.05}
                 pc += pin_intr([p2, q2], own, PIN_ALL)
@@ -1859,14 +2052,15 @@ def main(argv):
                 if RAILS and s.get("to") is None:
                     continue
                 a2, b2 = s["path"][0], s["path"][-1]
-                segl = [(s["path"][k], s["path"][k + 1]) for k in range(len(s["path"]) - 1)]
+                segl = [(s["path"][k], s["path"][k + 1], s["net"])
+                        for k in range(len(s["path"]) - 1)]
                 keep = [u for u in used if u not in segl]
                 new, nk = route_pair(a2, b2, s["mine"], s["own_pins"], keep)
                 oldk = route_key(s["path"], s["mine"], s["own_pins"], keep)
                 ntry += 1
                 if new is not None and nk < oldk:
                     s["path"] = new
-                    segl = [(new[k], new[k + 1]) for k in range(len(new) - 1)]
+                    segl = [(new[k], new[k + 1], s["net"]) for k in range(len(new) - 1)]
                     nimp += 1
                 used = keep + segl
             now = gstat(used, allseg)
@@ -2022,8 +2216,8 @@ def relabel(insts, boxes, used):
         for t2, box in boxes.items():
             if t2 != t and box and _ov2(b, box):
                 sc += 10
-        for (p, q) in used:
-            if _seg_in_box(p, q, b):
+        for _u in used:
+            if _seg_in_box(_u[0], _u[1], b):
                 sc += 5
         for t2, b2 in placed:
             if _ov2(b, b2):
@@ -2036,7 +2230,7 @@ def relabel(insts, boxes, used):
     for t, d, tg, ln, fs, w, h in items:                     # 先量"现状" ✓
         b = ST.label_bbox(pm.num(tg.get("x")), pm.num(tg.get("y")), fs, ln)
         before[0] += sum(1 for t2, box in boxes.items() if t2 != t and box and _ov2(b, box))
-        before[1] += sum(1 for (p, q) in used if _seg_in_box(p, q, b))
+        before[1] += sum(1 for _u in used if _seg_in_box(_u[0], _u[1], b))
         before[2] += sum(1 for _t2, b2 in placed if _ov2(b, b2))
         placed.append((t, b))
     placed = []
@@ -2066,7 +2260,7 @@ def relabel(insts, boxes, used):
             moved += 1
         placed.append((t, best))
         after[0] += sum(1 for t2, box in boxes.items() if t2 != t and box and _ov2(best, box))
-        after[1] += sum(1 for (p, q) in used if _seg_in_box(p, q, best))
+        after[1] += sum(1 for _u in used if _seg_in_box(_u[0], _u[1], best))
         after[2] += sum(1 for _t2, b2 in placed[:-1] if _ov2(best, b2))
     print("── ★ 位号**布完线重摆** ✓：动 %d 个 ✓ ｜ 压元件 %d→%d ✓ ｜ 压导线 %d→%d ✓"
           " ｜ 压位号 %d→%d ✓" % (moved, before[0], after[0], before[1], after[1],
