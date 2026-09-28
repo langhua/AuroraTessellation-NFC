@@ -1176,9 +1176,24 @@ def main(argv):
     #   当时的解释是“主干型长线从一整排脚前面经过 ⇒ 走廊归属问题” ✗ —— **不够准** ✓；
     #   真正的毛病是：那种“车道形状”的**出脚方向是错的** ✗（横形状的末段会沿底排行跑 ✗、
     #   竖形状的首段会沿左排列跑 ✗ ✓，实测见 `--why` ✓）⇒ 已由 `esc_cands` 修正 ✓。
-    PIN_X = {p[0] for d in insts.values() for p in d["pins"].values()}
-    PIN_Y = {p[1] for d in insts.values() for p in d["pins"].values()}
-    boxes = {t: d["box"] for t, d in insts.items() if d["box"]}
+    # ★★★ 面包板**不算障碍** ✓（2026-09-28 ✓ 探针实测定位 ✓）：
+    #   ✗ 它的 `box` 是**整个画布** ✗（实测 `Breadboard1 (0.00,0.00→468.24,151.20)` ✓）
+    #     ⇒ `body_hard_bad` 会把**几乎每一根线**都判成“穿体” ✗ ——
+    #     实测：**4 条本该合格的 L 形支线全被这道门挡住** ✗（`t58_report.txt` 的探针行：
+    #       `↳ 第 1 段 (8.93,98.00)→(8.93,180.00) 命中盒子 **Breadboard1** …` ✗✗）。
+    #     而通用路由**看不出** ✗：它“删光了就保留旧候选” ⇒ 误判被兜底掩盖 ✓。
+    #   ★ 原理图上**根本不画面包板** ✓（渲染器也是 `⊘ 跳过 Breadboard1` ✓）
+    #     ⇒ 它**不是障碍** ✓ ⇒ 从“元件盒 / 引脚点表 / 通道候选”里一律剔除 ✓
+    #     （与“面包板退出电气”同一个精神 ✓：它既不参与网 ✓、也不参与几何 ✓）。
+    _BB = {t for t, d in insts.items()
+           if "breadboard" in t.lower()
+           or "breadboard" in (d.get("mid") or "").lower()}
+    if _BB:
+        print("   ⊘ 面包板**不算障碍** ✓：%s ✓（盒子是整个画布 ✗ ⇒ 不剔除就会让 `body_hard_bad` "
+              "把几乎每根线都判成“穿体” ✗；原理图**根本不画它** ✓）" % ", ".join(sorted(_BB)))
+    PIN_X = {p[0] for t, d in insts.items() if t not in _BB for p in d["pins"].values()}
+    PIN_Y = {p[1] for t, d in insts.items() if t not in _BB for p in d["pins"].values()}
+    boxes = {t: d["box"] for t, d in insts.items() if d["box"] and t not in _BB}
     # ★★ 实验①：**通道收敛** ✓（`--chans N` ✓）—— 只留元件边 ± `CH_OFFS[:N]` 的通道 ✓，
     #   **引脚坐标一律保留** ✓（不然线进不了脚 ✗）。只在开关打开时动 ✓（默认一条不动 ✓）。
     if CHAN_N:
@@ -1270,7 +1285,7 @@ def main(argv):
               % (len(RING_OFFS), len(chx), len(chy)))
     used, nets_segs, warn = [], {}, []
     # ★ 全图的**引脚点表** ✓（安全距离规则用 ✓）：绝对 sketch 坐标 ✓
-    PIN_ALL = [(t, cid, p[0], p[1]) for t, d in insts.items()
+    PIN_ALL = [(t, cid, p[0], p[1]) for t, d in insts.items() if t not in _BB
                for cid, p in d["pins"].items()]
     print("引脚点表 %d 个 ✓；安全距离 CLEAR_PIN = %.1f 单位（%.2f mm ✓）"
           % (len(PIN_ALL), CLEAR_PIN, CLEAR_PIN * 25.4 / 90.0))
@@ -1572,7 +1587,24 @@ def main(argv):
             print("网 %-9s **电源轨** ✓：轨 y = %s ✓（%d 只脚各打一条支线 ✓）"
                   % (net, ["%.1f" % v for v in rail_ys], len(pts)))
             for d in pts:
-                _y = min(rail_ys, key=lambda v: abs(v - d["p"][1]))   # 就近（上/下）✓
+                # ★★★ 选轨（2026-09-28 ✓ 实测修正 ✓）：**就近优先 ✓，但"走过去不许穿体"优先于"就近"** ✗
+                #   ✗ 病（实测 `Wire90012727` ✓）：`U1.VDD`（y=43.2）到**下轨**(143.4) 的距离
+                #     100.2，比到**上轨**(-57.6) 的 100.8 **略近 0.6** ✗ ⇒ 于是它**竖直向下 100 单位**
+                #     ⇒ **正好穿过 `D3` 的整个本体** ✗（D3 盒 y∈[72,110] ✓）⇒ 穿 **74 单位深 ≈ 20.9mm** ✗✗，
+                #     还顺带贴上 `D3.connector5/2`（5.85 < CLEAR_PIN ✗）。
+                #   ✓ 修法：把两条轨**按就近排好序** ✓，逐条试"脚 → 该轨"的直连段 ✓，
+                #     **第一条不穿体的就用** ✓；都穿体 ⇒ 用就近那条 ✓（回到旧行为 ✓ 不更差 ✓）。
+                #   ★ 为什么只查"直连段"够 ✓：这段就是"从脚竖直去轨"的路 ✓（横向偏移由后面的
+                #     `route_pair`/L 形负责 ✓）；直连段不穿体 ⇒ 后面那步也多半不穿 ✓。
+                _yb = sorted(rail_ys, key=lambda v: abs(v - d["p"][1]))
+                _y = _yb[0]
+                for _yy in _yb:
+                    if not body_hard_bad([d["p"], (d["p"][0], _yy)], boxes, PIN_ALL):
+                        if _yy != _y:
+                            print("   ★ 支线**改接另一条轨** ✓：%s.%s 就近是 y=%.1f ✗（走过去会穿体 ✗）"
+                                  "⇒ 改接 y=%.1f ✓" % (d["ref"], d["cid"], _y, _yy))
+                        _y = _yy
+                        break
                 pairs.append({"a": d["p"], "ra": d["ref"], "ca": d["cid"],
                               "b": (d["p"][0], _y), "rb": None, "cb": None})
         elif net in STAR_NETS and len(pts) >= 2:
@@ -1592,8 +1624,80 @@ def main(argv):
             own_pins = {(pr["ra"], pr["ca"])} | ({(pr["rb"], pr["cb"])} if pr["rb"] else set())
             tt = "%s %s.%s→%s" % (net, pr["ra"], pr["ca"],
                                    ("%s.%s" % (pr["rb"], pr["cb"])) if pr["rb"] else "汇点")
-            # 三级：① 不碰本体 + 不与已布线段共线重叠 ✓ ② 只要求不碰本体 ✓ ③ 兜底（否则端点接不上 ✗）
-            best, best_key = route_pair(a, b, mine, own_pins, used, tag=tt)
+            # ★★★ 支线（脚 → 轨）：**优先「多档出脚 + 直上到轨」** ✓（2026-09-28 ✓ 用户选 ✓）
+            #   ★ 用户的判据 ✓：「**你的目的是接到轨上，不是点上**」✓ ⇒ 形状应当是
+            #     「沿引线方向出脚 → 直上/直下到轨」= **拐一次（L 形）** ✓。
+            #   ✗ 失败过的那版（记下来 ✗）：**硬限制"拐点 ≤1"** ✗ ⇒ 支线只能在**脚的 x** 上
+            #     竖直走 ✗ ⇒ 而**同一元件的一列脚 x 相同** ✗ ⇒ **不同网的支线互相重叠** ✗
+            #     ⇒ 「重叠 0」硬闸门删光候选 ⇒ 退回旧候选 ⇒ 实测 **重叠 5 ✗✗、退化导线 9 根 ✗**。
+            #   ✓ 正解 = **出脚长度可变**（1…4 格 ✓）：每条支线**自己挑一个空的落点 x** ✓
+            #     ⇒ 既拐一次 ✓、又互不重叠 ✓；且**只在完全合格时才用** ✓：
+            #     不穿体 ✓、不压别人的脚 ✓、不与已布线重叠 ✓、**贴脚 = 0** ✓（用户定：零容忍 ✓）。
+            #     四档都不合格 ⇒ **退回通用路由** ✓ ⇒ **绝不会比原来差** ✓。
+            _L = None
+            if rail_ys and pr["rb"] is None:
+                _n = PIN_N_BY_XY.get((round(a[0], 3), round(a[1], 3)), (0.0, 0.0))
+                if abs(_n[0]) > 0.5 and abs(_n[1]) < 1e-6:      # 法线**水平** ⇒ 能"横向出脚" ✓
+                    # ★ 档位 1…6 格 ✓、**两个方向**都试 ✓（2026-09-28 ✓ 用户选方案 1 ✓）：
+                    #   ✗ 原来只试 4 格 + 只试"法线方向" ✗ ⇒ 实测 **14 条支线里只成功 3 条** ✗
+                    #     （U1 左列那只 GND 脚的 4 档全不合格 ⇒ 退回 Z 字 ✗）。
+                    #   ✓ 两个方向都试 ✓：**反向出脚 = 朝元件内侧** ⇒ 会进本体 ✗
+                    #     ⇒ `body_hard_bad` **自动挡掉** ✓（不必我另写判据 ✓）。
+                    #   ★ 次序 = **先法线方向**（更自然 ✓，引线本来朝外 ✓），再反向 ✓；
+                    #     长度**从短到长** ✓（短的自然、省线 ✓）⇒ 取**第一个全合格的** ✓。
+                    _s0 = 1.0 if _n[0] > 0 else -1.0
+                    for _sgn in (_s0, -_s0):
+                        for _k in (1, 2, 3, 4, 5, 6):
+                            _q = (a[0] + _sgn * _k * 7.2, a[1])
+                            _cand = [a, _q, (_q[0], b[1])]
+                            if (not body_hard_bad(_cand, boxes, PIN_ALL)
+                                    and not pin_hard_bad(_cand, PIN_ALL, own_pins)
+                                    and not ovl_hard_bad(_cand, used)
+                                    and pin_intr(_cand, own_pins, PIN_ALL) == 0):
+                                _L = _cand
+                                break
+                        if _L is not None:
+                            break
+            if _L is not None:
+                best, best_key = _L, route_key(_L, mine, own_pins, used)
+                print("   ★ 支线 **L 形** ✓：%-22s 出脚 %s %.1f ✓ 拐 1 次 ✓ "
+                      "贴脚 0 ✓ 不重叠 ✓ 不穿体 ✓"
+                      % (tt, "向右" if _L[1][0] > a[0] else "向左", abs(_L[1][0] - a[0])))
+            else:
+                # ★ 诊断 ✓（2026-09-28 ✓ 用户选方案 1 后实测："加大到 6 格 + 双向" 仍只成功 3 条 ✗
+                #   ⇒ 说明**瓶颈不是档位** ✗ ⇒ 把 4 个闸门在**第一档**上的结果**如实打出来** ✓，
+                #   别猜 ✗。`False` = 该闸门通过 ✓。）
+                if rail_ys and pr["rb"] is None:
+                    _n2 = PIN_N_BY_XY.get((round(a[0], 3), round(a[1], 3)), (0.0, 0.0))
+                    # ★ 只对**法线水平**的打（那才是"本可以做 L 形却被穿体挡住"的那批 ✓）；
+                    #   法线垂直的那些**本质上必须绕** ✗（直上会压同列别的脚 ✓），不在此列 ✓。
+                    if abs(_n2[0]) > 0.5 and abs(_n2[1]) < 1e-6:
+                        _s2 = 1.0 if _n2[0] > 0 else -1.0
+                        _c2 = [a, (a[0] + _s2 * 7.2, a[1]), (a[0] + _s2 * 7.2, b[1])]
+                        print("   ⚠ 支线 L 形**全不合格** ✗：%-22s 法线 (%.3f,%.3f) ✓ ｜ "
+                              "第一档（出脚 %.1f ✓）四个闸门 = 穿体 %s ｜ 压别人脚 %s ｜ "
+                              "与已布线重叠 %s ｜ **贴脚数 %d** ✓（`False`/`0` = 通过 ✓）"
+                              % (tt, _n2[0], _n2[1], abs(_c2[1][0] - a[0]),
+                                 body_hard_bad(_c2, boxes, PIN_ALL),
+                                 pin_hard_bad(_c2, PIN_ALL, own_pins),
+                                 ovl_hard_bad(_c2, used),
+                                 pin_intr(_c2, own_pins, PIN_ALL)))
+                        # ★★ 探针 ✓（2026-09-28 ✓ —— “穿体 True”到底是**哪一段命中哪个盒子** ✗，
+                        #   不猜 ✗）：逐段复算 `body_hard_bad` 的内部逻辑 ✓，把命中的打出来 ✓。
+                        for _k2 in range(len(_c2) - 1):
+                            _p2, _q2 = _c2[_k2], _c2[_k2 + 1]
+                            _own2 = {t for (t, _c, x, y) in PIN_ALL
+                                     if math.dist((x, y), _p2) <= 0.05
+                                     or math.dist((x, y), _q2) <= 0.05}
+                            for _t2, _b2 in boxes.items():
+                                if _t2 in _own2:
+                                    continue
+                                if seg_hits_box(_p2, _q2, _b2, -0.6):
+                                    print("      ↳ 第 %d 段 (%.2f,%.2f)→(%.2f,%.2f) 命中盒子 "
+                                          "**%s** (%.2f,%.2f→%.2f,%.2f) ｜ 该段豁免集 %s ✓"
+                                          % (_k2, _p2[0], _p2[1], _q2[0], _q2[1], _t2,
+                                             _b2[0], _b2[1], _b2[2], _b2[3], sorted(_own2)))
+                best, best_key = route_pair(a, b, mine, own_pins, used, tag=tt)
             if best is None:
                 warn.append("%s: 没找到不碰本体的路径 ✗" % tt)
                 best = candidates(a, b, sorted(chx), sorted(chy))[0]
