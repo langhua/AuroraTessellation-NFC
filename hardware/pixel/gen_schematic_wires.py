@@ -233,6 +233,17 @@ HARD_OVL = True
 #     每轮全局验收 `gstat` **三处共用它** ✓（抄三份 ⇒ 早晚有一份跟渲染器对不上 ✗）。
 #   ★ `--noclear` 关掉 ⇒ A/B 对照 ✓（关掉后应与 v23 **逐字节相同** ✓）。
 HARD_CLEAR = True
+# ★★ `HARD_FJ`：**不许出现“跨网假接头”** ✓（2026-09-28 ✓ **用户点名**：「要按**同网 / 跨网**拆开」✓）
+#   病症 ✓：一根线的**端点 / 折点**搭在**别的网**的线的**中段**（或端点 ✓）上 ✗
+#     ⇒ 图上**看着接上了** ✓（T 形接头 ✓）、电气上**根本没连** ✗✗（Fritzing 只认端点对端点 ✓）。
+#   实测 ✓（用渲染器新增的那条判据量的 ✓）：v24 = **3 处** ✗（其中两处是 `DATA_IN` 的折点
+#     压在 5V 竖线中段上 ✓）；v25 = **1 处** ✗（5V 上轨的外伸端点压在 GND 竖线中段上 ✗）。
+#   ★ 两道一起上 ✓（同一个规则的两个执行点 ✓）：
+#     ① **路由门**（`fj_path_bad` ✓，本开关 ✓）—— 候选路径的顶点不许搭在别的网上 ✗；
+#     ② **收尾修轨**（`fj_vertex_bad` / `fj_endpoint_used` ✓）—— 轨的两端若搭上了，
+#        **没接东西**就往里收 `2 × MIN_SEG` ✓；**接了东西**就不动 + 告警 ✓（不拆真接头 ✗）。
+#   ★ `--nofj` 关掉 ⇒ A/B 对照 ✓（回到 v25 ✓）。
+HARD_FJ = True
 USE_ESC = True
 NEW_ORDER = True
 # ★★ `OUTER_RING`：**元件外圈环廊** ✓（2026-09-28 ✓ 用户点名的第 **1** 条 ✓）
@@ -959,6 +970,51 @@ def body_hard_bad(path, boxes, pin_all, r_touch=0.05):
     return False
 
 
+def fj_vertex_bad(v, net, used, tol=0.05):
+    r"""★ **这个点是不是落在“别的网”的线上** ✗ —— “**跨网假接头**” ✓（2026-09-28 ✓ 用户点名 ✓）
+
+    ★ 病症 ✓（实测 ✓）：一根线的**端点 / 折点**正好搭在**另一根不同网**的线的**中段**上 ✗
+      ⇒ 图上**看着接上了** ✓（一个 T 形接头 ✓）、电气上**根本没连** ✗✗
+      （Fritzing 只认**端点对端点** ✓ —— 端点落在中段上要**在那点把线断开**才算连 ✓）；
+      跨网**端点粘端点**也一样 ✗（同一个“看着接上”的另一半 ✓）。
+    ★ 判据调**全仓唯一那份**：`sch_geom.on_seg`（**中段** ✓）+ 点到端点距离 ✓，容差 `0.05` ✓。
+    """
+    for _u in used:
+        if _u[2] == net:                  # ★ 同网 = 真接头 ✓（“T 形搭接”正是在做这个 ✓）
+            continue
+        if SG.on_seg(v, _u[0], _u[1], tol):
+            return True
+        if math.dist(v, _u[0]) <= tol or math.dist(v, _u[1]) <= tol:
+            return True
+    return False
+
+
+def fj_path_bad(path, net, used, tol=0.05):
+    r"""★ 这条路**不许**把**端点 / 折点**搭在**别的网**的线上 ✗（= “跨网假接头” ✗✗，用户点名 ✓）
+
+    ★ 与 `HARD_PIN` / `HARD_OVL` 同一套路 ✓：**只删候选** ✗，不动代价函数与档位次序 ✓；
+      删光 ⇒ 调用处保留旧候选集 + 告警 ✓（不许把端点接不上 ✗）。
+    ★ 为什么必需 ✗（不只是“后处理收尾” ✓）：v24 那处 `DATA_IN` 就是**路由自己**把**折点**
+      落在 5V 竖线中段上造成的 ✗ —— 之所以后来没了，是靠**共线合并**把它抹掉 ✓（运气 ✓）；
+      有了这道门 ✓ ⇒ 以后靠**规则** ✓ 而不是靠运气 ✗。
+    """
+    for _v in path:
+        if fj_vertex_bad(_v, net, used, tol):
+            return True
+    return False
+
+
+def fj_endpoint_used(v, used, net, tol=0.05):
+    r"""这个端点上**已经接了同网的线**吗 ✓ —— 接了就**不许**为了避开假接头而挪它 ✗
+    （挪了就把一个真接头拆了 ✗✗ —— 宁可留着 + 告警 ✓，也不悄悄拆连接 ✓）。"""
+    for _u in used:
+        if _u[2] != net:
+            continue
+        if math.dist(v, _u[0]) <= tol or math.dist(v, _u[1]) <= tol:
+            return True
+    return False
+
+
 def out_len(path, ubox, margin=OUT_MARGIN):
     """路径**跑在“所有零件包围盒”之外**的那部分长度 ✓（2026-09-27 ✓，从用户手改版学的 ✓）
 
@@ -1203,6 +1259,10 @@ def main(argv):
         global HARD_CLEAR
         HARD_CLEAR = False
         print("硬闸门 HARD_CLEAR：**关闭** ✓（`--noclear` ⇒ 回到“贴脚只靠软代价”= v23 ✓）")
+    if "--nofj" in argv:                       # A/B 用 ✓：关掉“跨网假接头”判据 ✓
+        global HARD_FJ
+        HARD_FJ = False
+        print("硬闸门 HARD_FJ：**关闭** ✓（`--nofj` ⇒ 回到 v25：跨网假接头不拦 ✗）")
     if "--chans" in argv:                      # 实验 ✓：通道收敛（每方向只留前 N 档 ✓）
         global CHAN_N
         CHAN_N = int(argv[argv.index("--chans") + 1])
@@ -1613,7 +1673,7 @@ def main(argv):
                 cross_count(path, used), inside_count(path, own_boxes), bends(path),
                 plen(path) + diag_extra(path) + K_OUT * out_len(path, UBOX))
 
-    def route_pair(a, b, mine, own_pins, used, tag=""):
+    def route_pair(a, b, mine, own_pins, used, tag="", net=None):
         """在候选里挑最优路径 ✓（代价见 `route_key` ✓）
 
         ★ `tag` 非空 + `--why` + 首轮 ⇒ 把“选中 / 亚军”两个代价元组与**第一处不同的档位**
@@ -1677,6 +1737,13 @@ def main(argv):
                 cands = ok4
             else:
                 warn.append("%s：**没有一条候选**能“一个不相连的脚也不贴” ✗"
+                            "（保留旧候选集 ✓ 否则会接不上 ✗）" % tag)
+        if HARD_FJ:                    # ★ 用户点名（2026-09-28 ✓）：**端点/折点不许搭在别的网上** ✗
+            ok5 = [p for p in cands if not fj_path_bad(p, net, used)]
+            if ok5:
+                cands = ok5
+            else:
+                warn.append("%s：**没有一条候选**能“端点/折点不搭在别的网上” ✗"
                             "（保留旧候选集 ✓ 否则会接不上 ✗）" % tag)
         best, best_key, alt, alt_key = None, None, None, None
         esc_best, esc_best_key = None, None
@@ -2041,7 +2108,7 @@ def main(argv):
                     print("   ★ 支线 **直连（0 拐）** ✓：%-22s 直上/直下到轨 ✓ "
                           "贴脚 0 ✓ 不重叠 ✓ 不穿体 ✓" % tt)
                 else:
-                    best, best_key = route_pair(a, b, mine, own_pins, used, tag=tt)
+                    best, best_key = route_pair(a, b, mine, own_pins, used, tag=tt, net=net)
             if best is None:
                 warn.append("%s: 没找到不碰本体的路径 ✗" % tt)
                 best = candidates(a, b, sorted(chx), sorted(chy))[0]
@@ -2207,14 +2274,38 @@ def main(argv):
                               and abs(s["b"][1] - _y) < 1e-6})
                 if not _xs:
                     continue                      # 这条轨上一条支线都没有 ⇒ 不必画 ✗
-                _path = ([(_x0, _y)] + [(v, _y) for v in _xs] + [(_x1, _y)])
+                # ★★ 2026-09-28 ✓ **轨的两端不许落在“别的网”的线上** ✗（= “跨网假接头” ✗✗，用户点名 ✓）
+                #   实测（v25 ✓）：5V 上轨的**外伸段端点** `(22.578,-57.6)` 正落在 GND 那根竖线
+                #     `(22.578,9)→(22.578,-72)` 的**中段**上 ✗ ⇒ 图上**看着 5V 接在 GND 上** ✗✗
+                #     （两个网的坐标都是 7.2 的整数倍 ⇒ **同一条网格线**上碰巧重合 ✓）。
+                #   ✓ 治：这一端**没接东西** ⇒ 往里收 `2 × MIN_SEG = 0.1`（= 判据容差的**两倍** ✓
+                #     留一倍余量抗浮点末位 ✓；0.028 mm ✓ 肉眼无差 ✓）⇒ 判据就干净了 ✓；
+                #     **接了东西** ✗ ⇒ 不动 ✓ + 告警 ✓（不许悄悄拆掉真接头 ✗）。
+                _x0r, _x1r = _x0, _x1
+                for _sgn7, _nm7 in ((1.0, "左"), (-1.0, "右")):
+                    _e7 = (_x0r, _y) if _sgn7 > 0 else (_x1r, _y)
+                    if not fj_vertex_bad(_e7, net, used):
+                        continue
+                    if fj_endpoint_used(_e7, used, net):
+                        warn.append("%s 的 %s端 (%.3f,%.1f) 压在**别的网**的线上 ✗，"
+                                    "但它上面**接了东西** ⇒ 不动 ✓（请人看一眼 ✓）"
+                                    % (net, _nm7, _e7[0], _y))
+                        continue
+                    if _sgn7 > 0:
+                        _x0r = _x0 + 2 * MIN_SEG
+                    else:
+                        _x1r = _x1 - 2 * MIN_SEG
+                    print("   ★ 轨 %s端**避开跨网假接头** ✓：y=%.1f 由 x=%.3f 收到 x=%.3f ✓"
+                          "（原处正压在**别的网**的线的中段上 ✗）"
+                          % (_nm7, _y, _e7[0], _x0r if _sgn7 > 0 else _x1r))
+                _path = ([(_x0r, _y)] + [(v, _y) for v in _xs] + [(_x1r, _y)])
                 for _k in range(len(_path) - 1):
                     used.append((_path[_k], _path[_k + 1], net))
                 segs.append({"a": _path[0], "b": _path[-1], "path": _path,
                              "from": None, "to": None, "mine": set(), "own_pins": set(),
                              "net": net, "key": None, "fixed": True})
                 _drawn.append(_y)
-                _rx[_y] = _x0
+                _rx[_y] = _x0r
 
             # ★★★ 同网的多条轨**必须互连** ✗（2026-09-28 ✓ 实测真断点 ✓）：
             #   **导线是导体 ⇒ 只有接上才算同一个网** ✓；两条平行的轨**不会自动通** ✗。
@@ -2311,7 +2402,7 @@ def main(argv):
                 segl = [(s["path"][k], s["path"][k + 1], s["net"])
                         for k in range(len(s["path"]) - 1)]
                 keep = [u for u in used if u not in segl]
-                new, nk = route_pair(a2, b2, s["mine"], s["own_pins"], keep)
+                new, nk = route_pair(a2, b2, s["mine"], s["own_pins"], keep, net=s["net"])
                 oldk = route_key(s["path"], s["mine"], s["own_pins"], keep)
                 ntry += 1
                 if new is not None and nk < oldk:
