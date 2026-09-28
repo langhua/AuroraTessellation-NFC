@@ -13,6 +13,8 @@ import sys
 import zipfile
 import xml.etree.ElementTree as ET
 
+import sch_net                       # ★ 网标签规则（**唯一实现** ✓，2026-09-29 ✓）
+
 SCH = ("schematic", "schematicTrace")
 
 
@@ -169,6 +171,42 @@ for mi in title:
         _br += 1
 print("导线自导通：%d 对 ✓（同一根导线的两端天然连通 ✓ —— 它们是导体 ✓）" % _br)
 
+# ★★★ 2026-09-29 ✓ **网标签：同名即同网** ✓（用户 09-26 定 ✓、09-29 要求落到判定器 ✓）——
+#   网标签是**元件实例** ✓（`moduleIdRef` 带 `NetLabel` ✓），**实例标题 = 网名** ✓
+#   （实测 `pixel-schematic-v29_netlabel.fzz` ✓：4 个实例标题 = `RC`/`RC`/`GND`/`GND` ✓）
+#   ⇒ **同名的所有标签脚并成一个网** ✓ —— 这就是“**抽象连接**” ✓（只适用原理图 ✓）。
+#   ✗ 以前不认它 ⇒ 同一张网被拆成两段 ✗（实测：`GND` 与 `RC` 各被拆成 2 段 ✗）。
+#   ★ 判据只在 `sch_net.py` 一份 ✓（别在这里再写一遍“怎么算网标签” ✗）。
+_lb = {}
+_LBLT = set()                        # ★ 网标签实例的**标题** ✓（下面各表是按标题建的 ✓）
+for _mi in title:
+    if _mi in skip or title[_mi].startswith("Wire"):
+        continue
+    _n = sch_net.net_name(mid[_mi], title[_mi])
+    if _n:
+        _lb.setdefault(_n, []).append(_mi)
+        _LBLT.add(title[_mi])
+_lbp = 0
+for _n, _ms in sorted(_lb.items()):
+    _first = None
+    for _mi in _ms:
+        for _cid in (cids.get(_mi) or []):
+            if _first is None:
+                _first = (_mi, _cid)
+            else:
+                union(_first, (_mi, _cid))
+                _lbp += 1
+print("网标签：%d 个网名 / %d 个实例 ⇒ **同名合并 %d 对** ✓（%s）"
+      % (len(_lb), sum(len(v) for v in _lb.values()), _lbp,
+         "、".join("%s×%d" % (k, len(v)) for k, v in sorted(_lb.items())) or "（本图没有网标签 ✓）"))
+
+
+# ★ 网标签是**桥** ✓，**不是电气成员** ✗ ⇒ 对照 `EXPECT` 时**不计入** ✓
+#   （它的作用就是“同名即连通” ✓；把它当成员会报“多了 GND.connector0” ✗ = 假报 ✗）。
+def _ismem(_t):
+    """这个脚是**电气成员**吗 ✓ —— 网标签**不算成员** ✓（它是**桥** ✓：同名即连通 ✓）"""
+    return _t not in _LBLT
+
 groups = {}
 for mi in title:
     if mi in skip or title[mi].startswith("Wire"):
@@ -222,8 +260,9 @@ bad = 0
 for net, pins in EXPECT.items():
     segs = []
     for v in groups.values():
-        s = {"%s.%s" % t for t in v}
-        if pins & s:
+        sf = {"%s.%s" % t for t in v}                 # 全部脚（含标签 ✓）—— 用来“找到这一段” ✓
+        s = {"%s.%s" % t for t in v if _ismem(t[0])}  # 只留**电气成员** ✓（标签是桥 ✗）
+        if pins & sf:
             segs.append(s)
     got = set().union(*segs) if segs else set()
     ok = len(segs) == 1 and segs[0] == pins
@@ -234,8 +273,17 @@ for net, pins in EXPECT.items():
             len(segs), " ｜ ".join(",".join(sorted(s)) for s in
                                    sorted(segs, key=len, reverse=True)))
     elif len(segs) == 1 and segs[0] != pins:
-        note = "  ⚠ **多了** %s ✗（= 和别的网**粘连** ✗）" % ",".join(sorted(segs[0] - pins))
+        _extra = sorted(segs[0] - pins)
+        _miss = sorted(pins - segs[0])
+        note = ""
+        if _extra:
+            note += "  ⚠ **多了** %s ✗（= 和别的网**粘连** ✗）" % ",".join(_extra)
+        if _miss:
+            note += "  ⚠ **少了** %s ✗（= 有脚**没连上** ✗）" % ",".join(_miss)
     print("  %-9s %s  应有 %-42s 实际 %s%s"
           % (net, "✓" if ok else "✗", ",".join(sorted(pins)),
              ",".join(sorted(got)) or "（缺）", note))
-print("\n判定: %s" % ("✓ 10 个网全对" if not bad else "✗ %d 个网对不上" % bad))
+print("\n判定: %s" % ("✓ %d 个网全对" % len(EXPECT) if not bad else "✗ %d 个网对不上" % bad))
+#   ★ 2026-09-29 修 ✓：这句原来写死“**10** 个网”✗ —— `EXPECT` 实际是 **9** 个 ✗
+#     （COIL_A/COIL_B/GND/BR+/RC/5V/DATA_IN/DATA_OUT/LED_DIN ✓）⇒ 改成**从表里算** ✓，
+#     免得又出现“报的数”和“查的表”对不上 ✗（与 `render_sch.py` 的「9 张网」一致 ✓）。

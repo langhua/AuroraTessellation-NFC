@@ -49,6 +49,7 @@ import toolpaths                                                  # noqa: E402
 import part_box as PB                                             # noqa: E402
 import sch_text as ST                                            # ★ 字宽表（唯一实现 ✓）
 import sch_geom as SG                                            # ★ 几何判据（含斜线 ✓，唯一实现 ✓）
+import sch_net                                                   # ★ 网标签规则（唯一实现 ✓，2026-09-29 ✓）
 import sch_box as SB                                             # ★ “本体盒”唯一实现 ✓
 
 # ★★ 下面这段常量与小工具（`UMM/HDR/ATTR_RE/tag/num/enum/attrs/inner/head_of/
@@ -238,6 +239,14 @@ for el in root.iter("instance"):
     for b in bad:
         print("        ⚠ %s" % b)
 
+# ★★ 2026-09-29 ✓ **只能判**“图形已解析到”的脚 ✗（用户拿 Fritzing 截图当场推翻了我 ✗）——
+#   ✗ 我上一版把“声明接某脚、而线没画到那只脚上”一律算 ✗ ⇒ **漏了前提**：那只脚的**坐标根本不知道** ✗
+#     （本例：4 个 **核心库网标签** `NetLabelModuleID` ✓，`path=":/resources/parts/core/netlabel.fzp"`
+#      ⇒ 磁盘上**没有**这个文件 ✗ ⇒ 零件被**跳过** ✓ ⇒ 没进 `PIN_SK` ✗）
+#     ⇒ 几何比对上**必然**报“没画到” ✗✗，而用户截图里那根线**正正好好地接在标签脚上** ✓。
+#   ✓ 所以：**先问“这只脚的坐标知道吗”** ✓ —— 不知道 ⇒ **无法判定**（单列 ✓ 不计入 ✗）。
+KNOWN_PIN = {(t, c) for (t, c, _q) in PIN_SK}          # 坐标**已知**的脚 ✓（= 图形已解析到 ✓）
+
 # ── ② 导线 ──
 wires, widx = [], []
 for el in root.iter("instance"):
@@ -353,7 +362,7 @@ for ttl_w, _a, _b, _c, _w in wires:
         d.setdefault(own, set()).add(tgt)
     declared[ttl_w] = d
 
-fake_a, fake_b = [], []
+fake_a, fake_b, fake_unk = [], [], []
 W_END = {t: (a, b) for (t, a, b, _pa, _pb) in geom_end}      # 每根线的两个端点 ✓（查接头用 ✓）
 for ttl_w, a, b, pa, pb in geom_end:
     if ttl_w in degen:                         # ★ (C) 退化导线 ⇒ 不并进 (A)/(B) ✗（单独报 ✓）
@@ -361,7 +370,11 @@ for ttl_w, a, b, pa, pb in geom_end:
     d = declared.get(ttl_w, {})
     tall = set().union(*d.values()) if d else set()
     # (A) 表里说了某只脚，可几何**完全不在这只脚上** ✗✗
-    for (t4, c4) in tall:
+    #   ★ 前提 ✓：这只脚的**坐标得知道** ✓（图形没解析到 ⇒ **无法判定** ✗ 不算错 ✗）
+    for (t4, c4) in sorted(tall):
+        if (t4, c4) not in KNOWN_PIN:
+            fake_unk.append((ttl_w, t4, c4))
+            continue
         if (t4, c4) not in pa and (t4, c4) not in pb:
             fake_a.append((ttl_w, t4, c4, a, b))
     # (B) 端点落在某脚上，而**没有任何导线贴在那一点**声明接它 ✗
@@ -387,6 +400,11 @@ print("   (A) 表里声明接了某脚，而线**没画到**那只脚上：**%d 
 for ttl_w, t4, c4, a, b in fake_a[:10]:
     print("      ✗ %-14s 声明接 %s.%s ✗ ｜ 实际画在 (%.1f,%.1f)→(%.1f,%.1f)"
           % (ttl_w, t4, c4, a[0], a[1], b[0], b[1]))
+print("   (A') **脚的图形没解析到 ⇒ 无法几何判定**（单列 ✓ **不计入 (A)** ✗）：**%d 处** %s"
+      % (len(fake_unk), "✓" if not fake_unk else "⚠ 信连接表 ✓ / 请人看一眼 ✓"))
+for ttl_w, t4, c4 in sorted(set(fake_unk))[:8]:
+    print("      ⊘ %-14s 声明接 %s.%s —— 该件图形缺失（如核心库件 `:/resources/…` ✓）⇒ 不判 ✓"
+          % (ttl_w, t4, c4))
 print("   (B) 线**画在**某脚上（端点 ✓ 或线身穿心 ✓），表里却没有这一条：**%d 处** %s"
       % (len(fake_b) + len(geom_body), "✓" if not (fake_b or geom_body) else "✗✗"))
 for ttl_w, t5, c5, a, b in fake_b[:10]:
@@ -513,16 +531,23 @@ for el in root.iter("instance"):
 print("── 位号 %d 个：%s" % (len(labels), ", ".join("%s(%s)" % (l[0], "+".join(l[4][1:]) or "—") for l in labels)))
 
 # ── ④ 自检：悬空端点 / 没接线的脚 ✓（**如实报** ✓ 不偷偷吸附 ✗）──
-dang = []
+dang, dang_unk = [], []
 for ttl, a, b in widx:
     if ttl in degen:                           # ★ (C) 退化导线（点 ✓）不算“悬空端” ✗（另报 ✓）
         continue
+    _dd = declared.get(ttl, {})
+    _tall = set().union(*_dd.values()) if _dd else set()
+    _unk = sorted(x for x in _tall if x not in KNOWN_PIN)
     for which, pt in (("起", a), ("止", b)):
         best = min(((math.dist(pt, p[2]), p) for p in PIN_SK), default=(1e18, None))
         joint = any(math.dist(pt, q[1]) < 0.01 or math.dist(pt, q[2]) < 0.01
                     for q in widx if q[0] != ttl)
         if best[0] > 0.5 and not joint:
-            dang.append((best[0], ttl, which, pt, best[1]))
+            # ★ 它声明接的脚**图形缺失** ⇒ 无法判定 ✓（本例 4 处全是核心库网标签 ✓，用户截图已证**接得好好的** ✓）
+            if _unk:
+                dang_unk.append((ttl, which, pt, _unk))
+            else:
+                dang.append((best[0], ttl, which, pt, best[1]))
 if PIN_SK and widx:
     hung = 0
     for p in PIN_SK:
@@ -536,6 +561,11 @@ print("── 悬空导线端 %d 个 %s" % (len(dang), "✓" if not dang else "�
 for d, ttl, which, pt, hit in sorted(dang, reverse=True)[:10]:
     print("     ⚠ %-14s %s端 (%.3f,%.3f) 离最近脚 %s.%s 还差 **%.3f 单位（%.3f mm）**"
           % (ttl, which, pt[0], pt[1], hit[0], hit[1], d, d * MMU))
+print("── 无法判定是不是悬空（它声明接的脚**图形缺失** ✓）：**%d 端** %s"
+      % (len(dang_unk), "✓" if not dang_unk else "⚠ 信连接表 ✓ / 请人看一眼 ✓"))
+for ttl, which, pt, _unk in dang_unk[:8]:
+    print("     ⊘ %-14s %s端 (%.3f,%.3f) 声明接 %s ⇒ 该件图形缺失 ⇒ 不判 ✓"
+          % (ttl, which, pt[0], pt[1], ",".join("%s.%s" % x for x in _unk)))
 for t, why in skipped:
     print("   ⊘ 跳过 %-12s %s" % (t, why))
 
@@ -685,10 +715,10 @@ if len(pc_hits) > 6:
 
 
 # ── ④c3 ★★ **跨网“假接头”** ✓（2026-09-28 ✓ 用户点名：「要按**同网 / 跨网**拆开」✓）──
-#   病症 ✓（实测出来的 ✓）：一根线的**端点 / 折点**正好落在**另一根不同颜色（= 不同网）**的线的
+#   病症 ✓（实测出来的 ✓）：一根线的**端点 / 折点**正好落在**另一张网**的线的
 #     **中段**上 ✗ ⇒ 图上**看着像接上了** ✓（一个 T 形接头 ✓）、电气上**根本没连** ✗✗
 #     —— Fritzing 只认**端点对端点** ✓：端点落在别人中段上，得**在那一点把线断开**才算连上 ✓。
-#   ★ 所以“端点搭线（T）”要**分网看** ✓：
+#   ★ “哪根线哪张网”由**连接表**定 ✓（`_netkey` ✓，2026-09-29 起 ✓）—— 不再看颜色 ✗：
 #     · **同网** = 真接头 ✓（“T 形搭接”/ 轨上打断 正是在做这个 ✓）⇒ 不算毛病 ✗；
 #     · **跨网** = **假接头** ✗✗（看着短路 ✓）⇒ **必须 0** ✓。
 #   ★ 为什么以前一直没报 ✗：`seg_cross` 把“端点搭在中段上”当**接头**排除 ✓（正确 ✓ —— 它不是
@@ -702,7 +732,7 @@ def _invisible_break(vi, endpt, tol=0.05):
       （每个接头/落点断一次 ✓ —— Fritzing 只认端点对端点 ✓，这是**必须**的 ✓），
       而**断点在图上是看不见的** ✓（线还是一条直线 ✓）⇒ 拿它跟别的线比“距离够不够 2.03 mm”
       就是**误报** ✗✗（实测：18 处里绝大部分是这种 ✗）。
-    ✓ 判据：**同网（同色）有另一根线从这个点沿本线方向直线续下去** ✓（三点共线且方向一致 ✓）
+    ✓ 判据：**同一张网**（按连接表 ✓）有另一根线从这个点沿本线方向直线续下去 ✓（三点共线且方向一致 ✓）
       ⇒ 只是断点 ✗ ⇒ 看不见 ⇒ 不算“看得见的端” ✗。
     """
     _t, a, b, _c, _w = wires[vi]
@@ -711,12 +741,12 @@ def _invisible_break(vi, endpt, tol=0.05):
     L = math.hypot(dx, dy)
     if L < 1e-9:
         return False
-    _col = wires[vi][3]
+    _nk = _netkey(vi)                     # ★ 网键 ✓（**按连接表** ✓，2026-09-29 ✓）
     for j in range(len(wires)):
         if j == vi:
             continue
-        _t2, c2, d2, col2, _w2 = wires[j]
-        if col2 != _col:                  # ★ 只看**同网**（断点只可能是同网接出来的 ✓）
+        _t2, c2, d2, _col2, _w2 = wires[j]
+        if _netkey(j) != _nk:             # ★ 只看**同一张网**（断点只可能是同网接出来的 ✓）
             continue
         for _e in (c2, d2):
             if math.dist(_e, endpt) > tol:
@@ -731,6 +761,75 @@ def _invisible_break(vi, endpt, tol=0.05):
     return False
 
 
+# ★★ 2026-09-29 ✓ **网 = 连接表（`<connects>`）里的连通分量** ✓（用户当天选的 **(b)** ✓）——
+#   ✗ 原来按**导线颜色**认网 ✗ = 拿**装饰**当**电气** ✗，实测就踩到了 ✗：
+#     `pixel-schematic-v29_netlabel.fzz` 的 `Wire90012783` 声明接 `C1.connector0` /
+#     `R1.connector1`（**纯 RC 网的脚** ✓），颜色却写成了 GND 的 `#404040` ✗
+#     ⇒ 判定器把“一根 RC 线”当成“GND 线” ✗ ⇒ 报出一处**假的**跨网假接头 ✗。
+#   ✓ 现在的口径（三句话 ✓）：
+#     ① 每条 `<connect … layer="schematic*">` 声明 = 一条**无向边** ✓（节点 = (实例, 脚) ✓）；
+#     ② **导线是导体** ✓ ⇒ 它自己的两个脚并起来 ✓（与 `check_netlist.py`「导线自导通」同口径 ✓）；
+#     ③ **同名网标签** ⇒ 把同名的标签脚并起来 ✓（规则见 `sch_net.py` **唯一实现** ✓）。
+#   ★ 颜色从此**只用于画图** ✓，不再当判据 ✓ ⇒ “图上同色 / 不同色”不再影响任何一条结论 ✓。
+_NETP = {}
+
+
+def _netfind(x):
+    _NETP.setdefault(x, x)
+    while _NETP[x] != x:
+        _NETP[x] = _NETP[_NETP[x]]
+        x = _NETP[x]
+    return x
+
+
+def _netunion(a, b):
+    _ra, _rb = _netfind(a), _netfind(b)
+    if _ra != _rb:
+        _NETP[_rb] = _ra
+
+
+_MI_BY_TITLE = {t: m for m, t in FZ_TITLE.items()}
+_NOWN = {}                                    # (实例 → 它自己声明过的脚 id ✓)
+for _mi5, _eds5 in FZ_EDGE.items():
+    for _own5, _tcid5, _tmi5 in _eds5:
+        _netunion((_mi5, _own5), (_tmi5, _tcid5))
+        _NOWN.setdefault(_mi5, []).append(_own5)
+    if FZ_ISWIRE.get(_mi5):                   # ★ ② 导线自导通（两个脚并起来 ✓）
+        _os5 = sorted(set(_NOWN.get(_mi5) or []))
+        for _o5 in _os5[1:]:
+            _netunion((_mi5, _os5[0]), (_mi5, _o5))
+
+# ★ ③ 同名网标签 = 同一张网 ✓（**判据只有这一份** ✓ —— `sch_net.net_name` ✓）
+with zipfile.ZipFile(sys.argv[1]) as _z2:
+    _txt2 = _z2.read([_n2 for _n2 in _z2.namelist()
+                      if _n2.lower().endswith(".fz")][0]).decode("utf-8", "replace")
+_LBLN = {}
+for _n6, _pins6 in sch_net.label_pins(_txt2).items():
+    for (_mi6, _t6, _c6) in _pins6:
+        _netunion((_mi6, _c6), ("LBL", _n6))
+        _LBLN.setdefault(_n6, []).append(_t6)
+
+
+def _netkey(vi):
+    """这根线属于哪张网 ✓ —— **按连接表**取连通分量 ✓；**一个声明都没有** ⇒ 单独一网 ✓"""
+    _t7 = wires[vi][0]
+    _mi7 = _MI_BY_TITLE.get(_t7)
+    _own7 = sorted(set(_NOWN.get(_mi7) or []))
+    if _own7:
+        return "NET:%s" % (_netfind((_mi7, _own7[0])),)
+    return "NONE:%s" % _t7
+
+
+_NKEYS = [_netkey(_vi7) for _vi7 in range(len(wires))]
+print("── ★ **网**（按**连接表**认 ✓，颜色只用于画图 ✓）：导线 %d 根 ⇒ **%d 张网** ✓"
+      "｜同名网标签 %d 个（%s）✓｜**一个声明都没有的导线 %d 根** %s"
+      % (len(wires), len(set(_NKEYS)), len(_LBLN),
+         "/".join("%s×%d" % (k, len(v)) for k, v in sorted(_LBLN.items())) or "无",
+         sum(1 for _k7 in _NKEYS if _k7.startswith("NONE:")),
+         "✓" if not any(_k7.startswith("NONE:") for _k7 in _NKEYS)
+         else "✗（悬空线 ⇒ 碰谁都是“假接头”✓ 得先给它声明 ✓）"))
+
+
 fj_hits = []
 fj_near = []
 for _i in range(len(widx)):
@@ -739,7 +838,7 @@ for _i in range(len(widx)):
         if _i == _j:
             continue
         _t2, _a2, _b2 = widx[_j]
-        if wires[_i][3] == wires[_j][3]:        # ★ 同网（同色）⇒ 是接头 ✓ 不算毛病 ✗
+        if _netkey(_i) == _netkey(_j):          # ★ 同一张网（含**同名网标签** ✓）⇒ 是接头 ✓ 不算毛病 ✗
             continue
         for _v in (_a1, _b1):
             _d2 = SG.p2seg(_v, _a2, _b2)
