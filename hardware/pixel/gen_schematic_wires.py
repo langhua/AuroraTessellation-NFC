@@ -1636,6 +1636,29 @@ def main(argv):
                     used.append(_sg)
             n += 1
         return n
+
+    def truncate_branch_at(s, i, junction, net):
+        r"""把支线 `s` 在**第 i 段中途**截断到 `junction` 上 ✓（同步 `used` ✓），返回旧值以便回退 ✓
+
+        ★★ 用于「**接管**」那一招 ✓（学用户手改版第三次的**右半** ✓）：邻居那根竖线**跨过**
+          本支线的脚行 ✗（`LED2` 的竖线 y: 17 → -72 ✓，而 `J2.c1` 的脚行是 y=9 ✓）
+          ⇒ 本支线沿脚行横走过去、**接管脚行以下那截竖线** ✓，邻居**截到交点** ✓
+          ⇒ 两线在交点**端点对端点** ✓（Fritzing 只认这个 ✓）；由本支线一路通到轨 ✓。
+        ★ 套路与 `trim_on_rail` 完全一致 ✓（改 `path` ✓、改 `b` ✓、**同步 `used`** ✗ ——
+          只改一处 ⇒ 自检拿陈旧段报假重叠 ✗，2026-09-28 踩过 ✓）。
+        """
+        _old = [(s["path"][k], s["path"][k + 1], net) for k in range(len(s["path"]) - 1)]
+        _bak = (list(s["path"]), s["b"])
+        s["path"] = list(s["path"][:i + 1]) + [junction]
+        s["b"] = junction
+        _new = [(s["path"][k], s["path"][k + 1], net) for k in range(len(s["path"]) - 1)]
+        for _sg in _old:
+            if _sg not in _new and _sg in used:
+                used.remove(_sg)
+        for _sg in _new:
+            if _sg not in used:
+                used.append(_sg)
+        return _bak
     # ★★ `--only=GND,5V` ✓（用户 2026-09-28：「**请先在图上实际画出天地轨来**」✓）——
     #   只布指定的网 ✓ ⇒ 先出**中间产物**：**天地轨 + 元件 + 电源支线** ✓（第 ①～③ 步 ✓）。
     #   ★ 顺序不变 ✓（电源仍在最前 ✓）—— 只是**后面那些网整批不布** ✓。
@@ -1963,9 +1986,22 @@ def main(argv):
                     #   ★ 次序 = **先法线方向**（更自然 ✓，引线本来朝外 ✓），再反向 ✓；
                     #     长度**从短到长** ✓（短的自然、省线 ✓）⇒ 取**第一个全合格的** ✓。
                     _s0 = 1.0 if _n[0] > 0 else -1.0
-                    for _sgn in (_s0, -_s0):
-                        for _k in (1, 2, 3, 4, 5, 6):
-                            _q = (a[0] + _sgn * _k * 7.2, a[1])
+                    for _i2, _sgn in enumerate((_s0, -_s0)):
+                        # ★★ 2026-09-28 ✓ **车道从哪来** ✓ —— 两批 ✓（次序就是“优先用哪一批” ✓）：
+                        #   ① **7.2 的整数档** ✓（网格 ✓、法线方向先试 ✓）—— 本仓既有的做法 ✓；
+                        #   ② **同网“已布竖线”所在的车道** ✓（**邻居驱动** ✓，只加在第二趟 ✓）——
+                        #      ✗ 手改版那半（`J2.c1` → `LED2` 竖线 ✓）**根本不在 7.2 网格上** ✗：
+                        #        档0 实测 脚 x=244.58、邻居车道 x=210.58 ⇒ 相差 **34.0**
+                        #        = 4.72 × 7.2 ✗ ⇒ **档位永远踩不到** ✗✗（实测：接管候选零效果 ✗）。
+                        #      ✓ 正解 = **不按网格找，直接看邻居的竖线在哪** ✓（这才是手改版的做法 ✓）。
+                        _lanes = [a[0] + _sgn * _k * 7.2 for _k in (1, 2, 3, 4, 5, 6)]
+                        if _i2 == 1:
+                            _lanes += [_u[0][0] for _u in used
+                                       if _u[2] == net
+                                       and abs(_u[0][0] - _u[1][0]) < LANE_EPS
+                                       and abs(_u[0][0] - a[0]) > LANE_EPS]
+                        for _qx in _lanes:
+                            _q = (_qx, a[1])
                             # ★★ 先试 **T 形搭接** ✓（2026-09-28 ✓ 学用户手改版 ✓，用户选 A✓）
                             #   病灶（实测 ✓）：同网、**同一条竖直车道**上的两条支线里，
                             #     后布的那条**一路画到轨** ✗ ⇒ 整条盖住先布的那条 ✗ ⇒
@@ -2010,6 +2046,51 @@ def main(argv):
                                     _c4 = dedup_path([a, _q, (_q[0], _ye)])
                                 elif min(a[1], b[1]) + PIN_EPS < _ye < max(a[1], b[1]) - PIN_EPS:
                                     _c4 = dedup_path([a, _q, (_q[0], _ye)])
+                                elif (min(_p2[1], _q2[1]) + PIN_EPS < a[1]
+                                      < max(_p2[1], _q2[1]) - PIN_EPS):
+                                    # ★★ 2026-09-28 ✓ **第三种：接管**（学手改版第三次的**右半** ✓）
+                                    #   病状 ✓：邻居那根竖线**跨过**本支线的脚行 ✗
+                                    #     （`LED2` 的竖线 y: 17 → -72 ✓，`J2.c1` 的脚行 y=9 ✓）
+                                    #     ⇒ 旧判据要求搭点在「脚行与轨**之间**」✗ ⇒ 一票否决 ✗
+                                    #     （实测：`J2.c1` 一直自己竖一趋 81+7.2 ✗，而手改版只走 34 ✓）。
+                                    #   ✓ 做法：本支线沿脚行横走过去、**接管脚行以下那截** ✓，
+                                    #     邻居**截到交点** ✓ ⇒ 交点处**端点对端点** ✓（Fritzing 只认这个 ✓）。
+                                    #   ★ 先“乐观地”截 ✓、再跑四道闸门 ✓；任何一道不过 ⇒ **原样回退** ✓
+                                    #     （`used` 快照恢复 ✓）⇒ 绝不比原来差 ✓。
+                                    _own = None
+                                    for _s3 in segs:
+                                        if _s3.get("fixed") or _s3.get("to") is not None:
+                                            continue
+                                        _pp = _s3.get("path") or []
+                                        for _i3 in range(len(_pp) - 1):
+                                            _A, _B = _pp[_i3], _pp[_i3 + 1]
+                                            if ((abs(_A[0] - _p2[0]) < LANE_EPS
+                                                 and abs(_A[1] - _p2[1]) < LANE_EPS
+                                                 and abs(_B[0] - _q2[0]) < LANE_EPS
+                                                 and abs(_B[1] - _q2[1]) < LANE_EPS)
+                                                    or (abs(_A[0] - _q2[0]) < LANE_EPS
+                                                        and abs(_A[1] - _q2[1]) < LANE_EPS
+                                                        and abs(_B[0] - _p2[0]) < LANE_EPS
+                                                        and abs(_B[1] - _p2[1]) < LANE_EPS)):
+                                                _own = (_s3, _i3)
+                                                break
+                                        if _own:
+                                            break
+                                    if _own is None:
+                                        continue              # 找不到“哪根线”⇒ 不接管 ✓（宁可不做 ✗）
+                                    _snap = list(used)
+                                    _bak = truncate_branch_at(_own[0], _own[1],
+                                                              (_p2[0], a[1]), net)
+                                    _c4 = [a, (_p2[0], a[1]), (_p2[0], b[1])]
+                                    if (not body_hard_bad(_c4, boxes, PIN_ALL)
+                                            and not pin_hard_bad(_c4, PIN_ALL, own_pins)
+                                            and not ovl_hard_bad(_c4, used)
+                                            and pin_intr(_c4, own_pins, PIN_ALL) == 0):
+                                        _L = _c4
+                                        break
+                                    _own[0]["path"], _own[0]["b"] = _bak[0], _bak[1]
+                                    used[:] = _snap            # ★ 原样回退 ✓
+                                    continue
                                 else:
                                     continue                        # 既不在脚行上、也不在之间 ⇒ 不行 ✗
                                 if (not body_hard_bad(_c4, boxes, PIN_ALL)
@@ -2055,9 +2136,40 @@ def main(argv):
                                abs(_L[1][0] - a[0]), _L[-1][0], _L[-1][1]))
                     _tjpt = _L[-1]
                 elif abs(_L[-1][1] - b[1]) < LANE_EPS:
-                    _shape = "L 形（1 拐）"
-                    _det = "出脚 %s %.1f" % ("向右" if _L[1][0] > a[0] else "向左",
-                                            abs(_L[1][0] - a[0]))
+                    # ★★ 2026-09-28 ✓ **「接管」要能从几何读出来** ✓（不加标志位 ✗ ——
+                    #   两处记账早晚失步 ✗）：有**同网**的已布段**以我的拐点为起点** ✓、
+                    #   而它的终点**不是**我的终点 ✗（我那段竖线要到轨 ✓）⇒ 那就是被截到
+                    #   交点的邻居 ✓。
+                    _shared = None
+                    if (len(_L) == 3 and abs(_L[1][0] - _L[0][0]) > LANE_EPS
+                            and abs(_L[2][1] - _L[1][1]) > LANE_EPS):
+                        # ★ 判据：**同网**已布段**有一个端点正好落在我的拐点上** ✓、
+                        #   而它的**另一个端点不是我的终点** ✗（我那段竖线要到轨 ✓）
+                        #   ⇒ 那就是被截到交点的邻居 ✓。两个端点都要看 ✗ ——
+                        #   ✗ 第一版只看了段首 ✗ ⇒ 邻居那段（它的**末端**才是交点 ✗）
+                        #     没被认出来 ⇒ 形状打印退回“L 形” ✗（形状对了、名字错了 ✗）。
+                        _shared = _L[1] if any(
+                            _u[2] == net and (
+                                (abs(_u[0][0] - _L[1][0]) < LANE_EPS
+                                 and abs(_u[0][1] - _L[1][1]) < LANE_EPS
+                                 and not (abs(_u[1][0] - _L[2][0]) < LANE_EPS
+                                          and abs(_u[1][1] - _L[2][1]) < LANE_EPS))
+                                or (abs(_u[1][0] - _L[1][0]) < LANE_EPS
+                                    and abs(_u[1][1] - _L[1][1]) < LANE_EPS
+                                    and not (abs(_u[0][0] - _L[2][0]) < LANE_EPS
+                                             and abs(_u[0][1] - _L[2][1]) < LANE_EPS)))
+                            for _u in used) else None
+                    if _shared is not None:
+                        _shape = "共享竖线（1 拐）"
+                        _det = ("沿脚行 %s %.1f ⇒ 在 (%.1f,%.1f) **接管**同网竖线"
+                                "（邻居截到该点 ✓）⇒ 一路到轨 y=%.1f ✓"
+                                % ("向右" if _L[1][0] > a[0] else "向左",
+                                   abs(_L[1][0] - a[0]), _shared[0], _shared[1], b[1]))
+                        _tjpt = _shared
+                    else:
+                        _shape = "L 形（1 拐）"
+                        _det = "出脚 %s %.1f" % ("向右" if _L[1][0] > a[0] else "向左",
+                                                abs(_L[1][0] - a[0]))
                 else:
                     _shape = "T 形搭接（1 拐）"
                     _det = ("出脚 %s %.1f ⇒ 搭在同网同车道的端点 (%.1f,%.1f) ✓"
