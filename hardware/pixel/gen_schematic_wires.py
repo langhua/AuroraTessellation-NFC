@@ -218,6 +218,21 @@ PIN_EPS = 0.05
 #     删到一条不剩 ⇒ 调用处保留旧候选集 + 告警 ✓（不许把端点接不上 ✗）。
 #   ★ 判据仍只有一份 ✓（`sch_geom.near_overlap` ✓）；`--noovl` 关掉 ⇒ A/B 对照 ✓。
 HARD_OVL = True
+# ★★ `HARD_CLEAR`：**贴脚零容忍** ✓（2026-09-28 ✓ **用户定**：「**贴脚的容忍度也是 0，
+#   所以，这一项必须改。**」✗）
+#   ★ 病症（用仓里**唯一那份**判据量的 ✓）：`Wire90012757`（GND ✓）在 `x=202.53` 竖走 89 单位 ✓
+#     ⇒ 离 `LED2.connector0` 只剩 **1.15 单位 = 0.32 mm** ✗ ⇒ 渲染器报「贴近不相连的引脚
+#     **1 处**」✗ —— 正是 band1 里唯一那一处 ✓（band0 有 9 处同型 ✓）。
+#   ★ 用户**手改版**把同一条车道挪到 `x=209.06`（+6.5 单位 ✓）⇒ 贴脚 **1 → 0** ✓
+#     ⇒ **合格的形状是存在的** ✓（不是无解 ✗）⇒ 病在**判据的位置** ✗：贴脚原本只是**软代价**
+#     （`wt` 的第 ③ 档 ✓，`INT_W[1] = 1` ✓）⇒ 擦 1.15 单位只花 **1 分** ✗ ⇒ 拼不过“短 6.5 单位” ✗。
+#   ⇒ **硬规则不能用软代价表达** ✓（与 `HARD_OVL` / `HARD_PIN` 同一条教训 ✓）⇒ 用**闸门**：
+#     把“贴脚 ≠ 0”的候选**直接删掉** ✓；删光 ⇒ 保留旧候选集 + 告警 ✓（不许把端点接不上 ✗）。
+#   ★ 判据**只有一份** ✓：`seg_pin_intr`（逐段取自己的脚 + `pin_intr` ✓）—— 与 `render_sch.py`
+#     的 ④c2 **同一口径** ✓（`sch_geom.p2seg` + `< CLEAR_PIN − PIN_EPS` ✓），代价 / 闸门 /
+#     每轮全局验收 `gstat` **三处共用它** ✓（抄三份 ⇒ 早晚有一份跟渲染器对不上 ✗）。
+#   ★ `--noclear` 关掉 ⇒ A/B 对照 ✓（关掉后应与 v23 **逐字节相同** ✓）。
+HARD_CLEAR = True
 USE_ESC = True
 NEW_ORDER = True
 # ★★ `OUTER_RING`：**元件外圈环廊** ✓（2026-09-28 ✓ 用户点名的第 **1** 条 ✓）
@@ -1080,6 +1095,10 @@ def main(argv):
         global HARD_OVL
         HARD_OVL = False
         print("硬闸门 HARD_OVL：**关闭** ✓（`--noovl` ⇒ 回到“重叠只靠软代价”✓）")
+    if "--noclear" in argv:                    # A/B 用 ✓：关掉“贴脚零容忍”这道闸门 ✓
+        global HARD_CLEAR
+        HARD_CLEAR = False
+        print("硬闸门 HARD_CLEAR：**关闭** ✓（`--noclear` ⇒ 回到“贴脚只靠软代价”= v23 ✓）")
     if "--chans" in argv:                      # 实验 ✓：通道收敛（每方向只留前 N 档 ✓）
         global CHAN_N
         CHAN_N = int(argv[argv.index("--chans") + 1])
@@ -1404,6 +1423,25 @@ def main(argv):
         print("★ `--only` ✓：只布 %s ✓（其余 %d 个网这一轮不布 ✓ —— 中间产物 ✓）"
               % (",".join(_keep), len(net_order) - len(_keep)))
         net_order = _keep
+
+    def seg_pin_intr(path):
+        r"""这条路径**贴到几个不相连的引脚** ✓ —— **逐段**取“自己的脚” ✓（唯一实现 ✓）
+
+        ★ 为什么“自己的脚”必须**逐段**取 ✗（不能按整条线取 ✗）：一条线的**中段**不属于任何脚 ✓
+          —— 按整条线豁免 ⇒ 中段蹭到别人的脚就不算 ✗（实测：脚本口径 11 ✗ 而渲染器 16 ✗ ✓）。
+        ★ 判据 = `pin_intr`（`< CLEAR_PIN − PIN_EPS` ✓，用仓里唯一那份 `sch_geom.p2seg` ✓）
+          ⇒ 与 `render_sch.py` 的 ④c2 **同一口径** ✓。
+        ★ 三处共用这一份 ✓：① 代价 `route_key` ✓ ② **闸门 `HARD_CLEAR`** ✓ ③ 每轮全局验收 `gstat` ✓
+          （抄三份 ⇒ 早晚有一份跟渲染器对不上 ✗ —— 面包板那天的教训 ✓）。
+        """
+        n = 0
+        for k in range(len(path) - 1):
+            sk = {(t, c) for (t, c, x, y) in PIN_ALL
+                  if math.dist((x, y), path[k]) < 0.05
+                  or math.dist((x, y), path[k + 1]) < 0.05}
+            n += pin_intr([path[k], path[k + 1]], sk, PIN_ALL)
+        return n
+
     def route_key(path, mine, own_pins, used):
         r"""**一条路径的代价** ✓ —— 唯一实现 ✓（首轮布线 / 抽出重排 / “旧路径重算”全用它 ✓）
 
@@ -1436,12 +1474,9 @@ def main(argv):
         #     中段（它不属于任何一个脚 ✓）蹭到别人的脚就不算 ✗ ⇒ 脚本口径 11 ✓ 而渲染器口径 16 ✗
         #     （用户真正要的是后者 ✓：“不相连的引脚都要拉开距离” ✓）。
         #   ⇒ 改成：每一段各自看“两端命中的脚” ✓ —— 中段两端不是脚 ⇒ 它蹭到谁都算 ✓。
-        pintr = 0
-        for k in range(len(path) - 1):
-            sk = {(t, c) for (t, c, x, y) in PIN_ALL
-                  if math.dist((x, y), path[k]) < 0.05
-                  or math.dist((x, y), path[k + 1]) < 0.05}
-            pintr += pin_intr([path[k], path[k + 1]], sk, PIN_ALL)
+        #   ★ 2026-09-28 ✓ 抽成 `seg_pin_intr` ✓：**同一份判据**也给闸门 `HARD_CLEAR` 与
+        #     全局验收 `gstat` 用 ✓（三份抄写早晚对不上 ✗）。
+        pintr = seg_pin_intr(path)
         # ★★ 两条用户规则合成**一个加权项** ✓（2026-09-27 ✓）：
         #   ✗ 原来 `pintr` 与 `nov` 各占一档（字典序 ✗）⇒ 它们**不能互相交换** ✗
         #     ⇒ “躲引脚”一路优先 ⇒ 重叠反而从 6 涨到 **10** ✗（实测 ✓）。
@@ -1523,6 +1558,13 @@ def main(argv):
             else:
                 warn.append("%s：**没有一条候选**能与已布的线不重叠 ✗（保留旧候选集 ✓ 否则接不上 ✗）"
                             % tag)
+        if HARD_CLEAR:                 # ★ 用户定（2026-09-28 ✓）：**贴脚 = 0**（零容忍 ✓）
+            ok4 = [p for p in cands if seg_pin_intr(p) == 0]
+            if ok4:
+                cands = ok4
+            else:
+                warn.append("%s：**没有一条候选**能“一个不相连的脚也不贴” ✗"
+                            "（保留旧候选集 ✓ 否则会接不上 ✗）" % tag)
         best, best_key, alt, alt_key = None, None, None, None
         esc_best, esc_best_key = None, None
         for path in cands:
@@ -2121,10 +2163,9 @@ def main(argv):
                         cr += 1
             pc = 0
             for _u in used_list:                  # ★ 按“段”算 ✓（= 渲染器口径 ✓）
-                p2, q2 = _u[0], _u[1]
-                own = {(t, c) for (t, c, x, y) in PIN_ALL
-                       if math.dist((x, y), p2) < 0.05 or math.dist((x, y), q2) < 0.05}
-                pc += pin_intr([p2, q2], own, PIN_ALL)
+                # ★ 2026-09-28 ✓ 改用 `seg_pin_intr` ✓ —— 与代价 `route_key`、闸门 `HARD_CLEAR`
+                #   **同一份判据** ✓（以前这里也抄了一遍 ✓）。
+                pc += seg_pin_intr([_u[0], _u[1]])
             ln = sum(plen(s["path"]) for s in seg_list)
             score = (SNAP_WEIGHTS[0] * ov + SNAP_WEIGHTS[1] * pc
                      + SNAP_WEIGHTS[2] * cr)
