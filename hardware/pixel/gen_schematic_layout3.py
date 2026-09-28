@@ -83,6 +83,11 @@ GAP_Y = 2 * GRID                 # 行间间隙 ≈ 4.06mm ✓
 #       （而用户手改版是**贴着实际空地在画** ✓，不依赖这条网格 ✓）。
 SOCKET_EXTRA = 0
 POS_FROM = None        # ★★ `--pos-from=<fzz>`：抄那一份的摆位 ✓（2026-09-28 ✓ 用户要求 ✓）
+# ★★ 从源文件抄来的**朝向** ✓（`标题 → transform attrib` ✓，`--pos-from` 用 ✓）：
+#   2026-09-28 ✓ 用户定：「**扩 `--pos-from` 连朝向一起抄**」✓
+#   起因 ✓：手改版把 `R1`/`C1` **各转 90°**（+ 挪位 ✓）⇒ `RC` **−63.9（−27%）** ✓、总长 **−91.5** ✓；
+#     ✗ 而 `--pos-from` 以前**只抄 (x,y)** ✗ ⇒ 抄过去会得到“位置对、朝向错”的图 ✗。
+POS_TF = {}
 # ★★ `ROTJ1`：**把 `J1` 转 180°** ✓（`--rotj1=1` ✓，默认**关** ✗）—— 2026-09-28 ✓ 用户提的路 ✓
 #   病 ✓（实测 ✓）：`J1` 的引脚在**左缘** ✓、本体在右 ✗ ⇒ 而线要从右边 `U1` 过来 ✗
 #     ⇒ 要么**绕**（band0 就是这么走的 ✓ 4 段 57.7 ✓ 干净 ✓）、要么**穿本体**（band1 ✗ 58.6 ✗）
@@ -182,12 +187,16 @@ def place_labels(P, LAB, title, gap=7.2):
 
 
 def read_positions(fzz):
-    r"""从一份 `.fzz` 读每件的**摆位** ✓ ⇒ `[(标题, x, y), …]`
+    r"""从一份 `.fzz` 读每件的**摆位** ✓ ⇒ `[(标题, x, y, transform_attrib), …]`
 
     ★★ 位置在哪里 ✓（2026-09-28 ✓ 我先读错过一次 ✗）：写在
       `instance / views / schematicView` 的**直接子** `geometry` 的 `x`/`y` ✓；
       ✗ **不能**用“子树里最后一个 geometry” ✗ —— 那是**连接器**的相对坐标 ✓，全是 `(0, 0)` ✗
       （我第一版就这么读的 ✗，得到“两版位置一模一样” 的假结果 ✗）。
+    ★★ **朝向也一起抄** ✓（2026-09-28 ✓ 用户定：「扩 `--pos-from` 连朝向一起抄」✓）：
+      朝向就在 `geometry` 的**子元素** `<transform m11…m33>` ✓（Fritzing 自己也是这么写的 ✓，
+      与 `J1` 那一手**同一种写法** ✓）⇒ **逐字照抄它的 attrib** ✓（不做矩阵换算 ✗ ——
+      看用户手改版里就是 `m11=0 m12=-1 m21=1 m22=0` 这样的 90° ✓）。
     """
     import xml.etree.ElementTree as _ET
     import zipfile as _zip
@@ -207,7 +216,11 @@ def read_positions(fzz):
                 for gg in sub:                      # ★ 只看**直接子** ✓
                     if gg.tag.split("}")[-1] == "geometry":
                         try:
-                            out.append((t, float(gg.get("x")), float(gg.get("y"))))
+                            _tf = None
+                            for _c in gg:               # ★ 朝向 = geometry 的**子元素** ✓
+                                if _c.tag.split("}")[-1] == "transform":
+                                    _tf = dict(_c.attrib)
+                            out.append((t, float(gg.get("x")), float(gg.get("y")), _tf))
                         except (TypeError, ValueError):
                             pass
     return out
@@ -435,12 +448,15 @@ def main(src, dst, pinfile, snap=False):
     #     ⇒ 抄的是**摆位**，不是位号偏移 ✓（那本来就该跟着重算 ✓）。
     if POS_FROM:
         _n = 0
-        for _t, _x, _y in read_positions(POS_FROM):
+        for _t, _x, _y, _tf in read_positions(POS_FROM):
             if _t in P:
                 P[_t].x, P[_t].y = _x, _y
+                if _tf:
+                    POS_TF[_t] = _tf
                 _n += 1
-        print("★ 抄摆位 POS_FROM ← %s ✓：%d 件坐标被覆盖 ✓（位号随后重算 ✓，可用 --gapx/--gapy 微调其它件 ✓）"
-              % (POS_FROM, _n))
+        print("★ 抄摆位 POS_FROM ← %s ✓：%d 件坐标被覆盖 ✓（**其中 %d 件连 `<transform>` 朝向一起抄** ✓；"
+              "位号随后重算 ✓，可用 --gapx/--gapy 微调其它件 ✓）"
+              % (POS_FROM, _n, len(POS_TF)))
     if ROTJ1 and "J1" in P:
         # ★★ 2026-09-28 ✓：`J1` **不额外左移** ✗ —— 试过，实测**在交付档上两败** ✗，已撤 ✓。
         #   起因 ✓：转 180° 后 band0 的 `J1` 引脚列（15.378 ✓）与 `U1` 左排的出脚走廊
@@ -495,6 +511,16 @@ def main(src, dst, pinfile, snap=False):
                                "m21": "0", "m22": "-1", "m23": "0",
                                "m31": "%g" % (_b[0] + _b[2]),
                                "m32": "%g" % (_b[1] + _b[3]), "m33": "1"})
+        # ★★ 从 `--pos-from` **照抄过来的朝向** ✓（用户 2026-09-28 定 ✓）：
+        #   ★ **逐字照抄** attrib ✓（不做矩阵换算 ✗ —— 手改版里什么就是什么 ✓）；
+        #   ★ 它**优先于** `ROTJ1` ✓（手改版里的 `J1` 本来就是 180° ✓ ⇒ 两边一致 ✓；
+        #     若源件没给某件的 transform ⇒ 那件仍然按本脚本自己的规则 ✓）。
+        elif POS_TF.get(ttl):
+            _tf = next((c for c in g if c.tag.split("}")[-1] == "transform"), None)
+            if _tf is None:
+                _tf = ET.SubElement(g, "transform")
+            _tf.attrib.clear()
+            _tf.attrib.update(POS_TF[ttl])
         # ★ 位号必须跟着搬 ✓（`titleGeometry.(x,y) = geometry + (xOffset,yOffset)` ✓ 机验 ✓）
         #   ★★ 而且 Offset 现在由 `place_labels()` **算** ✓（不再是零件自带的 ✗）：
         #     v4 的"位号压导线 8 处"就是这么来的 ✗ ⇒ 改成"上方留一格 + 候选位挑碰撞最少" ✓。

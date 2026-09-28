@@ -209,6 +209,15 @@ ONLY_NETS = None
 #      ⇒ 旧基线仍可一键复现 ✓：`--nopin`（= v15 行为 ✓）。
 HARD_PIN = True
 PIN_EPS = 0.05
+# ★★ `LANE_EPS`：**“同一条竖直车道”**（支线共享同网竖线时）判同的容差 ✓（2026-09-28 ✓ 实测定 ✓）
+#   病灶（实测 ✓✓，`DBG_T2` 把 `used` 打出来才看见 ✗）：`U1.connector3` 的脚 x = `58.578` ✓，
+#     而 `J1.connector1` 的落点 x = **`22.5779`** ✗（= 它的脚 x `15.3779` + 7.2 ✓）——
+#     两者相差 **1e-4** ✗（不是整数个 7.2 ✓）⇒ 用 `1e-6` 判“同车道” ✗ ⇒ **永远不命中** ✗
+#     （实测：候选加完**零效果** ✗、两档数字与 v27 逐字相同 ✗）。
+#   ★ 这 1e-4 是**零件自身坐标的浮点末位** ✓（同一个坑 2026-09-28 在 `DATA_IN` 断成两段上踩过 ✓）；
+#     `.fzz` **写出时四舍五入到 0.01 单位** ✓ ⇒ 写进文件后**两条线端点重合** ✓、Fritzing 载入后是**真接头** ✓。
+#   ⇒ 容差取 `1e-2` 单位 = 0.0028 mm ✓（网格步长 7.2 ✓ ⇒ 绝无误判 ✓）。
+LANE_EPS = 1e-2
 # ★★ `HARD_OVL`：**导线不许与已布好的线压在同一条直线上** ✓（用户规则② 的**真闸门** ✓，2026-09-28 ✓）
 #   病症（实测 ✓，`t27_1` = v15 + `--hardpin` ✓）：用户规则②（「**不同的导线，不能重叠**」✓）
 #     原来**只靠软代价**压 ✗（`wt = INT_W[0]×nov + …` ✓）⇒ 一开 `--hardpin` 候选集变小 ⇒
@@ -1576,7 +1585,7 @@ def main(argv):
     net_order = [n for n in POWER_FIRST if n in NETS] + \
                 [n for n in sorted(NETS) if n not in POWER_FIRST]
 
-    def trim_on_rail(seg_list, net):
+    def trim_on_rail(seg_list, net, rail_ys):
         r"""把“脚→轨”支线里**趴在轨上的多余点**删掉 ✓，并**同步 `used`** ✓（2026-09-28 ✓）
 
         ★ 为什么要点 ✓（明细实测 ✓，不是推的 ✗）：支线为了避开别人的线，会**沿着轨横走一段**
@@ -1599,7 +1608,14 @@ def main(argv):
                 continue
             _ny = p[-1][1]
             _old = [(p[k], p[k + 1], net) for k in range(len(p) - 1)]
-            _k = next((i for i, q in enumerate(p) if abs(q[1] - _ny) < 1e-6), None)
+            # ★★ 2026-09-28 ✓ **判据改对了** ✗（原版把“支线停在同网竖线上”那条 **剪成只剩 1 个点** ✗✗）：
+            #   ✗ 原版：`_k = 第一次出现 y == 末点 y 的点` ✗ —— 对「**沿脚行横走**」的共享竖线
+            #     型支线 ✗，它的**首点就在脚行上** ✓ ⇒ `_k = 0` ⇒ `del p[1:]` ⇒ 路径只剩
+            #     `[a]` ✗ ⇒ 被当“段被丢弃 ✗”扔掉 ✗ ⇒ **网表 ✗**（U1.connector3 的 GND 断开 ✗）。
+            #   ✓ 正解：**“在轨上”= 落在本网某一条轨的 y 上** ✓（`rail_ys` ✓）——
+            #     共享竖线型支线**根本不到轨** ✓ ⇒ `_k is None` ⇒ **原样跳过** ✓（形状保留 ✓）。
+            _k = next((i for i, q in enumerate(p)
+                       if any(abs(q[1] - _ry) < 1e-6 for _ry in rail_ys)), None)
             if _k is None or _k >= len(p) - 1:
                 continue                      # 没碰到轨 / 终点就是第一次碰轨 ⇒ 本来就好 ✓
             # ★★ 截到“**第一次碰到轨**”那一点 ✓（2026-09-28 ✓ 第二版实测后改回来 ✓）
@@ -1875,6 +1891,7 @@ def main(argv):
         if rail_ys:
             print("网 %-9s **电源轨** ✓：轨 y = %s ✓（%d 只脚各打一条支线 ✓）"
                   % (net, ["%.1f" % v for v in rail_ys], len(pts)))
+            _n_rail = len(pairs)        # ★ 本网轨支线的起点（见下：按 x 升序 ✓）
             for d in pts:
                 # ★★★ 选轨（2026-09-28 ✓ 实测修正 ✓）：**就近优先 ✓，但"走过去不许穿体"优先于"就近"** ✗
                 #   ✗ 病（实测 `Wire90012727` ✓）：`U1.VDD`（y=43.2）到**下轨**(143.4) 的距离
@@ -1896,6 +1913,12 @@ def main(argv):
                         break
                 pairs.append({"a": d["p"], "ra": d["ref"], "ca": d["cid"],
                               "b": (d["p"][0], _y), "rb": None, "cb": None})
+            # ★★ 2026-09-28 ✓ **同一条轨上的支线：按“脚的 x”从小到大布** ✓（= 锚点先落 ✓）
+            #   病灶（实测 ✓）：布序 = 网表顺序 ✗ ⇒ `U1.connector3`（x=58.6）**先于**
+            #     `J1.connector1`（x=15.4）布 ✗ ⇒ 轮到 `U1.c3` 想“**共享竖线**”时，
+            #     `J1` 那根竖线**还没画** ✗ ⇒ `used` 里搜不到搭接点 ✗ ⇒ 只能自己竖一趟 ✓
+            #   ⇒ 只要**让锚点先落** ✓（同一根轨按 x 升序 ✓），共享候选就自然命中 ✓。
+            pairs[_n_rail:] = sorted(pairs[_n_rail:], key=lambda q: q["a"][0])
         elif net in STAR_NETS and len(pts) >= 2:
             hub = pick_hub(pts)
             print("网 %-9s **星形** ✓：汇点 (%.1f,%.1f) ✓（%d 根枝 ✓）" % (net, hub[0], hub[1], len(pts)))
@@ -1928,6 +1951,7 @@ def main(argv):
             #     不穿体 ✓、不压别人的脚 ✓、不与已布线重叠 ✓、**贴脚 = 0** ✓（用户定：零容忍 ✓）。
             #     四档都不合格 ⇒ **退回通用路由** ✓ ⇒ **绝不会比原来差** ✓。
             _L = None
+            _Lfall = None                    # ★ 2026-09-28 ✓：「自己竖一趟」的兜底候选 ✓
             if rail_ys and pr["rb"] is None:
                 _n = PIN_N_BY_XY.get((round(a[0], 3), round(a[1], 3)), (0.0, 0.0))
                 if abs(_n[0]) > 0.5 and abs(_n[1]) < 1e-6:      # 法线**水平** ⇒ 能"横向出脚" ✓
@@ -1959,8 +1983,8 @@ def main(argv):
                                 if _u[2] != net:                    # 只搭**同网** ✓
                                     continue
                                 _p2, _q2 = _u[0], _u[1]
-                                if (abs(_p2[0] - _q[0]) > 1e-6
-                                        or abs(_q2[0] - _q[0]) > 1e-6):
+                                if (abs(_p2[0] - _q[0]) > LANE_EPS
+                                        or abs(_q2[0] - _q[0]) > LANE_EPS):
                                     continue                        # 必须**同一条竖直车道** ✓
                                 # ★ 轨可能在**下方**（y 更大 ✓）也可能在**上方** ✗ ⇒ 判据要**对称** ✓：
                                 #   ✗ 第一版写成 `abs(min(_p2[1], _q2[1]) - b[1])` ✗ ⇒ 只有"轨在上方"
@@ -1968,13 +1992,26 @@ def main(argv):
                                 #     **永远不触发** ✗（实测：两档数字与改前**逐字相同** ✗）。
                                 #   ✓ 正解 = **任一端落在轨 y 上** ✓、搭**另一端** ✓。
                                 _e1, _e2 = _p2[1], _q2[1]
-                                if (abs(_e1 - b[1]) > 1e-6 and abs(_e2 - b[1]) > 1e-6):
+                                if (abs(_e1 - b[1]) > LANE_EPS
+                                        and abs(_e2 - b[1]) > LANE_EPS):
                                     continue                        # 它必须**自己通到轨** ✓
-                                _ye = _e2 if abs(_e1 - b[1]) < 1e-6 else _e1
-                                if not (min(a[1], b[1]) + 1e-6 < _ye
-                                        < max(a[1], b[1]) - 1e-6):
-                                    continue                        # 搭点要在**脚与轨之间** ✓
-                                _c4 = [a, _q, (_q[0], _ye)]
+                                _ye = _e2 if abs(_e1 - b[1]) < LANE_EPS else _e1
+                                # ★★ 2026-09-28 ✓ **搭点允许落在“本支线的脚行”上** ✓
+                                #   （用户选 ②：在**支线搜索**里加这种候选 ✓；手改版第三次出现 ✓）
+                                #   病灶 ✗：原来要求 `min + ε < _ye < max − ε` ✗
+                                #     ⇒ 只认“邻居先到**某个中间端点**、本支线再到那个端点”✗
+                                #     ⇒ 而手改版的做法是：**邻居那根竖线本来就通到这条脚行** ✓
+                                #     （`J1` 的竖线 `(22.58,9)→(22.58,-72)` ✓）⇒ 本支线**横走到它的端点上** ✓
+                                #     ⇒ 此时 `_ye == a[1]` ✗ ⇒ 被那个严格不等式**一票否决** ✗✗
+                                #     （实测：`U1.c3` 一直自己竖一趟 81+7.2 ✗，而手改版只走 36 ✓）。
+                                #   ✓ 现在：`_ye == a[1]` 也放行 ✓（= 端点对端点 ✓ 电学上真连 ✓）；
+                                #     形状是 2 点 ✓ ⇒ 必须 `dedup_path` ✓（否则会多出一段**零点导线** ✗）。
+                                if abs(_ye - a[1]) < LANE_EPS:
+                                    _c4 = dedup_path([a, _q, (_q[0], _ye)])
+                                elif min(a[1], b[1]) + PIN_EPS < _ye < max(a[1], b[1]) - PIN_EPS:
+                                    _c4 = dedup_path([a, _q, (_q[0], _ye)])
+                                else:
+                                    continue                        # 既不在脚行上、也不在之间 ⇒ 不行 ✗
                                 if (not body_hard_bad(_c4, boxes, PIN_ALL)
                                         and not pin_hard_bad(_c4, PIN_ALL, own_pins)
                                         and not ovl_hard_bad(_c4, used)
@@ -1988,19 +2025,36 @@ def main(argv):
                                     and not pin_hard_bad(_cand, PIN_ALL, own_pins)
                                     and not ovl_hard_bad(_cand, used)
                                     and pin_intr(_cand, own_pins, PIN_ALL) == 0):
-                                _L = _cand
-                                break
+                                # ★★ 2026-09-28 ✓ **不立刻定案** ✗ —— 这是「自己竖一趟」的形状 ✓，
+                                #   先记下来当**兜底** ✓，继续往后（k 更大 / 另一方向）找
+                                #   「**共享竖线**」✓ —— 共享一定更短 ✓（实测 88.2 → 36.0 ✓），
+                                #   而第一版在这里就 `break` ✗ ⇒ 新候选永远轮不到 ✗（实测零效果 ✗）。
+                                if _Lfall is None:
+                                    _Lfall = _cand
+                                continue
                         if _L is not None:
                             break
+                    if _L is None:
+                        _L = _Lfall
             if _L is not None:
                 best, best_key = _L, route_key(_L, mine, own_pins, used)
                 # ★ 形状**从几何自己读** ✓（不加标志位 ✗ —— 两处记账早晚失步 ✗）：
                 #   2 点 = 直连 ✓；3 点且末点落在轨 y 上 = L 形到轨 ✓；
                 #   3 点而末点**不在轨上** = **T 形搭接** ✓（搭在别人的端点上 ✓）。
                 _tjpt = None
-                if len(_L) == 2:
+                if len(_L) == 2 and abs(_L[1][1] - _L[0][1]) > LANE_EPS:
                     _shape, _det = "直连（0 拐）", "直上/直下到轨"
-                elif abs(_L[-1][1] - b[1]) < 1e-6:
+                elif len(_L) == 2:
+                    # ★★ 2026-09-28 ✓ 新形状 ✓：**沿脚行横走，搭到同网那根竖线的端点上** ✓
+                    #   （= 用户手改版第三次的做法 ✓；`_ye == a[1]` 那一支 ✓；
+                    #    这种支线**根本不到轨** ✗ ⇒ 上面 `trim_on_rail` 必须认得它 ✗✗）
+                    _shape = "共享竖线（0 拐）"
+                    _det = ("沿脚行 %s %.1f ⇒ 搭在同网竖线的端点 (%.1f,%.1f) ✓"
+                            "（**不自己再竖一趟** ✓）"
+                            % ("向右" if _L[1][0] > a[0] else "向左",
+                               abs(_L[1][0] - a[0]), _L[-1][0], _L[-1][1]))
+                    _tjpt = _L[-1]
+                elif abs(_L[-1][1] - b[1]) < LANE_EPS:
                     _shape = "L 形（1 拐）"
                     _det = "出脚 %s %.1f" % ("向右" if _L[1][0] > a[0] else "向左",
                                             abs(_L[1][0] - a[0]))
@@ -2161,7 +2215,7 @@ def main(argv):
         #       ⇒ 轨再按**这些接口点**去连 ✓ ⇒ 谁都不与谁共线 ✓✓
         #   ★ 电气上等价 ✓（截掉的那截与轨同网、且被轨覆盖 ✓）；用户规则②“不许重叠”直接归零 ✓。
         if rail_ys:
-            _nt = trim_on_rail(segs, net)
+            _nt = trim_on_rail(segs, net, rail_ys)
             print("   支线清理 ✓：%d 条支线“趴在轨上”的多余点已删 ✓（落点保持不变 ✓；`used` 同步 ✓）"
                   % _nt)
         # ★ T 形搭接清单 ✓（用户要求“把被改动的支线清单打出来” ✓，2026-09-28 ✓）
