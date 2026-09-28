@@ -695,7 +695,44 @@ if len(pc_hits) > 6:
 #     交叉 ✓），可**没人**再问一句“这两根是**同一个网**吗”✗ ⇒ 那一类从两个工具里**都溜过去**了 ✗
 #     （v24/v25 那处 `DATA_IN` 折点压在 5V 竖线中段上 ✓ 就是这么漏掉的 ✓）。
 #   ★ 判据用**唯一那份** `sch_geom.on_seg` ✓（**中段** ✓ 两端不算 ✓ —— 与 `seg_cross` 同一口径 ✓）。
+def _invisible_break(vi, endpt, tol=0.05):
+    r"""`endpt`（第 `vi` 根线的一端）是不是**看不见的断点** ✗
+
+    ★ 为什么要有这一步 ✗（实测 ✓）：一根**直**线（轨 / 长支线 ✓）常被**打断成好几根** ✓
+      （每个接头/落点断一次 ✓ —— Fritzing 只认端点对端点 ✓，这是**必须**的 ✓），
+      而**断点在图上是看不见的** ✓（线还是一条直线 ✓）⇒ 拿它跟别的线比“距离够不够 2.03 mm”
+      就是**误报** ✗✗（实测：18 处里绝大部分是这种 ✗）。
+    ✓ 判据：**同网（同色）有另一根线从这个点沿本线方向直线续下去** ✓（三点共线且方向一致 ✓）
+      ⇒ 只是断点 ✗ ⇒ 看不见 ⇒ 不算“看得见的端” ✗。
+    """
+    _t, a, b, _c, _w = wires[vi]
+    _other = b if endpt == a else a
+    dx, dy = endpt[0] - _other[0], endpt[1] - _other[1]
+    L = math.hypot(dx, dy)
+    if L < 1e-9:
+        return False
+    _col = wires[vi][3]
+    for j in range(len(wires)):
+        if j == vi:
+            continue
+        _t2, c2, d2, col2, _w2 = wires[j]
+        if col2 != _col:                  # ★ 只看**同网**（断点只可能是同网接出来的 ✓）
+            continue
+        for _e in (c2, d2):
+            if math.dist(_e, endpt) > tol:
+                continue
+            _far = d2 if math.dist(_e, c2) <= tol else c2
+            ex, ey = _far[0] - endpt[0], _far[1] - endpt[1]
+            EL = math.hypot(ex, ey)
+            if EL < 1e-9:
+                continue
+            if (dx * ex + dy * ey) / (L * EL) > 0.999:      # ★ 同向续下去 ✓
+                return True
+    return False
+
+
 fj_hits = []
+fj_near = []
 for _i in range(len(widx)):
     _t1, _a1, _b1 = widx[_i]
     for _j in range(len(widx)):
@@ -705,17 +742,31 @@ for _i in range(len(widx)):
         if wires[_i][3] == wires[_j][3]:        # ★ 同网（同色）⇒ 是接头 ✓ 不算毛病 ✗
             continue
         for _v in (_a1, _b1):
-            if SG.on_seg(_v, _a2, _b2, 0.05):
-                fj_hits.append((_t1, _v, _t2, _a2, _b2))
-            elif math.dist(_v, _a2) <= 0.05 or math.dist(_v, _b2) <= 0.05:
+            _d2 = SG.p2seg(_v, _a2, _b2)
+            if SG.on_seg(_v, _a2, _b2, 0.05) or _d2 <= 0.05:
                 # ★ 跨网**端点粘端点**也算 ✓（同一个“看着接上”的另一半 ✓）
                 fj_hits.append((_t1, _v, _t2, _a2, _b2))
+            elif _d2 < CLEAR_PIN - PIN_EPS and not _invisible_break(_i, _v):
+                # ★★ 第二类 ✓：**擦身** ✗ —— 不到 2.03 mm ⇒ 肉眼**照样分不清**接没接上 ✗
+                #   （用户 2026-09-28 ✓：“要考虑人眼视觉的局限性，要尽量清晰” ✓）
+                #   ★ 只看**看得见的端** ✓（断点不算 ✗，否则误报一大堆 ✓）
+                fj_near.append((_t1, _v, _t2, _a2, _b2, _d2))
 print("── ★★ **跨网假接头** ✓（一根线的**端点/折点**落在**别的网**的线（中段 ✓ 或端点 ✓）上 ✗ "
       "⇒ 看着接上、其实没连 ✗✗）：**%d 处** %s"
       % (len(fj_hits), "✓✓" if not fj_hits else "✗✗ 必须 0 ✓"))
 for _t1, _v, _t2, _a2, _b2 in fj_hits[:6]:
     print("      ⚠ %-14s 端点 (%.1f,%.1f) 落在 %-14s (%.1f,%.1f)→(%.1f,%.1f) 的**中段**上 ✗"
           % (_t1, _v[0], _v[1], _t2, _a2[0], _a2[1], _b2[0], _b2[1]))
+# ★★ 同一条判据的**第二类** ✓（“擦身” ✓，用户定：看不清就改 ✓）：
+#   ★ 用**同一个数** `CLEAR_PIN = 7.2 单位 = 2.03 mm` ✓（就是“贴脚”那条的阈值 ✓）。
+print("── ★★ **跨网擦身** ✓（端点离**别的网**的线 < %.1f 单位 = %.2f mm ✗ ⇒ 一个线宽（%.2f mm）以内"
+      "照样分不清 ✗）：**%d 处** %s"
+      % (CLEAR_PIN, CLEAR_PIN * MMU, 0.875 * MMU, len(fj_near),
+         "✓✓" if not fj_near else "✗ 尽量改掉 ✓"))
+for _t1, _v, _t2, _a2, _b2, _d2 in sorted(fj_near, key=lambda z: z[5]):
+    print("      · %-14s 端点 (%.2f,%.2f) 离 %-14s (%.2f,%.2f)→(%.2f,%.2f) 只有 "
+          "%.2f 单位 = **%.2f mm** ✗"
+          % (_t1, _v[0], _v[1], _t2, _a2[0], _a2[1], _b2[0], _b2[1], _d2, _d2 * MMU))
 
 
 # ── ④d ★ 美学指标之二：**位号文字压到东西** ✓（2026-09-27 用户点名 ✓）──#   配 ① 别的元件的本体框 ✓ ② 导线 ✓ ③ 别的位号 ✓（三类分开报 ✓，且**逐条点名** ✓）。
