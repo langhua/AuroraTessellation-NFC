@@ -83,6 +83,22 @@ GAP_Y = 2 * GRID                 # 行间间隙 ≈ 4.06mm ✓
 #       （而用户手改版是**贴着实际空地在画** ✓，不依赖这条网格 ✓）。
 SOCKET_EXTRA = 0
 POS_FROM = None        # ★★ `--pos-from=<fzz>`：抄那一份的摆位 ✓（2026-09-28 ✓ 用户要求 ✓）
+# ★★ `ROTJ1`：**把 `J1` 转 180°** ✓（`--rotj1=1` ✓，默认**关** ✗）—— 2026-09-28 ✓ 用户提的路 ✓
+#   病 ✓（实测 ✓）：`J1` 的引脚在**左缘** ✓、本体在右 ✗ ⇒ 而线要从右边 `U1` 过来 ✗
+#     ⇒ 要么**绕**（band0 就是这么走的 ✓ 4 段 57.7 ✓ 干净 ✓）、要么**穿本体**（band1 ✗ 58.6 ✗）
+#     ⇒ “穿”又短又（在松口径下 ✗）免费 ⇒ 它选了穿 ✗（用户：「不行，`J1.3` 穿自己了」✗）。
+#   ✓ 转 180° ⇒ 引脚改到**右缘、面向电路** ✓ ⇒ “从右边过来”变成**合法且最短** ✓
+#     ⇒ 诱惑自己消失 ✓，**路由口径一个字不用动** ✓（本仓那句「不是路由问题，是摆位问题」✓）。
+#   ★ 写法取自**源件里已有的实例** ✓（不猜 ✗）：`C2` 面包板实例就是 180°：
+#     `m11=-1, m12=0, m13=0, m21=0, m22=-1, m23=0, m31=16.9524, m32=22.3444, m33=1` ✓；
+#     原理图实例**一个 transform 都没有** ✗ ⇒ 所以这一条要**用户开 Fritzing 看一眼**验收 ✓。
+#   ★ `m31 = 盒左+盒右`、`m32 = 盒上+盒下` ✓（= 2×中心 ✓ 与原点在哪无关 ✓）。
+#   ★★ 父元素必须是 **`geometry` 的子元素** ✗（`README.md` 第十一手 / `set_rot.py` 头 ✓）：
+#     我第一版写成 `schematicView` 的**兄弟** ✗ ⇒ **Fritzing 直接无视** ✗（用户实测「`J1` 没有旋转」✗）。
+#   ★★ **默认开 ✓**（2026-09-28 ✓ 用户开 Fritzing 验收通过 ✓）：引脚跑到**右缘朝内** ✓、
+#     行对齐 `J1.c2 ↔ U1.c2` 仍然 Δ=0 ✓、本体落在脚列上方 ✓（180° 的必然结果 ✓）。
+#     要回到旧朝向 ✗：`--rotj1=0` ✓。
+ROTJ1 = True
 # ★★ `--by-bb=<面包板.fzz>`：**按成功面包板的排布**摆 ✓（2026-09-28 ✓ 用户定的新逻辑 ✓）
 #  用户原话 ✓：「咱们已经有了**成功的面包板布线图**，完全可以从面包板布线图出发，来绘制原理图……
 #    面包板和原理图的重要区别，是少了**天地轨的约束**，带来了 5V 和 GND 穿体问题。所以，
@@ -391,6 +407,15 @@ def layout(P):
 def main(src, dst, pinfile, snap=False):
     pins, boxes, title, LAB = load_pins(pinfile)
     P = {t: L(t, mi, pins[mi], boxes[mi]) for mi, t in title.items()}
+    if ROTJ1 and "J1" in P:                # ★★ `--rotj1` ✓：J1 局部坐标转 180° ✓（见 ROTJ1 注释 ✓）
+        _d = P["J1"]
+        _b = _d.box
+        _mx, _my = _b[0] + _b[2], _b[1] + _b[3]
+        _d.pins = {c: (_mx - _px, _my - _py) for c, (_px, _py) in _d.pins.items()}
+        print("★ ROTJ1 ✓：`J1` 局部坐标转 180°（m31=%.3f m32=%.3f ✓）⇒ 引脚改到右缘、面向电路 ✓"
+              "（渲染器会自动按 `<transform>` 算 ✓，与 Fritzing 同口径 ✓）" % (_mx, _my))
+        for _c, _p in sorted(_d.pins.items()):
+            print("      %s → (%.3f, %.3f)" % (_c, _p[0], _p[1]))
     # ★★ `--by-bb` ✓：按**面包板排布**（用户 2026-09-28 定的新逻辑 ✓）—— 否则走旧规则 ✓
     if BY_BB:
         _sl = read_bb_slots(BY_BB)
@@ -416,6 +441,16 @@ def main(src, dst, pinfile, snap=False):
                 _n += 1
         print("★ 抄摆位 POS_FROM ← %s ✓：%d 件坐标被覆盖 ✓（位号随后重算 ✓，可用 --gapx/--gapy 微调其它件 ✓）"
               % (POS_FROM, _n))
+    if ROTJ1 and "J1" in P:
+        # ★★ 2026-09-28 ✓：`J1` **不额外左移** ✗ —— 试过，实测**在交付档上两败** ✗，已撤 ✓。
+        #   起因 ✓：转 180° 后 band0 的 `J1` 引脚列（15.378 ✓）与 `U1` 左排的出脚走廊
+        #     （`17.578 = U1左缘 29.78 − ESC_PIN 12.2` ✓）只差 **2.2** ✗ ⇒ 一根 `RC` 竖线
+        #     擦过 `c0/c1/c2`（2.20 单位 ✗）⇒ band0 贴脚 7 → 9 ✗。
+        #   ✗ 试法：`P["J1"].x -= 7.2` ✓ ⇒ 实测 **band1 贴脚 1 → 6** ✗✗、**交叉 15 → 18** ✗✗
+        #     （band0 只把交叉 16 → 15 ✓、画布 95.7 → 93.6 ✓）⇒ **交付档优先** ⇒ **撤** ✓。
+        #   ★ 结论 ✓（记下来，别再试 ✗）：那 2.2 单位的擦脚属于「`J1` 换向的几何后效」✓，
+        #     **不值得为它牺牲交付档** ✗ ⇒ band0 的贴脚 7 → 9 **照实记录** ✓。
+        pass
     LOFF = place_labels(P, LAB, title) if LAB else {}
     if snap:                             # 可选：把锚点吸到网格上（默认**不吸** ✓ ——
         for d in P.values():             # 吸了会破坏"脚同高" ✓，那才是要的 ✓）
@@ -445,6 +480,21 @@ def main(src, dst, pinfile, snap=False):
         d = P[ttl]
         g.set("x", "%g" % d.x)
         g.set("y", "%g" % d.y)
+        # ★★ `--rotj1` ✓：给 J1 写 180° 的 `<transform>` ✓
+        #   ✗ **父元素必须是 `geometry`** ✗（`README.md` 第十一手 / `set_rot.py` 头 ✓）：
+        #     我第一版写成 `schematicView` 的**兄弟** ✗ ⇒ **Fritzing 直接无视** ✗
+        #     （用户实测：「`J1` 没有旋转」✗ ⇒ 白验一轮 ✓）。
+        #   ✓ 形态照 `set_rot.py`：`<geometry …><transform m11…m33/></geometry>` ✓。
+        #   ★ `m31 = 盒左+盒右`、`m32 = 盒上+盒下` ✓（= 2×中心 ✓）；没有就新建 ✓、有就覆盖 ✓。
+        if ROTJ1 and ttl == "J1":
+            _b = d.box
+            _tf = next((c for c in g if c.tag.split("}")[-1] == "transform"), None)
+            if _tf is None:
+                _tf = ET.SubElement(g, "transform")
+            _tf.attrib.update({"m11": "-1", "m12": "0", "m13": "0",
+                               "m21": "0", "m22": "-1", "m23": "0",
+                               "m31": "%g" % (_b[0] + _b[2]),
+                               "m32": "%g" % (_b[1] + _b[3]), "m33": "1"})
         # ★ 位号必须跟着搬 ✓（`titleGeometry.(x,y) = geometry + (xOffset,yOffset)` ✓ 机验 ✓）
         #   ★★ 而且 Offset 现在由 `place_labels()` **算** ✓（不再是零件自带的 ✗）：
         #     v4 的"位号压导线 8 处"就是这么来的 ✗ ⇒ 改成"上方留一格 + 候选位挑碰撞最少" ✓。
@@ -533,6 +583,10 @@ if __name__ == "__main__":
     if "pos-from" in opts:                     # ★★ 抄摆位 ✓（2026-09-28 ✓ 用户要求 ✓）
         POS_FROM = opts["pos-from"]
         print("★ POS_FROM ← %s ✓（照搬该文件的 (x,y) ✓；位号随后重算 ✓）" % POS_FROM)
+    if "rotj1" in opts:                        # ★★ J1 转 180° ✓（**默认开** ✓；`--rotj1=0` 关 ✗）
+        ROTJ1 = opts["rotj1"] not in ("0", "false", "False")
+        print("★ ROTJ1 ← %s ✓（`J1` 引脚改到右缘、面向电路 ✓；用户 2026-09-28 开 Fritzing 验收通过 ✓）"
+              % ROTJ1)
     main(args[0], args[1],
          opts.get("pins", os.path.join(os.path.dirname(os.path.abspath(__file__)), "pins_v2.py")),
          snap=bool(opts.get("snap")))
