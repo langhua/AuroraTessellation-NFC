@@ -110,7 +110,20 @@ resolve = SB.resolve_parts_svg       # ★ 唯一实现已搬去 `sch_box.py` �
 
 
 # ═══════════════ 主流程 ═══════════════
-args = [a for a in sys.argv[1:] if not a.startswith("--")]
+# ★★ 位置参数 = “不以 `--` 开头、且**不是任何 `--` 选项的取值**” ✓（2026-09-28 修 ✗）
+#   ✗ 原来只按“不以 `--` 开头”筛 ✗ ⇒ 用**空格式**写选项时，它的**取值**会被当成位置参数 ✗✗：
+#     实测 `--verify-export _work\t58_1_图示.svg` ⇒ 那个 svg 落到 `args[2]`（= `px宽` ✗）
+#     ⇒ `ValueError: could not convert string to float` ✗（用户**第二次**踩 ✓）。
+#   ★ 本仓两种写法都用过 ✓（`--pins-out=` 必须带等号 ✗ / `--rails` 只能空格 ✗）
+#     ⇒ **一律两种都收** ✓，而且选项的取值不再污染位置参数 ✓。
+args, _i = [], 1
+while _i < len(sys.argv):
+    _a = sys.argv[_i]
+    if _a.startswith("--"):
+        _i += 1 if "=" in _a else 2          # 空格式：连它的取值一起跳过 ✓
+        continue
+    args.append(_a)
+    _i += 1
 opts = {}
 for i, a in enumerate(sys.argv[1:]):
     if a.startswith("--") and "=" in a:

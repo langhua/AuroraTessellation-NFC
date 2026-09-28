@@ -184,6 +184,20 @@ ESC_OFFS = (ESC_PIN, ESC_PIN + 7.2)
 #         v14 = 穿体 0 ✓ / 重叠 4 ✗；v15 = 重叠 0 ✓ / 穿体 6 ✗；硬闸门 = 两者都做不到 ✗。
 #   ⇒ **默认关** ✓（保持 v15 的干净基线 ✓）；留 `--hardbody` 供以后配合“换拓扑/换候选集”再试 ✓。
 HARD_BODY = False
+# ★★ `OTHER_BODY`：**不许钻“别人的”元件肚子** ✓（2026-09-28 ✓，判据与 `hits_own_body` 同一个 ✓）
+#   ★ 用法与 `HARD_BODY` 的**区别是关键** ✓：`HARD_BODY` 是“**只删候选**”✗ ⇒ 实测删到没路 ⇒
+#     兜底退回旧候选集 ⇒ 反而更差 ✗（68 对“找不到候选” ✗）。`OTHER_BODY` 是**软代价 + 字典序第一档** ✓
+#     ⇒ 候选一条不删 ✓；“全都没路”时各候选该项都非 0 ⇒ 自然退化回现状 ✓ **不会更差** ✓。
+#   ★ 病根（`--otherbody` 那一大段实测证据写在 `hits_other_body` 的 docstring 里 ✓）。
+#   ★ 默认**关** ✓ ⇒ v18 仍可逐项复现 ✓。
+OTHER_BODY = False
+# ★★ `ONLY_NETS`（`--only=GND,5V` ✓，2026-09-28 ✓ 用户要求「**请先在图上实际画出天地轨来**」✓）：
+#   只布指定的网 ✓ ⇒ 先出一个**中间产物**：**天地轨 + 元件 + 电源支线** ✓，信号线留到下一轮 ✓。
+#   ★ 这是用户那条新逻辑的第 ①～③ 步 ✓（先画天地轨 ✓ → 排元件 ✓ → 只连 5V/GND ✓）。
+#   ★ 顺序不变 ✓（`POWER_FIRST` 仍在最前 ✓）；只是**后面那些网整批不布** ✓。
+#   ⚠ 中间产物**不能用出厂检查评价** ✗：`check_netlist` 会报“网对不上”✓、
+#     渲染器会报很多“悬空导线端”✓ —— 那是**故意的** ✓（信号还没连呢 ✓）。
+ONLY_NETS = None
 # ★★ `HARD_PIN`：**线不许落在“别的脚”上** ✓（2026-09-28 ✓ 用户发现 v14 有 **9 处线身穿心** ✗）
 #   病症（实测 ✓，`_scratch/fake_conn.py` ✓）：一根竖线正好从 `U1` 左排三只脚的**坐标点**上
 #     穿过去（`(22.6,-18/-9/0)` ✓）⇒ **图上看着接上了 ✓、电气上是断的** ✗✗
@@ -650,6 +664,35 @@ MIN_SEG = 0.05
 FREECORR = False
 FREECORR_K = 3
 
+# ★★ `RAILS`：**电源轨** ✓（2026-09-28 ✓ **用户提的架构** ✓，仿面包板的电源轨 ✓）
+#   用户原话 ✓：「穿体都是 5V 线和 GND 带来的，可以类似面包板，在**所有步骤之前**，先在图的上方
+#     和下方，各画两条贯穿图纸的 5V 线和 GND 线，然后再排元件，元件的 5V 和 GND **优先跟上下的
+#     5V/GND 线连接**。……原理图在开始阶段**不用考虑线长约束、图纸大小约束**」✓
+#   为什么打在病根上 ✓（实测 ✓）：v18 的 **穿体 6 段全是 `GND`/`5V` 的长横线**穿过
+#     `U1`/`LED2`/`C2` ✗（如 `(55,-25.9)→(187,-25.9)` ✓）—— 因为它们现在是**链式**接法 ✓
+#     ⇒ 一条线要串起散布全图的脚 ✗ ⇒ 必然横穿别人的肚子 ✗。
+#   做法 ✓：`GND`/`5V` **不走链** ✗ ⇒ 每只脚就近**打一条短支线**到上/下电源轨 ✓；轨本身是
+#     **预置线段** ✓（不参与重排 ✗ ⇒ `fixed` ✓）。
+#   ★★ 两个必须记住的点 ✓：
+#     · 轨要在**每个接头 x 处断开** ✓ —— Fritzing 的连接是**端点对端点** ✗ ⇒ 支线落在干线的
+#       **中段**上是**连不上**的 ✗（这是 `emit` 里“同点即连”能生效的前提 ✓）。
+#     · 轨的 y 在**零件总包围盒之外** ✓（上/下各两条 ✓）⇒ 不压任何元件 ✓、也不在引脚行列上 ✓。
+#   `--rails` 打开 ✓（默认关 ✓ ⇒ v18 一字不变 ✓、可逐项复现 ✓）。
+RAILS = False
+# ★★ `RAIL_MARGIN`：轨离零件总包围盒多远 ✓
+#   ✗ 原来 **7.2**（1 格）**是个 bug** ✗✗ —— 2026-09-28 实测抓住 ✓（`t56_0` 跑出退出码 1 ✓）：
+#     5V 上轨落在 `y = -50.4` ✓，而 **U1 上边那 6 只脚在 `y = -43.2`** ✓ ⇒ 两者**正好差 7.2**
+#     ⇒ 触发用户那条规则「**导线与不相连的引脚要留安全距离**」✗（`CLEAR_PIN = 7.2` ✓，
+#       要求 **≥ 7.2 才算过** ✗，恰好等于不算过 ✓）⇒ 硬闸门直接判不合格 ✗
+#     （报错原文：`Wire90012891 U1.connector17 7.20 单位` ✓、`…connector18` ✓、
+#      `Wire90012902 U1.connector15..19` ✓ —— 一条轨**蹭了 U1 一整排脚** ✗）。
+#   ★★ 这条同时解释了 `t46` 那档「**贴脚 11 → 23**」✗✗ 的真正来源 ✓：
+#     我当时只归因于“支线要穿中间元件” ✗ —— **只对了一半** ✗；另一半就是这里 ✓：
+#     **轨骑在引脚行上** ⇒ 一条横轨一次性蹭掉十几只脚 ✗。
+#   ✓ 修法：**引脚安全距离（7.2）+ 一格（7.2）= 14.4** ✓ —— 两个数都是仓里既有的 ✓（不新造 ✗）。
+RAIL_MARGIN = 14.4     # 轨离包围盒多远（2 格 ✓ = CLEAR_PIN + 1 格 ✓）
+RAIL_GAP = 14.4        # 同侧两条轨之间（2 格 ✓）
+
 # ★★ `CHAN_N` / `NO_PINROWS`：**从用户手改版量出来的两条规则** ✓（2026-09-28 ✓，同一份 layout ✓）
 #   实测（`t30` ✓）：
 #     · 手改版：竖线 **14** 个 x ／ 横线 **9** 个 y ✓、总长 **1923.8** ✓、交叉 **11** ✓
@@ -897,6 +940,31 @@ def cross_count(path, used):
     return n
 
 
+def _body_hit(path, boxlist, R):
+    r"""**钻肚子判据（唯一实现 ✓）** —— 路径有没有**深深穿进**这些盒子里 ✓
+
+    ★ 采样口径与渲染器那一套一致 ✓（内缩 0.5 ✓），`R` = 允许在**路径两端 R 单位以内**
+      碰盒子（= “从脚上走出来” ✓）；`R = 0` ⇒ 进盒就算 ✗（别人的元件用这个 ✓）。
+    """
+    for k in range(len(path) - 1):
+        p, q = path[k], path[k + 1]
+        for box in boxlist:
+            if not seg_hits_box(p, q, box, -0.5):
+                continue
+            n = max(2, int(max(abs(q[0] - p[0]), abs(q[1] - p[1]))) + 1)
+            for i in range(n + 1):
+                t = i / n
+                x, y = p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t
+                if not (box[0] + 0.5 <= x <= box[2] - 0.5
+                        and box[1] + 0.5 <= y <= box[3] - 0.5):
+                    continue
+                if R > 0.0 and min(math.dist((x, y), path[0]),
+                                   math.dist((x, y), path[-1])) <= R:
+                    continue                    # 端点附近 = 从脚上出来 ✓ 豁免 ✓
+                return True
+    return False
+
+
 def hits_own_body(path, own_boxes, R=10.0):
     """路径是否**穿过了自己两端元件的本体** ✓（隔端点 R 单位**以外**才算 ✗）
 
@@ -908,20 +976,31 @@ def hits_own_body(path, own_boxes, R=10.0):
       ✓ 现在：自己的本体只允许在**路径两端 R 单位以内**碰 ✓（= "从脚上走出来" ✓）；
         隔得远还在本体里 ⇒ 一律不许 ✓。R = 10 单位 ≈ 2.8 mm ✓（够离开引脚与边界 ✓）。
     """
-    for k in range(len(path) - 1):
-        p, q = path[k], path[k + 1]
-        for box in own_boxes:
-            if not seg_hits_box(p, q, box, -0.5):
-                continue
-            n = max(2, int(max(abs(q[0] - p[0]), abs(q[1] - p[1]))) + 1)
-            for i in range(n + 1):
-                t = i / n
-                x, y = p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t
-                if (box[0] + 0.5 <= x <= box[2] - 0.5 and box[1] + 0.5 <= y <= box[3] - 0.5
-                        and min(math.dist((x, y), path[0]),
-                                math.dist((x, y), path[-1])) > R):
-                    return True
-    return False
+    return _body_hit(path, own_boxes, R)
+
+
+def hits_other_body(path, boxes, mine, R=0.0):
+    r"""路径是否**钻进了“别人的”元件本体** ✓（`--otherbody` ✓，2026-09-28 ✓）
+
+    ★★ 为什么必须有它 ✗（2026-09-28 实测 ✓，**和“自己本体”那条是同一个漏洞** ✗）：
+      当时只补了“自己的元件”✗ —— 而**别人的元件**这里是敞开的 ✗✗：
+        `route_key` 里对别人只算 `nv` = **“离盒子 < `CLEAR`(6) 的段数”** ✗，
+        而且 `nvb = 1 if nv else 0` ⇒ **布尔化** ✗ ⇒ 于是：
+          · “擦着盒边过 1 段” ✓ 与 “从 `U1` 肚子里横穿 124 单位” ✗ **同价** ✗✗
+          · 而“钻肚子”还**免费**拿到“零交叉 + 最短” ✓✓ ⇒ 布线器当然选它 ✗
+      ⇒ 实测证据（基线 v18 ✓，用渲染器**点名**的穿体段 + 写出的 `.fzz` 颜色反查网 ✓）：
+        6 段穿体全是**长横线** ✓ 且都是**最长的几根** ——
+        `GND 157.2 单位`（穿 LED2 84 深 + U1 **172** 深 ✗）、`DATA_OUT 157.2`（穿 C2 ✗）、
+        `5V 151.6`（穿 U1 **170** 深 ✗）、`5V 132.0`（穿 U1 **124** 深 ✗）、
+        `RC 127.2`（穿 C2 ✗）—— 全是“从右边 J2 的脚列一路横穿到左边 U1 的脚列” ✗。
+      ⇒ 判据**与 `hits_own_body` 同一个** ✓（`_body_hit` 一份实现 ✓），只是：
+        · `R = 0` ✓（**不豁免**：别人的元件不是这条线的落脚点 ✓，没有“从脚上出来”一说 ✓）；
+        · 排位与 `hits_own_body` **并列第一** ✓（“不许钻任何元件的肚子” ✓）——
+          ✗ **不是**照 `HARD_BODY` 那样“只删候选” ✗（实测那会把候选删光 ⇒ 68 对“找不到候选”
+            ⇒ 兜底退回旧候选集 ⇒ 反而更差 ✗，见上面 `HARD_BODY` 那段病史 ✓）。
+    """
+    return _body_hit(path, [b for t, b in boxes.items() if t not in mine], R)
+
 
 
 def main(argv):
@@ -987,6 +1066,10 @@ def main(argv):
         global FREECORR_K
         FREECORR_K = int(argv[argv.index("--freecorr-k") + 1])
         print("空地走廊条数 FREECORR_K = %d ✓（每个空档里按 (i+1)/(k+1) 分位放 ✓）" % FREECORR_K)
+    if "--rails" in argv:                      # ★★ 电源轨 ✓（用户 2026-09-28 提的架构 ✓）
+        global RAILS
+        RAILS = True
+        print("电源轨 RAILS：**开** ✓（GND/5V 每脚就近接上/下轨 ✓，不再走链 ✗）")
     if "--ring" in argv:                       # 实验 ✓：开“元件外圈环廊”（默认关 ✓）
         global OUTER_RING
         OUTER_RING = True
@@ -999,6 +1082,27 @@ def main(argv):
         global HARD_BODY
         HARD_BODY = True
         print("硬闸门 HARD_BODY：**开启** ✓（`--hardbody` 实验 ✓；实测会多出 68 处“没候选” ✗）")
+    if "--otherbody" in argv:                  # ★★ 第二手 ✓：不许**钻“别人的”肚子** ✓（软代价 ✓）
+        global OTHER_BODY
+        OTHER_BODY = True
+        print("钻别人肚子 OTHER_BODY：**开** ✓（“进别人的元件本体”与“穿自己本体”并列第一档 ✓；"
+              "★ 软代价、**不删候选** ✓ —— 与 `--hardbody` 的“只删候选”不同 ✗ ✓）")
+    # ★★ 只布几个网 ✓（先出天地轨的中间产物 ✓）—— ★ 支持**两种写法** ✓（2026-09-28 修 ✗）：
+    #   ✗ 原来只认 `--only GND,5V`（空格式 ✗），而驱动脚本写的却是 `--only=GND,5V`（等号式 ✗）
+    #     ⇒ 那个 `if "--only" in argv` **静默为假** ✗✗ ⇒ `t56_0` / `t56_1` 其实都是“**全布**”✗、
+    #        而且两档**完全重复** ✗（白跑一档 ✓）。
+    #   ★ 教训：**开关的名字别只按一种写法匹配** ✗ —— 本仓两种写法都出现过 ✓
+    #     （`--pins-out=` 必须带等号 ✗ / `--rails` 只能空格 ✗ ⇒ 很容易踩 ✓；
+    #      其它开关先不动 ✗，但**新开关一律两种都认** ✓）。
+    _only = None
+    if "--only" in argv:
+        _only = argv[argv.index("--only") + 1]
+    else:
+        _only = next((a.split("=", 1)[1] for a in argv if a.startswith("--only=")), None)
+    if _only is not None:
+        global ONLY_NETS
+        ONLY_NETS = set(_only.split(",")) - {""}
+        print("只布这些网 ONLY_NETS = %s ✓（中间产物 ✓：其余网这一轮不布 ✓）" % sorted(ONLY_NETS))
     if "--rip" in argv:                       # 抽出重排轮数 ✓（默认 3 ✓；0 = 关 ✓）
         global RIP_ROUNDS
         RIP_ROUNDS = int(argv[argv.index("--rip") + 1])
@@ -1107,6 +1211,18 @@ def main(argv):
     print("keep-out 盒: %s" % ", ".join("%s(%.2f,%.2f→%.2f,%.2f)" % ((t,) + b)
                                          for t, b in sorted(boxes.items())))
 
+    # ★★ 电源轨的 y ✓（`--rails` ✓，2026-09-28 ✓ 用户提的架构 ✓）—— 全部在包围盒**之外** ✓
+    RAIL_Y = {}
+    if RAILS and UBOX is not None:
+        _yt_in = UBOX[1] - RAIL_MARGIN          # 上侧**内**轨（5V ✓，支线短 ✓）
+        _yt_out = _yt_in - RAIL_GAP             # 上侧**外**轨（GND ✓）
+        _yb_in = UBOX[3] + RAIL_MARGIN          # 下侧内轨（5V ✓）
+        _yb_out = _yb_in + RAIL_GAP             # 下侧外轨（GND ✓）
+        RAIL_Y = {"5V": [_yt_in, _yb_in], "GND": [_yt_out, _yb_out]}
+        print("电源轨 ✓：上 GND y=%.1f / 5V y=%.1f ｜ 下 5V y=%.1f / GND y=%.1f ✓"
+              "（零件包围盒 y %.1f…%.1f ✓）"
+              % (_yt_out, _yt_in, _yb_in, _yb_out, UBOX[1], UBOX[3]))
+
     # ★★ 空地走廊 ✓（`--freecorr` ✓，2026-09-28 ✓ **换机制** ✓）—— 走廊位置由**空档中央**定 ✓
     #   ① 元件盒在各轴上的投影 ⇒ ② 空档（gap）✓ ⇒ ③ 每个空档里按 `(i+1)/(k+1)` 分位放走廊 ✓
     #   （离空档两边都 ≥ `CLEAR` 才要 ✓；空档 < `2×CLEAR` 就不放 ✓ —— 那儿本来也挤不进线 ✓）
@@ -1185,6 +1301,59 @@ def main(argv):
     POWER_FIRST = ("GND", "5V")
     net_order = [n for n in POWER_FIRST if n in NETS] + \
                 [n for n in sorted(NETS) if n not in POWER_FIRST]
+
+    def trim_on_rail(seg_list):
+        r"""把“脚→轨”支线里**趴在轨上的多余点**删掉 ✓，并**同步 `used`** ✓（2026-09-28 ✓）
+
+        ★ 为什么要点 ✓（明细实测 ✓，不是推的 ✗）：支线为了避开别人的线，会**沿着轨横走一段**
+          才到落点 ✗ —— 而**那一段本来就是轨** ✗（同网 ✓ 同一条水平线 ✓ 电学上同一段导体 ✓）。
+          ⇒ 它一删，支线就只剩“竖直 / 斜着到达落点”那一段 ✓ ⇒ **与轨不共线** ✓✓
+          ⇒ 实测：`(27.4,43.2)→(55.0,-57.6)` 原来正是“两段（一竖一横）” ✓，现在是**一条斜线** ✓。
+        ★★ 两件必须一起做 ✓（否则又白干 ✗）：
+          ① **保留最后一个点（= 落点）** ✓ ⇒ 落点**保持不变** ✓ ⇒ 下面建轨时用它当断点依然有效 ✓；
+          ② **同步 `used`** ✗ —— ✗ 第一版只改 `path` 不改 `used` ✗ ⇒ 自检拿**陈旧段**报
+             “重叠 6 对” ✗✗（而**渲染器从写出的文件量**是 **0 对** ✓ ⇒ 假警报 ✓）。
+        ★ 两次调用 ✓（布完支线后 ✓ + 抽出重排后 ✓）：重排会把路径**重算一遍** ✗ ⇒ 又会
+          把支线放回轨上 ✗ ⇒ 必须再清一次 ✓。因为**落点不变** ✓，不用重建轨 ✓✓。
+        """
+        n = 0
+        for s in seg_list:
+            if s.get("fixed") or s.get("to") is not None:
+                continue                          # 只动“脚→轨”支线 ✓
+            p = s.get("path") or []
+            if len(p) < 2:
+                continue
+            _ny = p[-1][1]
+            _old = [(p[k], p[k + 1]) for k in range(len(p) - 1)]
+            _k = next((i for i, q in enumerate(p) if abs(q[1] - _ny) < 1e-6), None)
+            if _k is None or _k >= len(p) - 1:
+                continue                      # 没碰到轨 / 终点就是第一次碰轨 ⇒ 本来就好 ✓
+            # ★★ 截到“**第一次碰到轨**”那一点 ✓（2026-09-28 ✓ 第二版实测后改回来 ✓）
+            #   ✗ 第二版“删掉所有在轨上的点、保留最后一个落点” ✗ ⇒ 实测**重叠确实归零了 ✓**，
+            #     但**副作用**是：支线被逼成**一条斜线** ✗ ⇒ 实测 `Wire90012890`
+            #     `(27.4,43.2)→(55.0,-57.6)` **斜穿过 U1 本体 152 单位深** ✗✗
+            #     （它原来是“竖直 + 水平”两段 ✓ 绕在 U1 外面 ✓）。
+            #   ✓ 截到第一次碰轨处 ⇒ 支线保持竖直 ✓ ⇒ 不会斜穿 ✓；
+            #     而“沿轨挪”的那一截交给轨 ✓（同网、同一条水平线 ✓）—— 那一段本来就多余 ✓。
+            del p[_k + 1:]
+            s["b"] = p[-1]
+            _new = [(p[k], p[k + 1]) for k in range(len(p) - 1)]
+            for _sg in _old:                      # ★ 同步 used ✓（陈旧段必须拔掉 ✗）
+                if _sg not in _new and _sg in used:
+                    used.remove(_sg)
+            for _sg in _new:
+                if _sg not in used:
+                    used.append(_sg)
+            n += 1
+        return n
+    # ★★ `--only=GND,5V` ✓（用户 2026-09-28：「**请先在图上实际画出天地轨来**」✓）——
+    #   只布指定的网 ✓ ⇒ 先出**中间产物**：**天地轨 + 元件 + 电源支线** ✓（第 ①～③ 步 ✓）。
+    #   ★ 顺序不变 ✓（电源仍在最前 ✓）—— 只是**后面那些网整批不布** ✓。
+    if ONLY_NETS:
+        _keep = [n for n in net_order if n in ONLY_NETS]
+        print("★ `--only` ✓：只布 %s ✓（其余 %d 个网这一轮不布 ✓ —— 中间产物 ✓）"
+              % (",".join(_keep), len(net_order) - len(_keep)))
+        net_order = _keep
     def route_key(path, mine, own_pins, used):
         r"""**一条路径的代价** ✓ —— 唯一实现 ✓（首轮布线 / 抽出重排 / “旧路径重算”全用它 ✓）
 
@@ -1234,12 +1403,15 @@ def main(argv):
         #   实测从 U1 左排往左出、就会经过 J1 旁边的空档 ✓）。
         wt = INT_W[0] * nov + INT_W[1] * pintr
         nvb = 1 if nv else 0
+        # ★★ `--otherbody` ✓：把“**钻别人的肚子**”提到**与 `hits_own_body` 并列的第一档** ✓
+        #   （默认关 ⇒ 下面两行的元组**逐字节不变** ✓ ⇒ v18 可复现 ✓）。
+        ob = 1 if (OTHER_BODY and hits_other_body(path, boxes, mine)) else 0
         if NEW_ORDER:                  # ★ 默认开 ✓：用户规则（贴脚+重叠）排在代理规则之前 ✓
-            return (1 if hits_own_body(path, own_boxes) else 0, ostep, wt, nvb,
+            return (1 if (hits_own_body(path, own_boxes) or ob) else 0, ostep, wt, nvb,
                     cross_count(path, used), inside_count(path, own_boxes), bends(path),
                     plen(path) + diag_extra(path) + K_OUT * out_len(path, UBOX))
         # ✗ 旧次序（`--oldorder` = A 基线 ✓，实测与 v14 一字节不差 ✓）
-        return (1 if hits_own_body(path, own_boxes) else 0, nvb, ostep, wt,
+        return (1 if (hits_own_body(path, own_boxes) or ob) else 0, nvb, ostep, wt,
                 cross_count(path, used), inside_count(path, own_boxes), bends(path),
                 plen(path) + diag_extra(path) + K_OUT * out_len(path, UBOX))
 
@@ -1392,9 +1564,18 @@ def main(argv):
                 _ord.append(_nxt)
             pts = _ord
         segs = []
-        # ★ 连接**对** ✓：默认 = 相邻两脚（链 ✓）；`STAR_NETS` 里的 = 每脚 → 汇点（星 ✓）
+        # ★ 连接**对** ✓：默认 = 相邻两脚（链 ✓）；`STAR_NETS` 里的 = 每脚 → 汇点（星 ✓）；
+        #   ★★ `RAILS` 里的 = 每脚 → **就近的上/下电源轨** ✓（2026-09-28 ✓ 用户提的架构 ✓）
         pairs = []
-        if net in STAR_NETS and len(pts) >= 2:
+        rail_ys = RAIL_Y.get(net, []) if RAILS else []
+        if rail_ys:
+            print("网 %-9s **电源轨** ✓：轨 y = %s ✓（%d 只脚各打一条支线 ✓）"
+                  % (net, ["%.1f" % v for v in rail_ys], len(pts)))
+            for d in pts:
+                _y = min(rail_ys, key=lambda v: abs(v - d["p"][1]))   # 就近（上/下）✓
+                pairs.append({"a": d["p"], "ra": d["ref"], "ca": d["cid"],
+                              "b": (d["p"][0], _y), "rb": None, "cb": None})
+        elif net in STAR_NETS and len(pts) >= 2:
             hub = pick_hub(pts)
             print("网 %-9s **星形** ✓：汇点 (%.1f,%.1f) ✓（%d 根枝 ✓）" % (net, hub[0], hub[1], len(pts)))
             for d in pts:
@@ -1423,6 +1604,84 @@ def main(argv):
                          "to": ({"ref": pr["rb"], "cid": pr["cb"]} if pr["rb"] else None),
                          # ★ 抽出重排要用同一套上下文 ✓（`mine`/`own_pins` ✓）
                          "mine": mine, "own_pins": own_pins, "key": best_key})
+        # ── ★★ 修“重叠 6 对” ✓（2026-09-28 ✓ 明细实测 ✓，不是推的 ✗）─────────────────
+        #   病状 ✓（`t57` 的 6 对**全是同一个形态** ✓）：
+        #       支线 `(0.0,-57.6)→(83.8,-57.6)` 与 轨段 `(49.4,-57.6)→(83.8,-57.6)` **共线** ✗
+        #   病根 ✓：支线为了避开别人的线，会**先沿轨横走一段**才到落点 ✗ ——
+        #       而**那一段本来就是轨** ✗（同网 ✓、同一条水平线 ✓、电学上是同一段导体 ✓）。
+        #   ✓ 治法：把支线**第一次到达轨 y 之后的部分全部截掉** ✓（那部分交给轨去覆盖 ✓）
+        #       ⇒ 支线的终点 = 它**垂直到达轨**的那个点 ✓
+        #       ⇒ 轨再按**这些接口点**去连 ✓ ⇒ 谁都不与谁共线 ✓✓
+        #   ★ 电气上等价 ✓（截掉的那截与轨同网、且被轨覆盖 ✓）；用户规则②“不许重叠”直接归零 ✓。
+        if rail_ys:
+            _nt = trim_on_rail(segs)
+            print("   支线清理 ✓：%d 条支线“趴在轨上”的多余点已删 ✓（落点保持不变 ✓；`used` 同步 ✓）"
+                  % _nt)
+
+        # ★★ 电源轨**本身** = 这条网的**预置线段** ✓（`fixed` ✓ ⇒ 不参与抽出重排 ✗）
+        #   ★ 断点 = **支线真正落到轨上的那些点** ✓（= 截断后的终点 ✓，**不是**“脚的 x” ✗）——
+        #     Fritzing 的连接是**端点对端点** ✗ ⇒ 支线落在干线**中段**上就连不上 ✗；
+        #     而用“脚的 x”当断点时，支线的落点常常**不在那儿** ✗（它绕了 ✓）⇒ 支线得沿轨挪过去 ✗
+        #     ⇒ 那正是上面那 6 对重叠的来源 ✓。用**落点本身**当断点 ⇒ 一次对上 ✓。
+        # ★★★ 轨的 x 范围 = **该网自己所有接头（上下两轨合并）的 min/max** ✓
+        #   ✗ 两个被实测否证的版本（都留了**悬空线头** ✗ ⇒ Fritzing 画飞线 ✗，见下 ✓）：
+        #     · 初版：`min(_xs)/max(_xs)` **每条轨各算各的** ✗ ⇒ 两轨端点不齐（-17.172 vs -0.672 ✗）
+        #       ⇒ 一根竖线接不上 ⇒ 得补折线 ⇒ 像打补丁 ✗；
+        #     · 方案 A（用户选过 ✓）：锚到**整个零件包围盒** ± margin ✗ ⇒ 两轨对齐了 ✓
+        #       但轨**横贯全图** ✗ ⇒ 实测总长 2025 → **3518** ✗✗、画布 94.7 → **163.6** ✗。
+        #   ✓ 现在这版：**用该网自己的接头范围** ⇒ ① 同网两轨**天然对齐** ✓（同一对 min/max ✓）
+        #     ② 轨**不外伸** ⇒ 端点**正好落在最外侧的支线落点上** ✓ ⇒ **没有悬空线头** ✓✓
+        #     ③ 顺带把长度收回来 ✓。
+        _allx = sorted({round(s["b"][0], 4) for s in segs
+                        if not s.get("fixed") and s.get("to") is None
+                        and any(abs(s["b"][1] - _yy) < 1e-6 for _yy in rail_ys)})
+        _rx = {}
+        if _allx:
+            # ★ **左端再外伸一格**（= 7.2 = `CLEAR_PIN` ✓），**右端不外伸** ✓ —— 为什么 ✗：
+            #   ✗ 原来竖线放在 `x = min(_allx)` ✗ ⇒ 实测**与最左侧那条支线的竖直段共线** ✗：
+            #       支线 (-2.8,-9.0)→(-2.8,-72.0) 与 竖线 (-2.8,-72.0)→(-2.8,180.0)
+            #       ⇒ 重叠段 [-72,-9] ✗ ⇒ 自检报「不同的导线重叠 **1 对**」✗、**退出码 1** ✗
+            #         （电气上无害 ✓ —— 同一网的导体；但本仓「不同的导线不许重叠」是**硬闸门** ✗）。
+            #   ✓ 左端外伸一格 ⇒ 竖线落在这**一格之外** ✓ ⇒ 与任何支线都不共线 ✓；
+            #     而竖线的**两个端点**分别落在**上/下轨的端点**上 ✓（轨端就在这个 x ✓）⇒ **不算悬空** ✓
+            #     ⇒ 悬空线头同时归零 ✓（右端不外伸 ⇒ 那里也没有线头 ✓）。
+            #   ★ 位置安全 ✓：x 在**所有元件左侧**、y 是轨线（本就在包围盒之外 ✓）⇒ 不穿本体 ✓。
+            _x0, _x1 = min(_allx) - 7.2, max(_allx)
+            _drawn = []
+            for _y in rail_ys:
+                _xs = sorted({round(s["b"][0], 4) for s in segs
+                              if not s.get("fixed") and s.get("to") is None
+                              and abs(s["b"][1] - _y) < 1e-6})
+                if not _xs:
+                    continue                      # 这条轨上一条支线都没有 ⇒ 不必画 ✗
+                _path = ([(_x0, _y)] + [(v, _y) for v in _xs] + [(_x1, _y)])
+                for _k in range(len(_path) - 1):
+                    used.append((_path[_k], _path[_k + 1]))
+                segs.append({"a": _path[0], "b": _path[-1], "path": _path,
+                             "from": None, "to": None, "mine": set(), "own_pins": set(),
+                             "key": None, "fixed": True})
+                _drawn.append(_y)
+                _rx[_y] = _x0
+
+            # ★★★ 同网的多条轨**必须互连** ✗（2026-09-28 ✓ 实测真断点 ✓）：
+            #   **导线是导体 ⇒ 只有接上才算同一个网** ✓；两条平行的轨**不会自动通** ✗。
+            #   ✗ 实测：GND 上轨（6 只脚 ✓）与下轨（3 只脚 ✓）**分成两个连通分量** ✗ ⇒
+            #     而 Fritzing 底部**看不出** ✗（它只数"每条连接有没有导线"✗ ⇒ 用户原话
+            #     "**只管接全没有、不管接对没有**"✓）。
+            #   ★ 形状（2026-09-28 修订 ✓）：两轨端点**已经对齐**（同一对 min/max ✓）
+            #     ⇒ **一根竖线**即可 ✓ ⇒ 竖线两端**分别落在两条轨的端点上** ✓（重合 ✓）
+            #     ⇒ **不留悬空线头** ✓（这是"飞线"的关键 ✓ —— 见上面那条注释 ✓）。
+            if len(_drawn) > 1:
+                _vx = _x0
+                _vp = [(_vx, _y) for _y in sorted(_drawn)]
+                for _k in range(len(_vp) - 1):
+                    used.append((_vp[_k], _vp[_k + 1]))
+                segs.append({"a": _vp[0], "b": _vp[-1], "path": _vp,
+                             "from": None, "to": None, "mine": set(), "own_pins": set(),
+                             "key": None, "fixed": True})
+                print("   ★ 同网两条轨**互连** ✓：竖线 x=%.3f ✓（y %.1f → %.1f ✓）"
+                      "—— 不连就是**两个网** ✗（Fritzing 底部**看不出** ✗）"
+                      % (_vx, min(_drawn), max(_drawn)))
         nets_segs[net] = segs
         print("网 %-9s %d 个脚 → %d 段（弯 %d）"
               % (net, len(pts), len(segs), sum(bends(s["path"]) for s in segs)))
@@ -1486,6 +1745,15 @@ def main(argv):
             used_snap = list(used)
             base = gstat(used, allseg)
             for s in allseg:
+                if s.get("fixed"):             # ★ 电源轨是**预置**的 ✓ ⇒ 不参与重排 ✗
+                    continue
+                # ★★ “**脚→轨**”支线也**不参与重排** ✗（2026-09-28 ✓）——
+                #   它们刚被 `trim_on_rail` 收拾干净 ✓（截到第一次碰轨 ✓），而重排会
+                #   `route_pair(a2, b2, …)` **重算一遍** ✗ ⇒ 又会把支线放回轨上 ✗✗
+                #   （实测：重排后再清理一次 = “4 条/2 条”又回来了 ✓）。
+                #   ★ 两条代价一起省了 ✓：不用“重排后再清理” ✓、也不用**重建轨** ✓。
+                if RAILS and s.get("to") is None:
+                    continue
                 a2, b2 = s["path"][0], s["path"][-1]
                 segl = [(s["path"][k], s["path"][k + 1]) for k in range(len(s["path"]) - 1)]
                 keep = [u for u in used if u not in segl]
@@ -1511,6 +1779,9 @@ def main(argv):
                       "加权 %.0f → %.0f ✓）"
                       % (rnd + 1, nimp, ntry, base[0], base[1], base[2],
                          now[0], now[1], now[2], base[4], now[4]))
+
+    # ✗ “抽出重排后再清理一次”**已取消** ✓（2026-09-28 ✓）：现在重排**跳过**“脚→轨”支线 ✗
+    #   ⇒ 它们自始至终没被改过 ✓ ⇒ 不需要再清 ✓（也就不会因为“落点变了”而要重建轨 ✓）。
 
     # ── ★ 规则自检（闸门 ✓）：“**不同的导线不能重叠**” ✓（2026-09-27 用户定 ✓）──
     #   ★★ 次序很重要 ✗（面包板那天的教训 ✓）：**先查“有没有重叠” ✓、再查连通 ✓** ——
@@ -1725,9 +1996,142 @@ def emit(sroot, insts, z, nets_segs, orig_path, out_path):
         raise SystemExit("✗ 原文件里没有 Wire 模板")
     host = pm.child(sroot, "instances")
     host = sroot if host is None else host
+    # ★★★ 先清掉**输入文件里残留的旧导线实例** ✓（2026-09-28 ✓ —— 修“C1/EPAD 那条飞线”✓）
+    #   ★ 病因（`t62` 量出来的事实 ✓，不是推的 ✗）：输入 `.fzz` 里存着 **90 个实例**
+    #     的 `schematicView` **已被上一站删掉** ✗（`gen_schematic_layout3` 只 `vw.remove(sub)` ✗，
+    #     **实例本身留在 `<instances>` 里** ✓）⇒ 它们**没有几何** ✗、却**还挂着 `<connects>`** ✗
+    #     （实测 `Wire90012840/870/871` 就挂在 `U1.c20`（EPAD）上 ✓）
+    #     ⇒ Fritzing 认为那一网“**还有没接完的东西**” ✗ ⇒ **画飞线** ✗✗
+    #       （用户看到的“C1 两端那条虚线”就是它 ✓）。
+    #   ✓ 这里兜底：**进 `emit` 先把所有 Wire 实例清掉** ✓（本函数后面会重新写全部导线 ✓）
+    #     ⇒ 输出文件保证干净 ✓，不依赖上游删得干不干净 ✓。
+    #   ★★ 判据要**两种都认** ✓（2026-09-28 ✓ 实测教训 ✓）：第一次只看了 `moduleIdRef` ✗
+    #     ⇒ 那一行**根本没打印** ✗（= 一个都没匹配上 ✗），可 `t62` 明明数出 **90 个**
+    #     “几何读不到的实例”（`Wire90012727…` 一整串 ✓）⇒ 它们**不是**靠 `moduleIdRef` 认出来的 ✗
+    #     ⇒ 它们的 `title` 才叫 `Wire…` ✓。⇒ 两个判据都算 ✓（覆盖 ✓ 不会漏 ✓）。
+    _zomb, _zmi = 0, set()
+    for _e in list(host):
+        if tag(_e) != "instance":
+            continue
+        _mid = _e.get("moduleIdRef") or ""
+        _ttl = (_e.findtext("title") or "").strip()
+        if _mid.startswith("Wire") or _ttl.startswith("Wire"):
+            _zmi.add(str(_e.get("modelIndex")))
+            host.remove(_e)
+            _zomb += 1
+    # ★★★ **同时**要把“**指向它们的连接**”删掉 ✓（2026-09-28 ✓ —— 不删就会造出**短接** ✗✗）
+    #   ✗ 只删实例（上一版 ✓）⇒ **别人还记着“我连着 `Wire90012727`”** ✗ ⇒ 于是两个**本来不同网**
+    #     的元件，通过一个**已经不存在的 mi** 被**间接连通** ✗ ⇒ 实测 **9 个网对不上** ✗✗
+    #     （`5V` 里多出 `D3.connector4`、`DATA_IN/DATA_OUT/LED_DIN` 里多出一大堆 ✓ ——
+    #      几何上看着挺好看 ✓，电气上**串成一片** ✗，只有 `check_netlist.py` 那一列看得见 ✗）。
+    #   ✓ 正解：把指向这些 mi 的 `<connect>` 一并删掉 ✓ ⇒ 连接表恢复自洽 ✓。
+    _nref = 0
+    if _zmi:
+        # ★ 不赌层级 ✓：`<connect>` 在哪一层**不许猜** ✗（本仓踩过 ✓）⇒ 用**父映射**收全部 ✓。
+        _par = {_c: _p for _p in sroot.iter() for _c in _p}
+        for _cn in [c for c in sroot.iter("connect") if str(c.get("modelIndex")) in _zmi]:
+            _p = _par.get(_cn)
+            if _p is not None:
+                _p.remove(_cn)
+                _nref += 1
+    if _zomb:
+        print("   ★ 清掉输入里**残留的旧导线实例 %d 个** ✓ + **指向它们的连接 %d 条** ✓"
+              "（只删实例不删连接 ⇒ 不同网会被“不存在的 mi”间接连通 ⇒ **短接** ✗✗）"
+              % (_zomb, _nref))
+    else:
+        print("   ★ 输入里没有残留的导线实例 ✓（判据：`moduleIdRef` **或** `title` 以 `Wire` 开头 ✓）")
     next_mi = max(int(i.get("modelIndex")) for i in sroot.iter("instance")) + 1
 
+    # ★★★ **原理图去粘**（**修订版** ✓，2026-09-28 ✓ 用户实测 + `t67` 定位 ✓）：
+    #   ✗ 上一版按 `moduleIdRef` 含 `breadboard` 去找 ⇒ **只清了面包板实例自己那一份** ✗
+    #     ⇒ 而**真正的粘源在元件侧** ✗。实测 `t67_report.txt` ✓——U1 的 `schematicView` 里，
+    #     **每只插在面包板上的脚**都挂着一条 `layer="breadboardbreadboard"` 的 connect ✗
+    #     （指向 `mi=5785` = 面包板 ✓）：
+    #         <connector connectorId="connector0" layer="schematic">
+    #           <connects>
+    #             <connect connectorId="pin39F" modelIndex="5785" layer="breadboardbreadboard"/>
+    #     ⇒ **Fritzing 在原理图视图里照它连通** ✗ ⇒ 插在**同一列孔**上的脚
+    #       **在原理图里被粘成一片** ✗。
+    #   ★ 用户实测（权威 ✓）：「在 Fritzing 里点那条飞线 ⇒ **GND 和 RC 两个网都高亮**」✗
+    #     —— 即 Fritzing 认定它们是**同一个网** ✓（PA1 属 RC ✓、VSS 属 GND ✓，
+    #     都是 U1 的脚 ✓、面包板上**同一列** ✓）。也解释了「**删掉面包板就都 OK**」✓。
+    #   ★ 为什么以前查不出来 ✗：`check_netlist.py` 与我的诊断**一律按 `layer ∈ SCH` 过滤** ✗
+    #     并且**排除面包板** ✗ ⇒ **恰好把这条边过滤掉了** ✗✗ —— “自证式”盲区 ✓。
+    #   ✓ 正解 = **只按 layer 清，不按身份清** ✓：`schematicView` 下**任何** layer 不是
+    #     `schematic` / `schematicTrace` 的 `<connect>`，都是**别的视图的关系**被复制过来的一份 ✗
+    #     ⇒ 在本视图里**不该生效** ✓。
+    #     一条规则同时覆盖：元件侧的 44 条 ✓ + 面包板实例侧的 44 条 ✓（实测 = 88 条 ✓）。
+    #   ★ `breadboardView` / `pcbView` 里的那一份**原样不动** ✓（它们自己那份是**对的** ✓）。
+    _dn, _dinst = 0, 0
+    for _e in list(host):
+        if tag(_e) != "instance":
+            continue
+        _vw = pm.child(_e, "views")
+        _sub = pm.child(_vw, "schematicView") if _vw is not None else None
+        if _sub is None:
+            continue
+        _par = {_c: _p for _p in _sub.iter() for _c in _p}
+        _k = 0
+        for _cn in [c for c in _sub.iter() if tag(c) == "connect"]:
+            if (_cn.get("layer") or "") in ("schematic", "schematicTrace"):
+                continue
+            _p = _par.get(_cn)
+            if _p is not None:
+                _p.remove(_cn)
+                _k += 1
+        if _k:
+            _dinst += 1
+            _dn += _k
+    if _dn:
+        print("   ★ 原理图去粘 ✓：**%d 个实例**在 `schematicView` 里**不属于本视图**的连接"
+              " **%d 条**已清 ✓（`layer` 不是 `schematic`/`schematicTrace` ✗ ⇒ 那是**别的视图**"
+              "的关系被复制过来的一份 ⇒ Fritzing 会照它在**原理图**里连通 ⇒ "
+              "**把插在同列孔上的脚粘成一片** ✗）" % (_dinst, _dn))
+    else:
+        print("   ★ 原理图去粘 ✓：`schematicView` 里没有跨视图的连接 ✓（本来就干净 ✓）")
+
     wires, links = [], []
+
+    # ★★★ 面包板**退出电气** ✓（方案 b ✓，2026-09-28 ✓ 用户选 ✓）：
+    #   ★ 用户实测（**权威判据** ✓）：「把面包板挪开、元件不插它 ⇒ 原理图里**就没有虚线了**」✓
+    #     ⇒ 机制由此定案 ✓：**Fritzing 的"网"是跨视图算的** ✗
+    #       （`ConnectorItem::collectEqualPotential` 会**穿过面包板的 bus** ✓）
+    #       ⇒ 插在**同一列孔**上的脚 ⇒ **在它眼里就是同一个网** ✗
+    #       ⇒ 跨网的脚被粘在一起 ⇒ 画飞线 ✗（实测：飞线两端 = U1 的 **PA2 与 VSS** ✗，
+    #         两只脚在面包板上**同一列** ✓；而**删掉面包板** ⇒ 立刻正常 ✓✓✓）。
+    #   ✗ 我前面几轮走的弯路（要记住 ✗）：
+    #     · 清 `schematicView` 里的跨视图连接（上一版 ✓）**只是清了"抄本"** ✗ ——
+    #       **活的链在面包板视图的孔连接里** ✗ ⇒ 清完飞线照旧 ✗；
+    #     · 更早还怀疑过 `wireFlags` ✗ ⇒ 被实测否证 ✓（用户手画的原图**同样是 128** ✓）。
+    #   ✓ 方案 b = **位置不动、只断连接** ✓ ⇒ 面包板视图**照样"看得见元件插在孔上"** ✓
+    #     （几何全留 ✓），但**不参与任何网** ✓ ⇒ 与用户手动"删掉面包板再加回来"**等价** ✓，
+    #     且**与摆位无关** ✓（将来面包板挪到哪都不会再影响原理图 ✓）。
+    _bbmi = {str(_x.get("modelIndex")) for _x in host
+             if tag(_x) == "instance"
+             and "breadboard" in (_x.get("moduleIdRef") or "").lower()}
+    _bk = 0
+    if _bbmi:
+        for _e in list(host):
+            if tag(_e) != "instance":
+                continue
+            _vw = pm.child(_e, "views")
+            if _vw is None:
+                continue
+            _me = str(_e.get("modelIndex"))
+            _par = {_c: _p for _p in _vw.iter() for _c in _p}
+            for _cn in [c for c in _vw.iter() if tag(c) == "connect"]:
+                # 任一端是面包板 ⇒ 断掉 ✓（别人的脚指向它 ✓ / 它自己指向别人 ✓）
+                if _me in _bbmi or str(_cn.get("modelIndex")) in _bbmi:
+                    _p = _par.get(_cn)
+                    if _p is not None:
+                        _p.remove(_cn)
+                        _bk += 1
+    if _bk:
+        print("   ★ 面包板**退出电气** ✓：断掉 **%d 条「脚 ↔ 孔」连接** ✓"
+              "（**位置不动** ✓ ⇒ 画面上照样插在孔上 ✓；但 Fritzing 不再跨视图粘网 ✗）"
+              "—— 这正是用户实测「删掉面包板就没虚线了 ✓」的**等效做法** ✓" % _bk)
+    else:
+        print("   ★ 面包板**退出电气** ✓：本来就没有「脚 ↔ 孔」连接 ✓（已断开 ✓）")
     for net in sorted(nets_segs):
         for s in nets_segs[net]:
             chain = []
@@ -1739,6 +2143,16 @@ def emit(sroot, insts, z, nets_segs, orig_path, out_path):
                               "start_tgt": None, "end_tgt": None})
                 next_mi += 1
             if not chain:
+                # ★ 诊断 ✓（2026-09-28 加 ✓ —— 起因：用户报「**C1 两端有条虚线**」✗，
+                #   量出来真凶是 **`U1.c20`（= EPAD）孤立** ✗：它属于 GND 网，却**一根线都没有** ✗
+                #   ⇒ Fritzing 就给它画一条“该连而未连”的飞线 ✓）。
+                #   ✗ 这里原来是**静默丢弃** ✗ ⇒ 写出的文件里那只脚**凭空少一根线** ✗，
+                #     而所有检查都看不出（连接表里它只是“没有连接”✗）⇒ 必须**吭声** ✓。
+                print("   ⚠ 段被丢弃 ✗：`path` 只有 %d 个点 ✓｜a=%s b=%s ✓｜from=%s to=%s ✓"
+                      % (len(s.get("path") or []),
+                         "(%.2f,%.2f)" % tuple(s["path"][0]) if s.get("path") else "-",
+                         "(%.2f,%.2f)" % tuple(s["path"][-1]) if s.get("path") else "-",
+                         s.get("from"), s.get("to")))
                 continue
             chain[0]["start_tgt"] = ("pin", s["from"])
             chain[-1]["end_tgt"] = ("pin", s["to"])
@@ -1768,6 +2182,55 @@ def emit(sroot, insts, z, nets_segs, orig_path, out_path):
                 ow = tgt[1]
                 links.append((w["mi"], cid, "schematicTrace",
                               ow["mi"], tgt[2], "schematicTrace"))
+
+    # ★★ “**同点即连**” ✓（2026-09-28 ✓ 电源轨架构必需 ✓）：两条导线的**端点重合** ⇒ 互记连接 ✓
+    #   ★ 为什么必需 ✗：Fritzing 的连接是**端点对端点** ✓ ⇒ 支线落在干线**中段**上连不上 ✗
+    #     ⇒ 电源轨已在**每个接头处断开** ✓（见 `RAILS` ✓），这里只负责把重合的端点连起来 ✓。
+    #   ★★ **只连同一个网的** ✓（否则就成**短路**了 ✗✗）—— 跨网的重合**不连**、但**如实报出** ✓。
+    _eps = {}
+    for w in wires:
+        for cid, p, tgt in (("connector0", w["p"], w["start_tgt"]),
+                            ("connector1", w["q"], w["end_tgt"])):
+            _eps.setdefault((round(p[0], 3), round(p[1], 3)), []).append((w, cid, tgt))
+    _add, _skip = 0, 0
+    for _v in _eps.values():
+        for i in range(len(_v)):
+            for j in range(i + 1, len(_v)):
+                (w1, c1, t1), (w2, c2, t2) = _v[i], _v[j]
+                if w1 is w2:
+                    continue
+                if w1.get("net") != w2.get("net"):
+                    _skip += 1
+                    continue
+                # ★★ 只在“**至少一侧还没有归属**”时才补 ✓（2026-09-28 ✓）：
+                #   ✗ 初版不看归属 ⇒ 把链上“两根导线在**同一个引脚点**相接”的情形也补了一遍 ✗
+                #     ⇒ 基线档凭空多出 **37 条冗余连接** ✗ ⇒ **破坏 v18 的可复现性** ✗
+                #       （几何/指标/网表都一样 ✓，但写出来的文件不同了 ✗ —— 这就不算复现 ✗）。
+                #   ✓ 加上这一条 ⇒ 链内的接头（两侧都已归属 ✓）**不动** ✓；
+                #     只有“**悬空的端点正好落在别人身上**”（= 电源轨支线 ✓）才补 ✓。
+                # ★★★ “**真的接到东西了吗**” ✓（2026-09-28 修 ✗ —— **这是本轮的关键 bug** ✓）：
+                #   ✗ 原来写的是 `t1 is not None and t2 is not None` ✗ —— 可是**“脚→轨”支线**
+                #     与**轨的每一段**，它们的 `end_tgt` 都是 `("pin", s["to"])`，而 `s["to"] is None`
+                #     ⇒ 也就是 **`("pin", None)`** ✗ ⇒ **它不是 `None`** ✗✗
+                #     ⇒ 两边都“非 None” ⇒ 一律 `continue` ✗ ⇒ 实测那一行就是 **“补 0 对”** ✗✗
+                #     ⇒ **支线端点落在轨上却没有任何连接** ✗ ⇒ **Fritzing 里看着就是断的** ✗✗✗
+                #   ★ 证据（用户的眼睛先发现 ✓，机器形态随后对上 ✓）：
+                #     · 用户的导出 `t58_1_图示.svg`：“**很多线没有接上**”✗；
+                #     · 写文件时：**65 根导线只有 71 条连接** ✗（v18 是 46/79 ✓ —— 每根线两端
+                #       本该各有一条 ✓）；
+                #     · 导出的 svg 里 `<circle>`（接点圆点）**76 → 24** ✗、`stroke="none"` 115 → 63 ✗
+                #       —— 两边都少 **52** ✓（同一个数 ⇒ 同一批元素 ✓）。
+                #   ✓ 正解：按“**裸端点** = `("pin", None)`”算悬空 ✓ ⇒ 支线端点 ↔ 轨端点才会补上 ✓。
+                #   ★ v18 **不受影响** ✓：它是链式 ✓，每段两端都有归属 ✓、没有 `("pin", None)` 端点 ✓
+                #     （那种端点只在 `RAILS` / `STAR_NETS` 下出现 ✓）⇒ 补的仍是 0 对 ✓、可复现 ✓。
+                _live1 = t1 is not None and t1[1] is not None
+                _live2 = t2 is not None and t2[1] is not None
+                if _live1 and _live2:
+                    continue
+                links.append((w1["mi"], c1, "schematicTrace", w2["mi"], c2, "schematicTrace"))
+                _add += 1
+    print("   ★ 同点即连 ✓：补 %d 对（点重合、同网、**且至少一侧是裸端点** ✓）；"
+          "**跨网重合 %d 对不连** ✓（不连才是对的 ✓）" % (_add, _skip))
 
     # ★ 去重（2026-09-26）：链上同一对"导线↔导线"会从两头各收集一次 ✗ ⇒
     #   不去重就会写出两条一模一样的 <connect> ✗（实测 Wire…connector1 里出现两条 ✓）

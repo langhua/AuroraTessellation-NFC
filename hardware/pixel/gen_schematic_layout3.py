@@ -33,6 +33,7 @@ r"""像素板原理图 **v3：数据驱动摆位**（本体居中 + 相邻脚同
     py -3.13 gen_schematic_layout.py <源.fzz> <输出.fzz> --pins pins_ref.py
 """
 import os
+import re
 import sys
 import zipfile
 import xml.etree.ElementTree as ET
@@ -82,6 +83,21 @@ GAP_Y = 2 * GRID                 # 行间间隙 ≈ 4.06mm ✓
 #       （而用户手改版是**贴着实际空地在画** ✓，不依赖这条网格 ✓）。
 SOCKET_EXTRA = 0
 POS_FROM = None        # ★★ `--pos-from=<fzz>`：抄那一份的摆位 ✓（2026-09-28 ✓ 用户要求 ✓）
+# ★★ `--by-bb=<面包板.fzz>`：**按成功面包板的排布**摆 ✓（2026-09-28 ✓ 用户定的新逻辑 ✓）
+#  用户原话 ✓：「咱们已经有了**成功的面包板布线图**，完全可以从面包板布线图出发，来绘制原理图……
+#    面包板和原理图的重要区别，是少了**天地轨的约束**，带来了 5V 和 GND 穿体问题。所以，
+#    提出了**先画天地轨**，然后再在中间**按面包板排布元件**，然后再连 5V 和 GND 线，
+#    最后是其它线，**从上到下，从左到右**。」
+#  ★ 为什么应该这么做 ✓（同一天量出来的证据 ✓）：原理图里那 6 段“穿体”**全是长横线** ✗
+#    （`GND 157.2` / `DATA_OUT 157.2` / `5V 151.6` 单位 ✓，都是从右边 J2 的脚列横穿到左边 U1 ✗），
+#    而**面包板上没有这种线** —— 因为面包板有**天地轨**：电源脚就近上/下轨 ✓（用户的判断 ✓）。
+#  ★ 数据来源 = 面包板图里每件**占的孔** ✓（`breadboardView/connectors/*/connects` ✓）；
+#    行 y / 列距 / 孔 id 解析一律用 `bb_route4` 那一份 ✓（一份实现 ✓ 不抄 ✗）。
+#  ★ 槽位用**行字母集合**判 ✓（✗ 不用拍 y 阈值 ✗）：
+#      含 `Z/Y` ⇒ `rail`（**贴在电源轨上** ✓ —— 面包板上它插的就是轨的孔 ✓，如 C2 ✓）
+#      只含 `F..J` ⇒ `up`（上半区 ✓）；只含 `A..E` ⇒ `down`（下半区 ✓）；
+#      两边都含 ⇒ `mid`（**跨中缝** ✓ —— 两排针的模块只能这样 ✓ 见库仓 AGENTS §5b ⑪ ✓）。
+BY_BB = None
 
 
 def tag(e):
@@ -208,6 +224,104 @@ class L:
         return (self.x + dx, self.y + dy)
 
 
+def read_bb_slots(fzz):
+    r"""从**面包板图**读 `件 → (槽位, 列号)` ✓（列号取占孔列的**中位** ✓）
+
+    见 `BY_BB` 那段（用户的新逻辑 + 为什么该照它摆 ✓）。
+    """
+    import bb_route4 as BB                        # ★ 行 y / 孔解析**一份实现** ✓
+    UP, DOWN, RAIL = set("FGHIJ"), set("ABCDE"), set("ZYXW")
+    z = zipfile.ZipFile(fzz)
+    root = ET.fromstring(z.read([n for n in z.namelist() if n.endswith(".fz")][0]))
+    out = {}
+    for el in root.iter("instance"):
+        if (el.get("moduleIdRef") or "").startswith("Wire"):
+            continue
+        t = (el.findtext("title") or "").strip()
+        vw = child(el, "views")
+        sub = child(vw, "breadboardView") if vw is not None else None
+        cb = child(sub, "connectors") if sub is not None else None
+        if cb is None:
+            continue
+        cols, rows = [], set()
+        for c in cb:
+            for cs in c:
+                for cn in cs:
+                    m = re.fullmatch(r"pin(\d+)([A-Z])", cn.get("connectorId") or "")
+                    if m and m.group(2) in BB.ROW_Y:
+                        cols.append(int(m.group(1)))
+                        rows.add(m.group(2))
+        if not cols:
+            continue
+        if rows & RAIL:
+            slot = "rail"
+        elif (rows & UP) and (rows & DOWN):
+            slot = "mid"
+        elif rows & UP:
+            slot = "up"
+        elif rows & DOWN:
+            slot = "down"
+        else:
+            slot = "mid"
+        out[t] = (slot, sorted(cols)[len(cols) // 2])
+    return out
+
+
+def layout_by_bb(P, slots):
+    r"""**按面包板的排布**摆 ✓（用户 2026-09-28 定的新逻辑第 ② 步 ✓）
+
+    做法 ✓（每步都能说出理由 ✓）：
+      ① 分四个**行槽** ✓：`mid`（跨中缝件 ✓ = 中间一行）、`up`（上半区 ✓）、
+         `down`（下半区 ✓）、`rail`（贴在电源轨上的件 ✓ —— 摆在最上 ✓）；
+      ② 每个槽**内部**按面包板的**列号左→右**排 ✓（这就是“从左到右” ✓），
+         间距沿用 **`GAP_X`** ✓（= v18 那个 2 格 ✓ 不新拍数 ✗）；
+      ③ 纵向以 **`mid` 为基行** ✓：`up` 摞在它上方、`rail` 再摞在 `up` 上方 ✓、
+         `down` 叠在下方 ✓；行间留 **`GAP_Y`** ✓（同样沿用 v18 的数 ✓）。
+    ★ 为什么这样就能治穿体 ✓：电源脚在**上排件的上方 / 下排件的下方**都是一片空地 ✓
+      ⇒ 接天地轨的支线**不需要横穿别的元件** ✓（面包板上就是这个道理 ✓）。
+    """
+    order = sorted(slots, key=lambda t: (slots[t][1], t))
+    buckets = {"rail": [], "up": [], "mid": [], "down": []}
+    for t in order:
+        if t in P:
+            buckets[slots[t][0]].append(t)
+    rowbox = {}
+    for name, ts in buckets.items():
+        if not ts:
+            continue
+        x = 0.0
+        for i, t in enumerate(ts):
+            P[t].x = 0.0 if i == 0 else x - P[t].box[0]
+            P[t].y = 0.0
+            x = P[t].x + P[t].box[2] + GAP_X
+        rowbox[name] = (min(P[t].absbox()[1] for t in ts),
+                        max(P[t].absbox()[3] for t in ts))
+
+    def shift(ts, dy):
+        for t in ts:
+            P[t].y += dy
+
+    cur_top, cur_bot = rowbox.get("mid", (0.0, 0.0))
+    if buckets["up"]:
+        ut, ub = rowbox["up"]
+        dy = cur_top - GAP_Y - ub
+        shift(buckets["up"], dy)
+        cur_top = ut + dy
+    if buckets["rail"]:
+        rt, rb = rowbox["rail"]
+        dy = cur_top - GAP_Y - rb
+        shift(buckets["rail"], dy)
+        cur_top = rt + dy
+    if buckets["down"]:
+        dt, db = rowbox["down"]
+        dy = cur_bot + GAP_Y - dt
+        shift(buckets["down"], dy)
+        cur_bot = db + dy
+    print("   行槽 ✓：rail=%s ｜ up=%s ｜ mid=%s ｜ down=%s"
+          % tuple(",".join(buckets[k]) or "(空)"
+                  for k in ("rail", "up", "mid", "down")))
+
+
 def layout(P):
     """算锚点 ✓（规则见文件头 ✓，全部是"让两个脚同高/居中" ✓）"""
     # ── ① 主链：本体框中心对齐 Y0 ✓；② 左→右按 GAP_X 铺开 ✓
@@ -227,9 +341,15 @@ def layout(P):
     P["LED2"].y = P["U1"].y + P["U1"].pin("connector12")[1] - P["LED2"].pin("connector2")[1]
     P["J2"].y = P["U1"].y + P["U1"].pin("connector4")[1] - P["J2"].pin("connector2")[1]
 
-    # ── ⑥ C2 贴 U1 **下方**，水平对齐到 VDD 脚那一列 ✓
-    P["C2"].x = P["U1"].abspin("connector5")[0] - P["C2"].box_cx()
-    P["C2"].y = (P["U1"].absbox()[3] + GAP_Y) - P["C2"].box[1]
+    # ── ★★ ⑥ C2（去耦电容）的摆位见**函数末尾** ✓（2026-09-28 改 ✓）——
+    #   ✗ 原来在**这里**（贴 U1 下方 ✗）—— 用户看图后的判断 ✓（原话：「**C2 的位置不合适，
+    #     它没有被挪到合适的位置，导致了两次穿体**」✓）：贴在 U1 下方 ⇒ 它的 5V 脚朝上（要
+    #     穿过整个 U1 才到上轨 ✗）、GND 脚朝下（要穿过 D3 ✗）⇒ 实测两次穿体 ✗
+    #     （`t56_0`：`(49.4,57.6)→(49.4,-57.6)` 蹭 U1 左排脚 ✗、`(55.0,84.6)→(55.0,199.2)` 穿 D3 ✗）。
+    #   ✓ 挪到**图右侧外侧、顶部齐最上** ⇒ 5V 脚朝上直接接**上 5V 轨** ✓（短 ✓ 不穿 ✓）；
+    #     GND 脚朝下沿**右侧空地**走到**下 GND 轨** ✓（长 ✓ 但一路无元件 ✓ ——
+    #     用户明确说过“原理图不用考虑线长约束、图纸大小约束”✓）。
+    #   ⇒ 必须放在**末尾**（要等其它件都摆完才知道“右侧外侧”在哪 ✓）。
 
     # ── ⑤ 采集支路 ✓：先把 **x 链** 铺开（L1→D3→R1 左→右 ✓），再按"脚同高/同 x"定 y ✓，
     #      最后**整块**搬到主链下方 ✓ —— ✗ 我第一版把 C1 的 x 算在 R1.x 赋值**之前** ✗
@@ -243,7 +363,7 @@ def layout(P):
     P["C1"].x = P["R1"].abspin("connector1")[0] - P["C1"].pin("connector0")[0]   # 与 R1.c1 **同 x** ✓
     P["C1"].y = (P["R1"].absbox()[3] + GAP_Y) - P["C1"].box[1]                # 留行间缝 ✓
     # 整块搬到主链下方 ✓（用"主链 + 支路"的实际包围盒算 ✓，不拍数 ✓）
-    main_bot = max(P[t].absbox()[3] for t in main + ["C2"])
+    main_bot = max(P[t].absbox()[3] for t in main)
     br_top = min(P[t].absbox()[1] for t in ("L1", "D3", "R1", "C1"))
     dy = (main_bot + 2 * GAP_Y) - br_top
     for t in ("L1", "D3", "R1", "C1"):
@@ -253,11 +373,36 @@ def layout(P):
     for t in ("L1", "D3", "R1", "C1"):
         P[t].x -= dx
 
+    # ── ★★ ⑥ C2：放到**图右侧外侧、顶部与最上的件齐** ✓（2026-09-28 改 ✓，用户点名的 ✓）
+    #   为什么是“右侧外侧、顶部” ✓（不是为了好看 ✗，是**为了让它的两根脚各走一边** ✓）：
+    #     · 它是全图**唯一**“两根脚分属两个网、且一上一下”的件 ✓（5V 在上 / GND 在下 ✓）
+    #       ⇒ 面包板上它是**跨在两条电源轨之间**的 ✓（孔 `pin28Z` + `pin29Y` ✓ = GND 轨行 + 5V 轨行 ✓）。
+    #     · 摆到**最右**（其它件右边之外 ✓）⇒ 它的 GND 支线**沿右侧空地**直下 ✓，
+    #       一路上**没有任何元件** ✓（这正是它原来穿 U1、穿 D3 的原因 —— 原来它被夹在中间 ✓）。
+    #     · 顶部**齐最上** ⇒ 5V 脚朝上，到**上 5V 轨**的距离最短 ✓。
+    _others = [t for t in P if t != "C2"]
+    if _others:
+        _xr = max(P[t].absbox()[2] for t in _others)
+        _yt = min(P[t].absbox()[1] for t in _others)
+        P["C2"].x = (_xr + GAP_X) - P["C2"].box[0]
+        P["C2"].y = _yt - P["C2"].box[1]
+
 
 def main(src, dst, pinfile, snap=False):
     pins, boxes, title, LAB = load_pins(pinfile)
     P = {t: L(t, mi, pins[mi], boxes[mi]) for mi, t in title.items()}
-    layout(P)
+    # ★★ `--by-bb` ✓：按**面包板排布**（用户 2026-09-28 定的新逻辑 ✓）—— 否则走旧规则 ✓
+    if BY_BB:
+        _sl = read_bb_slots(BY_BB)
+        _miss = [t for t in P if t not in _sl]
+        print("★ 按**面包板排布**摆 ✓（源 %s ✓）：%s%s"
+              % (BY_BB,
+                 ", ".join("%s=%s@%d" % (t, _sl[t][0], _sl[t][1])
+                           for t in sorted(_sl, key=lambda a: _sl[a][1])),
+                 (" ｜ ⚠ 图里没找到孔的件：%s" % ",".join(_miss)) if _miss else ""))
+        layout_by_bb(P, _sl)
+    else:
+        layout(P)
     # ★★ `--pos-from=<fzz>`：**整体抄另一份的摆位** ✓（2026-09-28 ✓ 用户要求：「先抄我手改版
     #   的元件间距」✓）—— 用户手改版的最小间隙是 **13.3 单位（3.75mm）** ✓，
     #   而我们自动版有 **5 对卡在 7.2 单位（2.03mm）** ✗（就是 `--gapx/--gapy` 那一格 ✓）。
@@ -379,6 +524,9 @@ if __name__ == "__main__":
     if "gapy" in opts:
         GAP_Y = float(opts["gapy"]) * GRID
         print("★ GAP_Y ← %.2f 格（%.0f 单位 ✓）" % (float(opts["gapy"]), GAP_Y))
+    if "by-bb" in opts:                      # ★★ 按面包板排布 ✓（用户 2026-09-28 ✓）
+        BY_BB = opts["by-bb"]
+        print("★ BY_BB ← %s ✓（按**面包板**的行槽位 + 列序排元件 ✓）" % BY_BB)
     if "socket" in opts:
         SOCKET_EXTRA = float(opts["socket"]) * GRID
         print("★ SOCKET_EXTRA ← %.2f 格（%.0f 单位 ✓）" % (float(opts["socket"]), SOCKET_EXTRA))
