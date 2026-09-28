@@ -1942,7 +1942,79 @@ def main(argv):
             #     而竖线的**两个端点**分别落在**上/下轨的端点**上 ✓（轨端就在这个 x ✓）⇒ **不算悬空** ✓
             #     ⇒ 悬空线头同时归零 ✓（右端不外伸 ⇒ 那里也没有线头 ✓）。
             #   ★ 位置安全 ✓：x 在**所有元件左侧**、y 是轨线（本就在包围盒之外 ✓）⇒ 不穿本体 ✓。
-            _x0, _x1 = min(_allx) - 7.2, max(_allx)
+            # ★★★ 轨间互连竖线：**优先与最外侧那条支线共用一根** ✓
+            #   （2026-09-28 ✓ 学用户手改版 `pixel-schematic-v21_byHand.fzz` ✓）
+            #   病灶（逐段实测 ✓）：老样子把互连竖线放在 `min(_allx) - 7.2` ✗ ⇒ 它**自己跑一趟**
+            #     （GND 实测 229.8 ✓）、而最外侧那条支线**又跑一趟**到轨 ✗ ⇒ 同一段竖直**各画一遍** ✗。
+            #   手改版把两者并成一根 ✓ ⇒ GND **−72.3** ✓、交叉 **−3** ✓（账目逐项对得上 ✓）。
+            #   ✓ 新法：互连竖线放在**最外侧支线的车道** `x = min(_allx)` ✓，并把那条支线
+            #     **截成只剩出脚** ✓（竖直段由互连竖线**兼任** ✓）—— 与上一手 T 形搭接**同一招** ✓
+            #     （那次是“支线搭支线” ✓，这次是“互连搭支线” ✓）。
+            #   ★ 只在**三个闸门全过**时才用 ✓（不穿体 ✓、不压脚 ✓、不与已布线重叠 ✓）；
+            #     否则**原样回退** ✓ ⇒ 绝不比老样子差 ✓。
+            #   ★ 交界点 = **那条支线的脚行 y** ✓ ⇒ 精确正交 ✓（手改版在这里有 0.1 单位的斜量 ✗）。
+            _lane = min(_allx)
+            _split_ys, _mg = [], []
+            for _s in segs:
+                if _s.get("fixed") or _s.get("to") is not None:
+                    continue
+                _p = _s.get("path") or []
+                if (len(_p) == 3 and abs(_p[1][0] - _lane) < 1e-6
+                        and abs(_p[2][0] - _lane) < 1e-6
+                        and abs(_p[1][1] - _p[0][1]) < 1e-6
+                        and abs(_p[2][1] - _p[1][1]) > 1e-6
+                        and any(abs(_p[2][1] - _ry) < 1e-6 for _ry in rail_ys)
+                        and min(rail_ys) + 1e-6 < _p[0][1] < max(rail_ys) - 1e-6):
+                    _mg.append(_s)
+                    _split_ys.append(_p[0][1])
+            _vx, _x0, _x1 = min(_allx) - 7.2, min(_allx) - 7.2, max(_allx)
+            if _mg:
+                _used0 = list(used)
+                _p0 = [(_s, list(_s["path"]), _s["b"]) for _s in _mg]
+                for _s in _mg:                       # 截成只剩出脚 ✓（同步 used ✓）
+                    _old = [(_s["path"][k], _s["path"][k + 1], net)
+                            for k in range(len(_s["path"]) - 1)]
+                    _s["path"] = _s["path"][:2]
+                    _s["b"] = _s["path"][-1]
+                    _new = [(_s["path"][0], _s["path"][1], net)]
+                    for _sg in _old:
+                        if _sg not in _new and _sg in used:
+                            used.remove(_sg)
+                    for _sg in _new:
+                        if _sg not in used:
+                            used.append(_sg)
+                _drawn_pre = [_ry for _ry in rail_ys          # 与下面轨循环**同一个判据** ✓
+                              if any(not _s.get("fixed") and _s.get("to") is None
+                                     and abs(_s["b"][1] - _ry) < 1e-6 for _s in segs)]
+                _vp_pre = ([(_lane, _y) for _y in sorted(set(_drawn_pre) | set(_split_ys))]
+                           if len(_drawn_pre) > 1 else [])
+                # ★ 三道门**逐项报数** ✓（2026-09-28 ✓ 教训：糊成一句"未全过"✗ ⇒ 同一个车道
+                #   在两档结论不同时**查不出原因** ✗）⇒ 报出 穿体 / 贴脚 / 重叠 与**点名**那只脚 ✓。
+                _nv_b = 1 if (_vp_pre and body_hard_bad(_vp_pre, boxes, PIN_ALL)) else 0
+                _nv_p = pin_intr(_vp_pre, set(), PIN_ALL) if _vp_pre else 0
+                _nv_o = 1 if (_vp_pre and ovl_hard_bad(_vp_pre, used)) else 0
+                if _vp_pre and not (_nv_b or _nv_p or _nv_o):
+                    _vx, _x0 = _lane, _lane
+                    print("   ★ 轨间互连**与最外侧支线共用** ✓：车道 x=%.3f ✓"
+                          "（截短 %d 条支线 ✓、交界点 %s ✓；老法是 x=%.3f ✗）"
+                          % (_lane, len(_mg),
+                             "/".join("%.1f" % _y for _y in _split_ys),
+                             min(_allx) - 7.2))
+                else:
+                    used[:] = _used0                       # ★ 原样回退 ✓
+                    for _s, _p2, _b2 in _p0:
+                        _s["path"] = _p2
+                        _s["b"] = _b2
+                    _split_ys, _mg = [], []
+                    print("   · 轨间互连**不能共用** ✗（车道 x=%.3f：穿体 %d ｜ 贴脚 %d ｜ "
+                          "与已布线重叠 %d ｜ 可搭支线 %d 条 ✗）⇒ 用老位置 x=%.3f ✓"
+                          % (_lane, _nv_b, _nv_p, _nv_o, len(_p0), _vx))
+                    for (_r4, _c4n, _x4, _y4) in (pin_intr_list(_vp_pre, set(), PIN_ALL)
+                                                  if _vp_pre else []):
+                        _d4 = min(SG.p2seg((_x4, _y4), _vp_pre[_k4], _vp_pre[_k4 + 1])
+                                  for _k4 in range(len(_vp_pre) - 1))
+                        print("            ↳ 连它太近 ✗：%s.%s (%.3f,%.3f) 距离 %.3f 单位"
+                              % (_r4, _c4n, _x4, _y4, _d4))
             _drawn = []
             for _y in rail_ys:
                 _xs = sorted({round(s["b"][0], 4) for s in segs
@@ -1968,8 +2040,8 @@ def main(argv):
             #     ⇒ **一根竖线**即可 ✓ ⇒ 竖线两端**分别落在两条轨的端点上** ✓（重合 ✓）
             #     ⇒ **不留悬空线头** ✓（这是"飞线"的关键 ✓ —— 见上面那条注释 ✓）。
             if len(_drawn) > 1:
-                _vx = _x0
-                _vp = [(_vx, _y) for _y in sorted(_drawn)]
+                # ★ 合并时**在每条被截支线的脚行处打断** ✓ ⇒ 支线端点与它**端点对端点**对上 ✓
+                _vp = [(_vx, _y) for _y in sorted(set(_drawn) | set(_split_ys))]
                 for _k in range(len(_vp) - 1):
                     used.append((_vp[_k], _vp[_k + 1], net))
                 segs.append({"a": _vp[0], "b": _vp[-1], "path": _vp,
