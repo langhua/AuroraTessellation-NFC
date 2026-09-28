@@ -587,14 +587,80 @@ def dedup_path(p):
         return q
     out = [q[0]]
     for i in range(1, len(q) - 1):
-        (x0, y0), (x1, y1), (x2, y2) = out[-1], q[i], q[i + 1]
-        if abs((x1 - x0) * (y2 - y0) - (y1 - y0) * (x2 - x0)) > 1e-9:
+        # ★★ 2026-09-28 ✓ “共线”判据改用**距离容差** ✓（`MIN_SEG` = 0.05 ✓ = 全仓既有的那个 ✓）：
+        #   ✗ 原来是**叉积严格 ≠ 0**（`1e-9` ✗ + 绝对单位 ✗）⇒ 实测 `DATA_IN`
+        #     （`J1.c2` ↔ `U1.c2` ✓ = **一条直线** ✓）被**打断成两根** ✗✗：
+        #     两端 `y = 0.0001` / `0.0002`（差 **0.0001 单位 = 0.000025 mm** ✗），
+        #     中间那个出脚点 (46.3779,0.0001) 离 a→b 直线只有 **0.00003 单位** ✓，
+        #     却因叉积 = **1.2e-3** ✗ > 1e-9 ⇒ **不合并** ✗ ⇒ 写出两根线 ✗
+        #     （用户点名：「是一条直线被打断成两段 ⇒ 这个 bug 应该修掉」✓）。
+        #   ✓ 现在：`p2seg(点, 前一个保留点, 下一个点) <= MIN_SEG` ⇒ 偏差 ≤ 0.014 mm 的
+        #     中间点**一律当“在直线上”** ✓ 删掉 ✓（判据仍是仓里**唯一那份**点到线段距离 ✓）。
+        if SG.p2seg(q[i], out[-1], q[i + 1]) > MIN_SEG:
             out.append(q[i])
     out.append(q[-1])
     return out
 
 
-def esc_cands(a, b, na, nb, chx2, chy2):
+def pin_normal(px, py, bb):
+    r"""这个脚的**外法线** ✓（看它贴在元件包围盒的哪条边上 ✓；盒**内部** ⇒ `(0,0)` ✓）
+
+    ★ **唯一实现** ✓：`edge_pins`（“最边缘的脚”清单 ✓）与主流程的 `PIN_N_BY_XY` **共用它** ✓
+      （扶两份 ⇒ 早晚对不上 ✗ —— 本仓的老规矩 ✓）。
+    """
+    if not bb:
+        return (0.0, 0.0)
+    if abs(px - bb[0]) < 1.0:
+        return (-1.0, 0.0)
+    if abs(px - bb[2]) < 1.0:
+        return (1.0, 0.0)
+    if abs(py - bb[1]) < 1.0:
+        return (0.0, -1.0)
+    if abs(py - bb[3]) < 1.0:
+        return (0.0, 1.0)
+    return (0.0, 0.0)
+
+
+def edge_pins(insts, boxes):
+    r"""★ **“最边缘的脚”清单** ✓（`--noescape=edge` 用 ✓，2026-09-28 ✓ 用户点名的判据 ✓）
+
+    ★ 口径 ✓（**按“危险腿”的方向定义** ✓）：
+      “不出脚”时，腿是**沿着本行 / 本列**走的 ✓（`esc_cands` 的四族形状 ✓）——
+      · 法线是 **±x**（贴在竖边上 ✓）⇒ 危险腿沿 **本列（x 相同 ✓）** 走 ✓
+        ⇒ 资格 = **在同一列里 `y` 最上 / 最下** ✓（`R1.c1` 就靠这个拿到 ✓ —— 它那列只有它自己 ✓）；
+      · 法线是 **±y**（贴在横边上 ✓）⇒ 危险腿沿 **本行** 走 ✓ ⇒ 资格 = **同一行里 `x` 最左 / 最右** ✓。
+      ★ 为什么不“行列都算” ✗（我第一版就是这么写的 ✗）：**行里往往只有自己一只脚** ✗
+        ⇒ `min == max == 自己` ⇒ **45/45 全合格** ✗（实测 ✓ 白名单形同虚设 ✗）。
+    ★ 返回 = **坐标集合** ✓（`route_pair` 手里只有点 ✗，没有“这是哪只脚” ✓）⇒ 先算成点表 ✓。
+    """
+    out = set()
+    for _t, _d in insts.items():
+        _bb = boxes.get(_t)
+        grp = {}
+        for _cid, _p in _d["pins"].items():
+            _n = pin_normal(_p[0], _p[1], _bb)
+            _ax = 0 if abs(_n[0]) > 0.5 else 1
+            grp.setdefault((_ax, round(_p[_ax], 3)), []).append(_p[1 - _ax])
+        for _cid, _p in _d["pins"].items():
+            _n = pin_normal(_p[0], _p[1], _bb)
+            _ax = 0 if abs(_n[0]) > 0.5 else 1
+            _g = grp[(_ax, round(_p[_ax], 3))]
+            _v = _p[1 - _ax]
+            if abs(_v - min(_g)) < 1e-6 or abs(_v - max(_g)) < 1e-6:
+                out.add((round(_p[0], 3), round(_p[1], 3)))
+    return out
+
+
+def _noesc_ok(p, edge_pts):
+    r"""这只脚能不能“不出脚” ✓（`off` 一律不给 ✗ / `all` 都给 ✓ / `edge` 只给最边缘那只 ✓）"""
+    if NOESC == "all":
+        return True
+    if NOESC == "edge":
+        return (round(p[0], 3), round(p[1], 3)) in edge_pts
+    return False
+
+
+def esc_cands(a, b, na, nb, chx2, chy2, edge_pts=None):
     r"""**出脚组合**候选 ✓（2026-09-27 ✓）—— 先沿引脚法线出脚 ✓ → 走**干净通道** ✓ → 再拐进脚 ✓
 
     ★ 为什么需要它（`--why` 探针实测 ✓）：
@@ -612,8 +678,15 @@ def esc_cands(a, b, na, nb, chx2, chy2):
       （`route_key` 每条候选要扫全图 45 个脚 ✓）⇒ 只取端点附近的通道 ✓
       （跑出包围范围很多的通道 = 绕远路 ✓，本来就会被长度项罚 ✓）。
     """
-    aps = [a] if na == (0.0, 0.0) else [(a[0] + na[0] * o, a[1] + na[1] * o) for o in ESC_OFFS]
-    bps = [b] if nb == (0.0, 0.0) else [(b[0] + nb[0] * o, b[1] + nb[1] * o) for o in ESC_OFFS]
+    aps = [] if na == (0.0, 0.0) else [(a[0] + na[0] * o, a[1] + na[1] * o) for o in ESC_OFFS]
+    bps = [] if nb == (0.0, 0.0) else [(b[0] + nb[0] * o, b[1] + nb[1] * o) for o in ESC_OFFS]
+    # ★★ `--noescape` ✓：把“**脚本身**”也当一个出脚点 ✓（= “不出脚，直接沿本行/本列走” ✓）
+    #   —— 这是用户手改版 `RC` 那一步的关键形状 ✓（实测它不在候选里时，多拐一次 = +24.4 单位 ✗）。
+    _ep = edge_pts if edge_pts is not None else set()
+    if na == (0.0, 0.0) or _noesc_ok(a, _ep):
+        aps.append(a)
+    if nb == (0.0, 0.0) or _noesc_ok(b, _ep):
+        bps.append(b)
     xs = [q[0] for q in aps + bps]
     ys = [q[1] for q in aps + bps]
     cx = [v for v in sorted(set(chx2) | set(xs)) if min(xs) - 40.0 <= v <= max(xs) + 40.0]
@@ -760,6 +833,37 @@ NO_PINROWS = False         # True = 别的脚的行列不当主干通道 ✓；*
 #      ⇒ **带告警的档一律不采纳** ✗（这条判据就是为这种情形预先定下的 ✓）。
 #   ★ 回旧行为：`--chain xy` ✓（= 旧默认 ✓，可逐项复现 ✓）。
 CHAIN = "revyx"
+# ★★ `REVPAIR`（`--revpair` ✓，2026-09-28 ✓ **用户提的 A/B 测试** ✓）：
+#   链上每一对**反方向**接 ✓ —— 即原本接 `a→b` 的，改成从 `b` 那头起头接 `b→a` ✓。
+#   ★ 为什么会不一样 ✗（不是“镜像应该一样” ✓，实测待定 ✓）：
+#     ① `esc_cands` 的**四个形状族**对“两端出脚点”是**不对称**的 ✓
+#        （`[a,ap,(x,ap.y),(x,bp.y),bp,b]` / `[a,ap,(ap.x,y),(bp.x,y),bp,b]` /
+#         `[a,ap,(bp.x,ap.y),bp,b]` / `[a,ap,(ap.x,bp.y),bp,b]` ✓）⇒ 换成 b 起头
+#        **会换出另一批形状** ✓（谁先“出脚”、从哪个角拐 ✓ 不一样 ✓）；
+#     ② 贪婪布线里**先接的那一对先占 `used`** ✓（链序不变、对内方向一变 ⇒ 后接的能用的路不一样 ✓）。
+#   ★ **实测（2026-09-28 ✓，两档 ✓）**：反方向接与不开这一档 **逐段完全相同** ✓
+#     （`t72`：只在 A 的 0 段 ｜ 只在 B 的 0 段 ✓；两档指标逐项相同 ✓）
+#     ⇒ **方向不构成杠杆** ✗（四个形状族对本例其实是**反向封闭**的 ✓，代价函数也对称 ✓）
+#     ⇒ 这一轴到此结案 ✓（留着开关 ✓，以后换摆位/换链序时可以再 A/B 一次 ✓）。
+REVPAIR = False
+# ★★ `NOESC`（`--noescape=off|all|edge` ✓，2026-09-28 ✓ **用户提的**：
+#   「**不出脚，仅限于脚是最边缘的脚吧？**」✓）
+#   背景 ✓：`esc_cands` 的“出脚点”只给 `a + 法线 × o`（o = 12.2 / 19.4 ✓）
+#     ⇒ “**就直接沿着自己那一列 / 那一行走**”这种形状**压根不在候选里** ✗
+#     ⇒ 实测代价 = 一个**多余的拐 + 回头** ✓（`RC` 实测 **+24.4 单位** ✗，用户手改版 ✓）。
+#   ★ “不出脚”安全与否**取决于脚在不在最边上** ✓：
+#     · **最边缘的脚**（如 `R1.c1` = `R1` 最右那只 ✓）⇒ 腿往**外**走，一个邻居都不碰 ✓；
+#     · **中间的脚** ⇒ 腿沿本行/本列走**必然擦过邻居** ✗ ⇒ 两道闸门（`HARD_PIN` 0.05 ✗
+#       / `HARD_CLEAR` 7.15 ✗）**本来就会把那些形状删掉** ✓。
+#   ⇒ 所以：`all` 与 `edge` 在**结果上应当一致** ✓（`edge` 只是**少生成**那些注定被删的候选 ✓、
+#     跑得快些 ✓）；`off` = v24 现状 ✓（可逐项复现 ✓）。
+#   ★★ **用户 2026-09-28 定：采用 `all`** ✓（“采用 all”✓）⇒ 默认 = `all` ✓：
+#     ✗ 不用“仅最边缘”那道限制 ✓ —— 因为**两道闸门已经等同地做到了** ✓
+#     （中间脚那条腿必然 0 距离贴邻居 ✗ ⇒ 必被删 ✓），实测 **`all` 与 `edge` 逐项相同** ✓
+#     （档1 = 2699 / 14 / 0 / 0 ✓；档0 = 2545 / 14 / 4 ✓；耗时 5∼6 s ✓）⇒
+#     既然用户要“每只脚都可不出脚” ✓，就按**更宽的那个**来 ✓（少一层隐含限制 ✓、更好解释 ✓）。
+#   ★ 回旧行为：`--noescape=off` ✓（= v24 ✓，逐字节复现 ✓）。
+NOESC = "all"
 
 
 def pin_hard_bad(path, pin_all, own_pins=(), eps=PIN_EPS):
@@ -1112,6 +1216,20 @@ def main(argv):
         global CHAIN
         CHAIN = argv[argv.index("--chain") + 1]
         print("链序 CHAIN = %s ✓（xy=旧默认 ✓ / yx / revxy / revyx=采纳 ✓ / nn=最近邻 ✓）" % CHAIN)
+    if "--revpair" in argv:                    # ★ A/B 用 ✓：链上每一对**反方向**接 ✓（2026-09-28 ✓ 用户提 ✓）
+        global REVPAIR
+        REVPAIR = True
+        print("对内方向 REVPAIR：**反方向** ✓（每对改从另一端起头接 ✓；与不开这一档逐项对比 ✓）")
+    # ★★ `--noescape=off|all|edge` ✓（支持“空格”与“=”两种写法 ✓ —— 本仓两种都出现过 ✓）
+    if ("--noescape" in argv
+            or any(_a.startswith("--noescape=") for _a in argv)):
+        global NOESC
+        if "--noescape" in argv and argv.index("--noescape") + 1 < len(argv):
+            NOESC = argv[argv.index("--noescape") + 1]
+        else:
+            NOESC = next(_a.split("=", 1)[1] for _a in argv if _a.startswith("--noescape="))
+        print("不出脚候选 NOESC = %s ✓（off=现状 ✓ / all=每只脚都给 ✓ / "
+              "edge=**只给最边缘那只脚** ✓）" % NOESC)
     if "--freecorr" in argv:                   # ★★ 换机制 ✓：走廊改成**从空地算** ✓
         global FREECORR
         FREECORR = True
@@ -1343,6 +1461,11 @@ def main(argv):
                for cid, p in d["pins"].items()]
     print("引脚点表 %d 个 ✓；安全距离 CLEAR_PIN = %.1f 单位（%.2f mm ✓）"
           % (len(PIN_ALL), CLEAR_PIN, CLEAR_PIN * 25.4 / 90.0))
+    # ★ “最边缘的脚”清单 ✓（`--noescape=edge` 用 ✓；面包板照样剔除 ✗）
+    EDGE_PTS = edge_pins({t: d for t, d in insts.items() if t not in _BB}, boxes)
+    if NOESC != "off":
+        print("   不出脚资格 ✓（NOESC=%s ✓）：%d / %d 只脚合格 ✓"
+              % (NOESC, len(EDGE_PTS), len(PIN_ALL)))
     # ★ 引脚**法线**表 ✓（出脚方向 ✓，2026-09-27 ✓）：看这个脚贴在它元件包围盒的哪条边上 ✓。
     #   ★ 为什么“贴边”能当法线用 ✓：`boxes` 是**画出来的东西**的包围盒 ✓ ⇒ 引脚线**末端**
     #     就落在盒边上 ✓（实测：U1 左排脚末端的 x 就等于盒左缘 22.6 ✓）。
@@ -1350,18 +1473,8 @@ def main(argv):
     #     （否则 “出脚” 会跑进自己肚子里 ✗）。
     PIN_N_BY_XY = {}
     for t, cid, px, py in PIN_ALL:
-        bb = boxes.get(t)
-        n = (0.0, 0.0)
-        if bb:
-            if abs(px - bb[0]) < 1.0:
-                n = (-1.0, 0.0)
-            elif abs(px - bb[2]) < 1.0:
-                n = (1.0, 0.0)
-            elif abs(py - bb[1]) < 1.0:
-                n = (0.0, -1.0)
-            elif abs(py - bb[3]) < 1.0:
-                n = (0.0, 1.0)
-        PIN_N_BY_XY[(round(px, 3), round(py, 3))] = n
+        # ★ 法线**唯一实现** ✓（`pin_normal` ✓ —— `edge_pins` 也调它 ✓）
+        PIN_N_BY_XY[(round(px, 3), round(py, 3))] = pin_normal(px, py, boxes.get(t))
     print("引脚法线表 %d 个 ✓（其中 %d 个能出脚 ✓ —— 贴在元件边上的；其它在元件内部 ✓ 不出脚 ✓）"
           % (len(PIN_N_BY_XY), sum(1 for v in PIN_N_BY_XY.values() if v != (0.0, 0.0))))
     # ★ 布线**次序**：先把电源/地布完 ✓、再布信号 ✓（面包板规则 ⑩ ✓：
@@ -1523,7 +1636,7 @@ def main(argv):
             na = PIN_N_BY_XY.get((round(a[0], 3), round(a[1], 3)), (0.0, 0.0))
             nb = PIN_N_BY_XY.get((round(b[0], 3), round(b[1], 3)), (0.0, 0.0))
             if na != (0.0, 0.0) or nb != (0.0, 0.0):
-                esc_c = esc_cands(a, b, na, nb, chx_clean, chy_clean)
+                esc_c = esc_cands(a, b, na, nb, chx_clean, chy_clean, EDGE_PTS)
         cands = base_c + esc_c
         esc_ids = {id(p) for p in esc_c}     # ★ 用来单独盯“出脚候选”的成绩 ✓（探针用 ✓）
         seen, uniq = set(), []         # ★ 去掉重复候选 ✓（出脚形状会与直连/L 形撞车 ✓）
@@ -1692,9 +1805,12 @@ def main(argv):
                               "b": hub, "rb": None, "cb": None})
         else:
             for i in range(len(pts) - 1):
-                pairs.append({"a": pts[i]["p"], "ra": pts[i]["ref"], "ca": pts[i]["cid"],
-                              "b": pts[i + 1]["p"], "rb": pts[i + 1]["ref"],
-                              "cb": pts[i + 1]["cid"]})
+                _p1, _p2 = pts[i], pts[i + 1]
+                if REVPAIR:            # ★ A/B ✓：这一对**反方向**接 ✓（2026-09-28 ✓ 用户提 ✓）
+                    _p1, _p2 = _p2, _p1
+                pairs.append({"a": _p1["p"], "ra": _p1["ref"], "ca": _p1["cid"],
+                              "b": _p2["p"], "rb": _p2["ref"],
+                              "cb": _p2["cid"]})
         _tjs = []                       # ★ T 形搭接清单 ✓（本网 ✓，报告里逐条列 ✓）
         for pr in pairs:
             a, b = pr["a"], pr["b"]
