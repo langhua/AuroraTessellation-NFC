@@ -1268,13 +1268,20 @@ LABEL_MOD_A = set()
 #   ✓ 正解：和 `LABEL_MOD_A` 一样，**模块级给空集初值** ✓（"零 = 不生效" ✓，两种模式都安全 ✓）。
 LABEL_NETS = set()
 
-# ★★★ 标签朝向的**候选集** ✓（2026-09-29 ✓）：**不许 180°** ✗ ——
-#   ✗ 原来这里逐个挑 `(0, 90, 180, 270)` ✗ ⇒ 实测**真的挑中了 180°** ✗
-#     （`_work/v30.fzz` 的 `RC` 标签：`m11=-1 m22=-1` ✓ = 倒 180° ✓）⇒
-#     那就是把字**倒着写** ✗ —— 得把图纸转过来才读得出 ✓，用户要的"可读"就没了 ✗。
-#   ★ 同一个口径在 `_scratch/fix_label_place.py --auto-rot`（原朝向 → 0 → 270 → 90 ✓）
-#     里**早就有** ✓ ⇒ 现在两边用同一个常量 ✓（**一件事一份口径** ✓）。
-LBL_ROTS = (0, 90, 270)
+# ★★★ 标签朝向的**候选集** ✓（2026-09-30 ✓ **改正** ✓）：
+#   ✗✗ 我 2026-09-29 在这里写过「**不许 180°** ✗，因为 180° 会把字倒着写」✗ ——
+#      **那条是错的** ✗✗，2026-09-30 由**用户截图**推翻 ✓（他手改版里那只 `RC`
+#      就是 `m11=-1 m22=-1` ✓，**字是正的** ✓）。
+#   ✓ 真相（`render_sch.py` 里**同一天早就写对**了 ✓，这边却是旧结论 ✗ —— 同一件事两份口径 ✗）：
+#     Fritzing 对标签文字做**自动摆正** ✓ —— `NetLabel::makeSvg` 里
+#     `bool reversed = (transform().m11() < -0.5);  // horizontal flip or 180°` ✓
+#     ⇒ **`m11 < 0`（镜像 / 180°）时文字不跟着转** ✓（±90° 才是竖排 ✓，用户此前的 `GND` 截图即是 ✓）。
+#   ★ 而且 180° 是**唯一**能把旗标摆到**接线点左侧/右侧**两个方向的手段之一 ✓（脚在尖端那侧 ✓，
+#     180° ⇒ 脚落在左端 ⇒ 旗标往右伸 ✓）—— 用户手改版正是这么把标签**贴在引脚旁边**的 ✓
+#     （离脚 15.4 单位 ✓）。⇒ 放进候选集 ✓，但排在**最后** ✓：
+#     挑选键是 `(违例数, 本侧结点远近, 方向, 距离, 朝向)` ✓ ⇒ 朝向只在**前面全平手**时才起作用 ✓，
+#     断口那几只标签不受影响 ✓（实测：v33→v34 之外，v35 只挪动了该挪的那只 ✓）。
+LBL_ROTS = (0, 90, 270, 180)
 
 # ★★★ 2026-09-30 ✓ **`--ground=<网>`：地网画成「接地符号」** ✓（用户 2026-09-29 的改法 ✓）——
 #   · 背景 ✓：`NL1/NL2` 会在功能模块边界把网切开、断口贴同名标签 ✓；用户把**地**那个网的
@@ -2893,8 +2900,15 @@ def _rk(p, nd=3):
     return (round(p[0], nd), round(p[1], nd))
 
 
-def _part_of(edges, pts):
-    """终端分块的**规范键** ✓（并查集 → 排序后的分块 ✓）：两次算出来一样才算“没变” ✓"""
+def _part_of(edges, pts, merge=()):
+    """终端分块的**规范键** ✓（并查集 → 排序后的分块 ✓）：两次算出来一样才算“没变” ✓
+
+    ★ `merge` ✓（2026-09-30 ✓）：**同名网标签 / 接地符号的脚先并起来** ✓ —— 这是 Fritzing 自己
+      的语义 ✓（`LocalGrounds` 把全图地脚拉成一张网 ✓、同名标签即同网 ✓ 见 `sch_net.py` ✓）。
+      ✗ 不并就会把“用户手改版删掉 GND 左侧回路”判成**改变分块** ✗ —— 实测那个回路是
+      那三个脚（`D3.c0/c1` + `C1.c1`）**唯一**的线路径 ✗，但它们与另一侧**靠两个接地符号同网** ✓
+      ⇒ 电气上并没断 ✓（`check_netlist.py` 也照这个语义判 ✓ ⇒ 它的网表是全对的 ✓）。
+    """
     par = {}
 
     def find(x):
@@ -2903,6 +2917,14 @@ def _part_of(edges, pts):
             par[x] = par[par[x]]
             x = par[x]
         return x
+    _grp = {}
+    for (p, g) in merge:                       # ★ 先按“名字”并 ✓（组内所有点两两连通 ✓）
+        _grp.setdefault(g, []).append(p)
+    for _pts in _grp.values():
+        for _q in _pts[1:]:
+            ra, rb = find(_pts[0]), find(_q)
+            if ra != rb:
+                par[rb] = ra
     for (a, b) in edges:
         ra, rb = find(a), find(b)
         if ra != rb:
@@ -2943,13 +2965,114 @@ def _paths_to(a, b):
     return [[a, (a[0], b[1]), b], [a, (b[0], a[1]), b]]
 
 
-def trim_plan(net, wires, boxes, other_boxes, pin_all, K=K_INTER, eps=0.05):
+def dead_end_pin(wires, start, stop, terms, eps=0.05):
+    r"""从 `start`（标签**原来**贴的那个断口 ✓）沿导线往外走 ⇒ 会不会走到一只**真脚**上 ✗
+
+    ★ 为什么需要 ✓（2026-09-30 ✓ 实测踩的坑 ✓）：`③` 把标签挪到“本侧引脚旁边”之后 ✓
+      原来通到断口的那一截就成断头 ✓ ⇒ 要清掉 ✓。**但**如果那一截的**尽头是一只真脚**
+      （实测：`RC` 的断口 → 两根线 → **`R1` 的脚** ✓）⇒ 清掉就把那只脚**孤立**了 ✗✗
+      （它的整张网就只剩它自己 ✗）；而**留着**又会在断口处留一个悬空端 ✗
+      ⇒ 两个都不行 ⇒ 正确结论是：**这一侧不许挪** ✓（标签留在断口上 ✓）。
+    ★ 走法 ✓：只沿**度 ≤ 2** 的结点走 ✓（碰到分叉点 = 那一支是纯断头 ✓ 丢它是安全的 ✓）；
+      走到 **`stop`**（= 候选那个结点 ✓）就停 ⇒ **它外面那截还挂在标签上** ✓ 安全 ✓
+      （✗ 不设 `stop` 就会把“标签顺着同一条链挪近一点”也误判成危险 ✗）。
+    ★ 返回：危险那只脚的结点键 ✓（安全则 `None` ✓）—— 调用方拿它**否掉这个候选** ✓。
+    """
+    cur = _rk(start)
+    seen = set()
+    for _ in range(400):
+        if cur == _rk(stop):
+            return None
+        if cur in terms:
+            return cur
+        ends = [e for w in wires for e in (w["p"], w["q"]) if _rk(e) == cur]
+        if len(ends) >= 3:                      # 分叉点 ⇒ 丢这一支不动别人 ✓
+            return None
+        nxt = None
+        for w in wires:
+            for e, o in ((w["p"], w["q"]), (w["q"], w["p"])):
+                if _rk(e) != cur:
+                    continue
+                k = str(w.get("mi"))
+                if k in seen:
+                    continue
+                seen.add(k)
+                nxt = _rk(o)
+        if nxt is None:
+            return None                         # 光秃端 ⇒ 纯断头 ✓
+        cur = nxt
+    return cur
+
+
+def prune_dangling(wires, pin_all, eps=0.05, rounds=500):
+    r"""把**悬空线端**级联清掉 ✓ ⇒ 返回要删的 mi 集合 ✓（判据 = **叶子** ✓）
+
+    ★ 为什么安全 ✓：“**一端悬空**（那一端上没有别的线端、也没有终端）”的线 = **死头** ✓
+      ⇒ 删它**不会动任何端子之间的连通** ✓（另一头就算有脚 ✓，那个脚也不靠它连别人 ✓）
+      ⇒ 与 `--trim` 里那步（带终端分块校验 ✓）是**同一套几何** ✓，只是这里不必再验一次 ✓。
+    ★ 什么时候用 ✓：**标签从断口挪到本侧引脚旁**之后 ✓，原来通到断口的那一截就成了死头 ✗
+      ⇒ 不刷掉就是白留一根断线 ✗（实测：`RC` 的 A 侧那一截 = 133.7 单位 ✗）。
+    """
+    terms = set()
+    for w in wires:
+        for tk, e in (("start_tgt", w["p"]), ("end_tgt", w["q"])):
+            t = w.get(tk)
+            if t and t[1] is not None and t[0] in ("pin", "label"):
+                # ★★ 2026-09-30 ✓ **标签的脚也是终端** ✓（“标签是一个元件” ✓ B3.1.1 ✓）——
+                #   ✗ 原来只认 `("pin", …)` ✗ ⇒ 给标签新拉的那一截引线（另一头 = 标签 ✓）
+                #   被当成“悬空叶子”**删掉** ✗✗ ⇒ 实测 `v36` 里那只 `RC` 标签
+                #   **浮空 11.5 单位** ✗（五道判据全绿也没发现 ✗ —— 靠 `_scratch/lbl_touch.py`
+                #   独立量出来的 ✓）。
+                terms.add(_rk(e))
+    out = set()
+    for _ in range(rounds):
+        live = [w for w in wires if str(w["mi"]) not in out]
+        deg = {}
+        for v in live:
+            for q in (v["p"], v["q"]):
+                deg[_rk(q)] = deg.get(_rk(q), 0) + 1
+        cand = None
+        for v in live:
+            # ★★ 2026-09-30 ✓ **挂着真终端的线一律不删** ✗（实测踩的坑 ✓）：级联清断头时
+            #   把 `R1` 那只脚**唯一的那根线**也吃了 ✗ ⇒ 脚被孤立 ✗、标签浮空 ✗
+            #   （五道判据都没拦住 ✗ ⇒ 靠 `_scratch/lbl_touch.py` 独立量出来的 ✓）。
+            #   真终端 = `("pin", 非 None)` ✓ / `("label", …)` ✓；`("pin", None)` 是裸端点 ✗ 不算 ✓。
+            _has_term = False
+            for _tk in ("start_tgt", "end_tgt"):
+                _t = v.get(_tk)
+                if _t and _t[1] is not None and _t[0] in ("pin", "label"):
+                    _has_term = True
+            if _has_term:
+                continue
+            for e in (v["p"], v["q"]):
+                k = _rk(e)
+                if k not in terms and deg.get(k) == 1:
+                    cand = v
+                    break
+            if cand is not None:
+                break
+        if cand is None:
+            break
+        out.add(str(cand["mi"]))
+    return out
+
+
+def trim_plan(net, wires, boxes, other_boxes, pin_all, K=K_INTER, eps=0.05, merge=()):
     r"""**只算不动** ✓ ⇒ `(要删的 mi 集合, [(新路径, 终端在路径哪一端, 那个 pin 目标)], 报告行)` ✓
 
-    ★ 两趟 ✓：① **删冗余**（从最长那根开始试 ✓、一次一改、每次重算终端分块 ✓）；
-      ② **改接点**（只动“**一端是终端、另一端是结点**”的支线 ✓ ⇒ 在同网的其它结点里找 ✓，
-      取**严格更省**的 ✓；找不到就原样 ✓）。
-    ★ 全程**从几何读** ✓（不看标志位 ✗）；收尾再**整体验一遍终端分块** ✓（变了 ⇒ 全撤 ✓，兜底 ✓）。
+    ★★ 三件事 ✓（**2026-09-30 第二版** ✓ —— 三处都是**从用户手改版学来的** ✓：他把总长
+      从 2421.7 压到 1934.8 单位（**−486.9 = −137.4mm** ✓）而**规则一条没破** ✓
+      ⇒ 说明我原来那三处口径**不够** ✓）：
+      ① **成组删** ✓：✗ 原来逐根试、还要求“每删一根都不留悬空端” ✗ ⇒ 找不到“**一整块回路**
+         一起删” ✓（他删掉 GND 左侧回路 **3 根 / 302.6 单位** ✓ —— 单删任何一根都会先留下
+         悬空端 ✗）⇒ 现在：**允许中途留悬空端** ✓，删完再**级联清理**悬空端 ✓
+         （每次删除都单独验终端分块 ✓、清理时也验 ✓；收尾再整体验一遍 ✓）。
+      ② **支线 = 整条** ✓：✗ 原来拿“**新整条路径**的长度”比“**旧路径里带脚的那一片**” ✗
+         ⇒ 实测把他那个改接（135.2 → 79.2 ✓ 省 56 ✓）**误判成更贵** ✗（79.2 ≥ 34.4 ✗）⇒ 拒了 ✗。
+         现在：**沿“度 2 的结点”串出整条支线**（脚 → 第一个分叉点 ✓）⇒ 拿**整条**比 ✓。
+      ③ **规则优先** ✓：接受条件 = **`(违例数, 价)` 字典序更小** ✓ ⇒ 正是用户原话
+         “**不违反任何规则 ＋ 节省线长**” ✓；违例数**更少**时允许**略长** ✓
+         （实测：他那根被删的竖线**正贴着 `RC` 标签** ✗ —— 消掉它比省几单位更重要 ✓）。
     """
     mine = [w for w in wires if w.get("net") == net]
     rep = []
@@ -2960,14 +3083,15 @@ def trim_plan(net, wires, boxes, other_boxes, pin_all, K=K_INTER, eps=0.05):
     _ys = [q[1] for w in wires for q in (w["p"], w["q"])]
     ubox = (min(_xs), min(_ys), max(_xs), max(_ys))
     terms = _term_nodes(wires, net)
-    live = {w["mi"]: {"w": w, "path": [w["p"], w["q"]]} for w in mine}
+    live = {w["mi"]: {"w": w, "mi": w["mi"], "path": [w["p"], w["q"]]} for w in mine}
     tgt = {}
     for w in mine:
         for tk, side in (("start_tgt", "p"), ("end_tgt", "q")):
             t = w.get(tk)
             if t and t[0] == "pin" and t[1] is not None:      # ★ 同上 ✓：`("pin", None)` 不算 ✓
                 tgt[w["mi"]] = side
-    base = _part_of([(_rk(v["path"][0]), _rk(v["path"][-1])) for v in live.values()], terms)
+    base = _part_of([(_rk(v["path"][0]), _rk(v["path"][-1])) for v in live.values()], terms,
+                    merge=[(_rk(p), g) for (p, g) in merge])
     print("   ── **`--trim`** ✓：网 `%s` ｜ %d 根线 ｜ 终端 %d 个 ｜ 分块 %d 块 ｜ 现长 %.1f 单位"
           % (net, len(mine), len(terms), len(base),
              sum(math.dist(v["path"][0], v["path"][-1]) for v in live.values())))
@@ -2975,117 +3099,192 @@ def trim_plan(net, wires, boxes, other_boxes, pin_all, K=K_INTER, eps=0.05):
     def _live(exc=()):
         return [v for k, v in live.items() if k not in exc]
 
-    # ── ① 删冗余 ✓ ──
-    del_mi = set()
-    for w in sorted(mine, key=lambda x: (-math.dist(x["p"], x["q"]), int(x["mi"]))):
-        hyp = _live(del_mi | {w["mi"]})
-        if _part_of([(_rk(v["path"][0]), _rk(v["path"][-1])) for v in hyp], terms) != base:
-            rep.append("   ⊘ 留 %s（%.1f 单位 ✓）：删了会**改变终端分块** ✗"
-                       % (w["mi"], math.dist(w["p"], w["q"])))
-            continue
-        bare = [k for e in (w["p"], w["q"])
-                for k in [_rk(e)] if k not in terms
-                and sum(1 for v in hyp for q in (v["path"][0], v["path"][-1])
-                        if _rk(q) == k) == 1]
-        if bare:
-            rep.append("   ⊘ 留 %s（%.1f 单位 ✓）：删了会在 %s 留**悬空线端** ✗"
-                       % (w["mi"], math.dist(w["p"], w["q"]), bare))
-            continue
-        del_mi.add(w["mi"])
-        rep.append("   ✂ **删掉 %s**（%.1f 单位 ✓）：终端分块不变 ✓、不留悬空端 ✓"
-                   % (w["mi"], math.dist(w["p"], w["q"])))
+    def _mik(s):
+        """排序键 ✓（改接时造的伪结点名不是数字 ⇒ 排到末尾 ✓）"""
+        return int(s) if str(s).isdigit() else 10 ** 9
 
-    # ── ② 改接点 ✓ ──
-    add = []
-    for w in list(mine):
-        if w["mi"] in del_mi or w["mi"] not in tgt:
+    def _part(live_):
+        return _part_of([(_rk(v["path"][0]), _rk(v["path"][-1])) for v in live_], terms,
+                        merge=[(_rk(p), g) for (p, g) in merge])
+
+    def _deg(live_, k):
+        return sum(1 for v in live_ for q in (v["path"][0], v["path"][-1]) if _rk(q) == k)
+
+    def _bare_ends(live_):
+        """**悬空线端**所在的线 ✓（一端的结点上只有它自己、而且那儿没有终端 ✓）"""
+        return sorted({v["mi"] for v in live_
+                       for e in (v["path"][0], v["path"][-1])
+                       if _rk(e) not in terms and _deg(live_, _rk(e)) == 1},
+                      key=lambda s: int(s))
+
+    # ── ① 删冗余 ✓（**成组** ✓：中途允许留悬空端 ✗，紧接着**级联清理**收尾 ✓）──
+    del_mi = set()
+    rounds = 0
+    while True:
+        rounds += 1
+        # ①a 删一根“删了不改终端分块”的线 ✓（**从最长那根开始** ✓ —— 环上先删最长 ⇒ 剩下最短 ✓）
+        _pick = None
+        _nofail, _first = 0, None
+        for w in sorted(_live(del_mi),
+                        key=lambda x: (-math.dist(x["path"][0], x["path"][-1]), _mik(x["mi"]))):
+            _p2 = _part(_live(del_mi | {w["mi"]}))
+            if _p2 == base:
+                _pick = w
+                break
+            _nofail += 1
+            if _first is None:
+                _first = (w, _p2)
+        if _pick is None and _first is not None:
+            _w1, _p21 = _first
+            rep.append("   · ①a：剩 %d 根**一根都不能删** ✗（删了会改变终端分块 ✓）—— "
+                       "最长那根 %s（%.1f 单位 ✓）的后果：分块 %d → %d ｜ 各块大小 %s → %s"
+                       % (_nofail, _w1["mi"], math.dist(_w1["path"][0], _w1["path"][-1]),
+                          len(base), len(_p21), [len(g) for g in base],
+                          [len(g) for g in _p21]))
+            for _g in _p21:
+                rep.append("        · 分出来的块：%s" % (list(_g),))
+        if _pick is None:
+            # ①b 没有“环”可删了 ⇒ 清**悬空线端**（叶子 ✓）；清完可能又露出新的环 ⇒ 回到 ①a ✓
+            _leaf = next((mi0 for mi0 in _bare_ends(_live(del_mi))
+                          if _part(_live(del_mi | {mi0})) == base), None)
+            if _leaf is None:
+                break
+            del_mi.add(_leaf)
+            rep.append("   🧹 清理悬空线端：删 %s ✓（那儿没接任何东西 ✓、删了不改终端分块 ✓）"
+                       % _leaf)
             continue
-        side = tgt[w["mi"]]
-        A = w["p"] if side == "p" else w["q"]                 # 终端那端 ✓
-        Q = w["q"] if side == "p" else w["p"]                 # 落在网上的那端 ✓
+        del_mi.add(_pick["mi"])
+        rep.append("   ✂ **删掉 %s**（%.1f 单位 ✓）：终端分块不变 ✓（中途的悬空端交给清理 ✓）"
+                   % (_pick["mi"], math.dist(_pick["path"][0], _pick["path"][-1])))
+    _kept = _live(del_mi)
+    if del_mi:
+        rep.append("   · ① 小结 ✓：删 **%d 根**（%d 轮 ✓）｜剩 %d 根 / 总长 **%.1f** 单位 ✓ ｜ "
+                   "悬空端 %d 个 %s"
+                   % (len(del_mi), rounds, len(_kept),
+                      sum(math.dist(v["path"][0], v["path"][-1]) for v in _kept),
+                      len(_bare_ends(_kept)), "✓" if not _bare_ends(_kept) else "✗（兜底会拦 ✓）"))
+    else:
+        rep.append("   · ① 小结 ✓：**没有可删的** ✓（本来就无环、无悬空端 ✓）")
+
+    # ── ② 改接点 ✓（**支线 = 整条** ✓：从脚出发、沿“度 2 的结点”串到第一个分叉点 ✓）──
+    add = []
+    for _mi0 in sorted(tgt, key=_mik):
+        if _mi0 in del_mi:
+            continue
+        _live0 = _live(del_mi)
+        w0 = next((v for v in _live0 if v["mi"] == _mi0), None)
+        if w0 is None:
+            continue
+        side = tgt[_mi0]
+        A = w0["path"][0] if side == "p" else w0["path"][-1]        # 终端那端 ✓
+        Q = w0["path"][-1] if side == "p" else w0["path"][0]         # 另一头 ✓
+        chain = [_mi0]
+        while True:                                                  # ★ 串出整条支线 ✓
+            if _rk(Q) in terms:
+                break                                                # 撞上另一个终端 ⇒ 停 ✓
+            _inc = [v for v in _live0 if v["mi"] not in chain
+                    and any(_rk(q) == _rk(Q) for q in (v["path"][0], v["path"][-1]))]
+            if len(_inc) != 1:
+                break                                                # 度 ≥3（分叉点 ✓）⇒ 就落在这儿 ✓
+            chain.append(_inc[0]["mi"])
+            Q = (_inc[0]["path"][0] if _rk(_inc[0]["path"][0]) == _rk(Q)
+                 else _inc[0]["path"][-1])
         if _rk(Q) in terms:
-            continue                                          # 两头都是终端 ⇒ 干线 ✓ 不动
-        others = _live(del_mi | {w["mi"]})
+            continue                                                 # 两头都是终端 ⇒ 干线 ✓ 不动
+        others = [v for v in _live0 if v["mi"] not in chain]
         allw = [x for x in wires if x["mi"] not in del_mi]
-        cur_cr = sum(1 for v in others if SG.seg_cross(A, Q, v["path"][0], v["path"][-1]))
-        cur = math.dist(A, Q) + K * cur_cr
+        _cur_segs = [(v["path"][0], v["path"][-1]) for v in _live0 if v["mi"] in chain]
+
+        def _ev(segs, ex_pts):
+            """`(违例数, 交叉数, 总长)` ✓ —— 现状与候选**同一套口径** ✓（这就是“不违反任何规则”✓）"""
+            v, cr, ln = 0, 0, 0.0
+            for (a, b) in segs:
+                ln += math.dist(a, b)
+                for o in others:
+                    c, d = o["path"][0], o["path"][-1]
+                    if SG.near_overlap(a, b, c, d):
+                        v += 1
+                    if SG.seg_cross(a, b, c, d):
+                        cr += 1
+                for b2 in list(boxes.values()) + [x[1] for x in other_boxes]:
+                    if b2 and SG.seg_hits_box(a, b, b2):
+                        v += 1
+                for (_r, _c, x, y) in pin_all:
+                    if any(math.dist((x, y), p) < eps for p in ex_pts):
+                        continue                                     # ★ 这一段**自己那两端的脚** ✓
+                    if SG.p2seg((x, y), a, b) < CLEAR_PIN:
+                        v += 1
+                for k2 in (a, b):
+                    for o in allw:                                   # ★ 跨网假接头 ✓
+                        if o.get("net") == net:
+                            continue
+                        if SG.p2seg(k2, o["p"], o["q"]) < FJ_GAP:
+                            v += 1
+                    if not (ubox[0] - OUT_MARGIN <= k2[0] <= ubox[2] + OUT_MARGIN
+                            and ubox[1] - OUT_MARGIN <= k2[1] <= ubox[3] + OUT_MARGIN):
+                        v += 1                                       # ★ 别跑出画布 ✓
+            return v, cr, ln
+
+        _cur_v, _cur_cr, _cur_ln = _ev(_cur_segs, (A, Q))
+        cur = _cur_ln + K * _cur_cr
         cand = sorted({_rk(q) for v in others for q in (v["path"][0], v["path"][-1])}
                       - {_rk(A), _rk(Q)} - terms)
         best = None
         for k in cand:
             for path in _paths_to(A, k):
                 segs = [(path[j], path[j + 1]) for j in range(len(path) - 1)]
-                v, cr, ln = 0, 0, 0.0
-                for (a, b) in segs:
-                    ln += math.dist(a, b)
-                    for o in others:
-                        c, d = o["path"][0], o["path"][-1]
-                        if SG.near_overlap(a, b, c, d):
-                            v += 1
-                        if SG.seg_cross(a, b, c, d):
-                            cr += 1
-                    for b2 in list(boxes.values()) + [x[1] for x in other_boxes]:
-                        if b2 and SG.seg_hits_box(a, b, b2):
-                            v += 1
-                    for (_r, _c, x, y) in pin_all:
-                        if math.dist((x, y), path[0]) < eps:
-                            continue                              # ★ 支线**自己那只脚** ✓
-                        if math.dist((x, y), path[-1]) < eps:
-                            continue
-                        if SG.p2seg((x, y), a, b) < CLEAR_PIN:
-                            v += 1
-                for k2 in path:                                   # ★ 跨网假接头 ✓
-                    for o in allw:
-                        if o.get("net") == net:
-                            continue
-                        if SG.p2seg(k2, o["p"], o["q"]) < FJ_GAP:
-                            v += 1
-                for k2 in path:                                   # ★ 别跑出画布 ✓
-                    if not (ubox[0] - OUT_MARGIN <= k2[0] <= ubox[2] + OUT_MARGIN
-                            and ubox[1] - OUT_MARGIN <= k2[1] <= ubox[3] + OUT_MARGIN):
-                        v += 1
-                if v:
+                v2, cr2, ln2 = _ev(segs, (A, path[-1]))
+                if v2:
                     continue
-                c2 = ln + K * cr
-                if best is None or (c2, cr, ln) < (best[0], best[1], best[2]):
-                    best = (c2, cr, ln, path, k)
+                c2 = ln2 + K * cr2
+                if best is None or (c2, cr2, ln2) < (best[0], best[1], best[2]):
+                    best = (c2, cr2, ln2, path, k, v2)
         if best is None:
-            rep.append("   ⊘ 不改 %s（%.1f 单位 ✓）：%d 个候选结点里**没有一个不违例**的 ✗"
+            rep.append("   ⊘ 不改 %s（整条支线 %.1f 单位 ✓）：%d 个候选结点里**没有一个不违例**的 ✗"
                        "（口径 = 压线 / 交叉 / 蹭脚 / 穿体 / 压标签 / 跨网假接头 / 出界 ✓）"
-                       % (w["mi"], math.dist(A, Q), len(cand)))
+                       % (chain[-1], _cur_ln, len(cand)))
             continue
-        if best[0] < cur - 1e-6:
+        if (best[5], best[0]) < (_cur_v, cur - 1e-6):
             _p = best[3]
+            # ★ `w0` 是**包装层** ✗（`{"w": 真线, "mi": …, "path": …}` ✓）⇒ 取目标要 `w0["w"]` ✓
+            #   （✗ 写成 `w0.get("start_tgt")` ⇒ 拿到 `None` ✗ ⇒ 新线**没有连接** ✗ ⇒ 实测 `(B)=1` ✗）
             add.append((_p, 0 if side == "p" else len(_p) - 1,
-                        w.get("start_tgt") if side == "p" else w.get("end_tgt"), w["mi"]))
-            del_mi.add(w["mi"])
-            live.pop(w["mi"], None)
+                        w0["w"].get("start_tgt") if side == "p" else w0["w"].get("end_tgt"), _mi0))
+            for _m2 in chain:                                        # ★ 整条支线都撤掉 ✓
+                del_mi.add(_m2)
+                live.pop(_m2, None)
             for j in range(len(_p) - 1):
-                live["new%d-%d" % (len(add), j)] = {"w": None, "path": [_p[j], _p[j + 1]]}
-            rep.append("   ↪ **改接 %s** ✓：%s (%.1f,%.1f) ⇒ (%.1f,%.1f) ✓ "
-                       "｜ 长 %.1f → %.1f ✓ ｜ 交集 %d → %d ✓ ｜ 价 %.1f → %.1f ✓"
-                       % (w["mi"], _rk(Q), Q[0], Q[1], best[4][0], best[4][1],
-                          math.dist(A, Q), best[2], cur_cr, best[1], cur, best[0]))
+                live["new%d-%d" % (len(add), j)] = {"w": None, "mi": "new%d-%d" % (len(add), j),
+                                                  "path": [_p[j], _p[j + 1]]}
+            rep.append("   ↪ **改接 %s** ✓：支线 %d 段 %.1f 单位 ⇒ 落到 (%.1f,%.1f) ✓ ｜ "
+                       "新路 %d 段 %.1f 单位 ✓ ｜ 交集 %d → %d ✓ ｜ 违例 %d → %d ✓ ｜ 价 %.1f → %.1f ✓"
+                       % (_mi0, len(chain), _cur_ln, best[4][0], best[4][1], len(_p) - 1, best[2],
+                          _cur_cr, best[1], _cur_v, best[5], cur, best[0]))
         else:
-            rep.append("   ⊘ 不改 %s：改到最近的结点也只到 %.1f ≥ 现在 %.1f ✗（%d 个候选里没有更省的 ✓）"
-                       % (w["mi"], best[0], cur, len(cand)))
+            rep.append("   ⊘ 不改 %s：整条支线 %.1f 单位 ⇒ 改到最近的结点也只到 %.1f ✗"
+                       "（%d 个候选里没有更省的 ✓；违例 %d → %d ✓）"
+                       % (_mi0, _cur_ln, best[0], len(cand), _cur_v, best[5]))
 
-    # ── ③ 兜底：整体再验一遍终端分块 ✓（变了就**全撤** ✗ —— 宁可不动 ✓）──
+    # ── ③ 兜底：整体再验一遍 **终端分块 ＋ 悬空线端** ✓（任一变了就**全撤** ✗ —— 宁可不动 ✓）──
     final = _live(del_mi)
     for (_p, _ti, _pt, _mi0) in add:
         for j in range(len(_p) - 1):
-            final.append({"path": [_p[j], _p[j + 1]]})
-    if _part_of([(_rk(v["path"][0]), _rk(v["path"][-1])) for v in final], terms) != base:
-        _now = _part_of([(_rk(v["path"][0]), _rk(v["path"][-1])) for v in final], terms)
-        rep.append("   ✗ **兜底否决**：这套改动整体会改变终端分块 ✗ ⇒ **全部撤回** ✓（宁缺勿错 ✓）")
-        rep.append("      · 终端点 %d 个：%s" % (len(terms), sorted(terms)))
-        rep.append("      · 撤前分块 %s" % (base,))
-        rep.append("      · 改后分块 %s" % (_now,))
+            final.append({"mi": "new%s-%d" % (_mi0, j), "path": [_p[j], _p[j + 1]]})
+    _fbare = _bare_ends(final)
+    if _part(final) != base or _fbare:
+        rep.append("   ✗ **兜底否决**：这套改动整体会%s ✗ ⇒ **全部撤回** ✓（宁缺勿错 ✓）"
+                   % ("改变终端分块" if _part(final) != base else
+                      "留下悬空线端 %s" % _fbare))
+        if _part(final) != base:
+            rep.append("      · 终端点 %d 个：%s" % (len(terms), sorted(terms)))
+            rep.append("      · 撤前分块 %s" % (base,))
+            rep.append("      · 改后分块 %s" % (_part(final),))
         return set(), [], rep
     if not del_mi:
         rep.append("   · 结论：**没有可删/可改的** ✓（本来就不冗余 ✓）")
     else:
-        rep.append("   · 结论：删 %d 根、改接 %d 处 ✓" % (len(del_mi) - len(add), len(add)))
+        rep.append("   · 结论 ✓：删 **%d 根**、改接 **%d 处** ✓ ｜ 悬空端 0 ✓"
+                   % (len(del_mi) - sum(1 for a in add), len(add)))
     return del_mi, [(a[0], a[1], a[2]) for a in add], rep
 
 
@@ -3854,43 +4053,6 @@ def emit(sroot, insts, z, nets_segs, orig_path, out_path, PIN_ALL=(), boxes=None
     wire_by_mi = {w["mi"]: w for w in wires}
     part_by_mi = {d["mi"]: d for d in insts.values()}
 
-    # ★★★ 2026-09-30 ✓ `--trim=<网>`：**剪冗余 ＋ 改接点** ✓（口径见 `trim_plan` ✓）
-    #   ★ 位置有讲究 ✓：要在**收集两端归属之前** ✓ —— 删掉/新建的线都得重新收集连接 ✓；
-    #     也在**贴标签/挂接地之前** ✓ —— 它们要看见**剪完的**几何 ✓（否则会照旧线避让 ✓）。
-    if TRIM_NETS:
-        for _tnet in sorted(TRIM_NETS):
-            _del, _add, _rep = trim_plan(_tnet, wires, boxes or {}, _lbl_boxes, PIN_ALL, K=K_TRIM)
-            for _l in _rep:
-                print(_l)
-            for _mi0 in sorted(_del, key=lambda s: int(s)):
-                _w0 = wire_by_mi.pop(_mi0, None)
-                if _w0 is None:
-                    continue
-                if _w0.get("el") is not None and _w0["el"] in list(host):
-                    host.remove(_w0["el"])
-                if _w0 in wires:
-                    wires.remove(_w0)
-            for _w0 in wires:                    # 指向被删线的那些头尾要清掉 ✓（悬空端交给后面判 ✓）
-                for _tk in ("start_tgt", "end_tgt"):
-                    _t0 = _w0.get(_tk)
-                    if (_t0 and _t0[0] == "wire" and _t0[1] is not None
-                            and str(_t0[1].get("mi")) in _del):
-                        _w0[_tk] = None
-            for (_p, _ti, _pt) in _add:          # 改接后的新路径 ✓（中继点靠“同点即连”✓）
-                for _j in range(len(_p) - 1):
-                    _seg = {"mi": str(next_mi), "p": _p[_j], "q": _p[_j + 1], "net": _tnet,
-                            "start_tgt": None, "end_tgt": None}
-                    next_mi += 1
-                    if _j == 0 and _ti == 0:
-                        _seg["start_tgt"] = _pt
-                    if _j == len(_p) - 2 and _ti == len(_p) - 1:
-                        _seg["end_tgt"] = _pt
-                    _seg["el"] = build_wire(tmpl, _seg)
-                    _seg["view"] = pm.child(pm.child(_seg["el"], "views"), "schematicView")
-                    host.append(_seg["el"])
-                    wires.append(_seg)
-                    wire_by_mi[_seg["mi"]] = _seg
-
     for w in wires:                              # 收集两端归属 ✓
         for cid, tgt in (("connector0", w["start_tgt"]), ("connector1", w["end_tgt"])):
             if tgt is None:
@@ -3908,80 +4070,158 @@ def emit(sroot, insts, z, nets_segs, orig_path, out_path, PIN_ALL=(), boxes=None
 
     # ★★ NL1 ✓：把标签实例**建出来**、贴到两个断口上 ✓ —— **声明要双向写** ✓
     #   （判定器按**连接表**认网 ✓ ⇒ 光画在那儿、不写 `<connect>` 是不算的 ✗）
+    # ★★★ 2026-09-30 ✓ **标签就近贴“本侧引脚”** ✓（③，学用户手改版 ✓；见 `sch-drawing-rules` B3.1 ✓）
+    #   ✗ 原来一律贴在**模块边界的断口**上 ✗ ⇒ 本侧“为了够到断口”的那一长段就白留了 ✗：
+    #     实测 `RC` 的 A 侧为了够到断口 `(46.4,55.2)` 走了 **143.7 单位** ✗（用户把标签挪到
+    #     `R1` 旁边 ✓ ⇒ 那一段立刻变成**断头** ⇒ 清掉 ✓ = 省 **128.3** ✓），
+    #     而两个标签**同名即同网** ✓ ⇒ 电气上照样成立 ✓✓。
+    #   ⇒ 现在：候选 = **本侧所有导线端点** ✓，按“离本侧的脚最近”排 ✓；再走原来的
+    #     （沿轴外推 × 朝向 × 违例）搜索 ✓；取（违例少 → 离脚近 → 挪得近 → 朝向 0°）✓。
+    # ★ 标签画出来的脚（给下面的“共线合并”当**终端**用 ✓：那一点上不许并 ✗）
+    _lbl_pins = []
     for _net, (_pt, _side, _gain) in _lbl_jobs:
-        _hit = None
-        for _w in wires:
-            if _w.get("net") != _net:
-                continue
-            for _cid, _q4, _tk in (("connector0", _w["p"], "start_tgt"),
-                                   ("connector1", _w["q"], "end_tgt")):
-                if _w.get(_tk) is not None and _w[_tk][1] is not None:
-                    continue                     # 这一端已经有归属 ✓ ⇒ 不是断口 ✓
-                if math.dist(_q4, _pt) < 0.05:
-                    _hit = (_w, _cid, _tk)
-        if _hit is None:
-            print("      ⊘ NL1：断口 (%.2f,%.2f) 上找不到裸端 ✗ ⇒ 不贴 ✓" % (_pt[0], _pt[1]))
+        _sidew = [x for x in wires if x.get("net") == _net]
+        _par0 = {}
+
+        def _f0(x):
+            _par0.setdefault(x, x)
+            while _par0[x] != x:
+                _par0[x] = _par0[_par0[x]]
+                x = _par0[x]
+            return x
+        for _x0 in _sidew:                        # 本侧 = 与断口**连通**的那些线 ✓
+            _a0, _b0 = _f0(_rk(_x0["p"])), _f0(_rk(_x0["q"]))
+            if _a0 != _b0:
+                _par0[_b0] = _a0
+        _root0 = _f0(_rk(_pt))
+        _comp = [x for x in _sidew if _f0(_rk(x["p"])) == _root0]
+        _nodes0 = {_rk(q) for x in _comp for q in (x["p"], x["q"])}
+        _pins0 = [(x, y) for (_r, _c, x, y) in PIN_ALL if _rk((x, y)) in _nodes0]
+        _cands = []
+        for _x0 in _comp:
+            for _cid0, _q40, _tk0 in (("connector0", _x0["p"], "start_tgt"),
+                                      ("connector1", _x0["q"], "end_tgt")):
+                _d0 = min([math.dist(_q40, _p0) for _p0 in _pins0] or [0.0])
+                _cands.append((_d0, str(_x0["mi"]), _x0, _cid0, _tk0))
+        _cands.sort(key=lambda z: (z[0], z[1]))
+        # ★★ 2026-09-30 ✓ 本侧“**真终端**”的结点表 ✓（脚 + 别的标签 ✓）—— 给
+        #   `dead_end_pin` 用 ✓：候选要是把一段**尽头挂着真脚**的链丢掉 ⇒ 否掉它 ✗
+        #   （否则那只脚会被孤立 ✗，而留着又会在断口留悬空端 ✗ ⇒ 只能不挪这一侧 ✓）。
+        _term_pts = set()
+        for _w5 in _sidew:
+            for _tk5, _e5 in (("start_tgt", _w5["p"]), ("end_tgt", _w5["q"])):
+                _t5 = _w5.get(_tk5)
+                if _t5 and _t5[1] is not None and _t5[0] in ("pin", "label"):
+                    _term_pts.add(_rk(_e5))
+        _pick = None
+        for _rank, (_dist0, _mi0, _w, _cid, _tk) in enumerate(_cands):
+            _other = _w["q"] if _tk == "start_tgt" else _w["p"]
+            _end = _w["p"] if _tk == "start_tgt" else _w["q"]
+            _ex, _ey = _end[0] - _other[0], _end[1] - _other[1]
+            _EL = math.hypot(_ex, _ey)
+            _ux, _uy = (_ex / _EL, _ey / _EL) if _EL > 1e-9 else (0.0, 0.0)
+            # ★★★ 2026-09-30 ✓ **外推方向从“只沿轴”扩到 4 个方向** ✓（学用户手改版 ✓）：
+            #   ✗ 只沿轴 ⇒ 在芯片旁边那只脚上，标签**只能往线的正上/正下方向挪** ✗
+            #     ⇒ 撞上元件本体 ⇒ 只能越挪越远 ✗（实测：跳到第 4 近的结点、还多带 28.8 单位 ✗）；
+            #   ✓ 加上两个**垂方向** ⇒ 它就能像用户那样摆在引脚**旁边** ✓（他那只是往右 15.4 ✓）。
+            #   ★ 次序仍先挑“沿轴向外”（= 原来那套、断口上的做法不变 ✓），违例一样时才轮到垂方向 ✓。
+            _pts_to_try = []
+            for _di, (_dx0, _dy0) in enumerate(((_ux, _uy), (-_ux, -_uy),
+                                                (_uy, -_ux), (-_uy, _ux))):
+                for _d in LBL_OFFS:
+                    _pts_to_try.append((_di, _d, (_end[0] + _dx0 * _d, _end[1] + _dy0 * _d)))
+            for _di, _d, _q2 in _pts_to_try:
+                # ★ 判据的落点用 **`_end`**（= 引线/搬线端的**落脚结点** ✓）而**不是** `_q2` ✗：
+                #   标签是靠引线**挂在 `_end` 上**的 ✓ ⇒ `_end` 那一侧**没被丢** ✓；
+                #   丢掉的是 `_pt` → `_end` 之间那一截 ✓（✗ 用 `_q2` 会把“顺着同一条链挪近一点”
+                #   也判成危险 ✗ —— 而用户手改版正是这么挪的 ✓）。
+                if dead_end_pin(wires, _pt, _end, _term_pts) is not None:
+                    continue                   # ★ 丢这一截会把一只真脚孤立 ✗ ⇒ 这个候选不能用 ✓
+                for _rot2 in LBL_ROTS:             # ★ 三个朝向都是实测口径 ✓，但 180° 不许挑 ✓
+                    #   （2026-09-29 ✓ 拿到 Fritzing 导出后**反解**出“绕板心转” ✓ ⇒
+                    #    三个朝向与 Fritzing 画出来的**逐点一致** ✓（各差 < 1e-4 ✓）；
+                    #    ✗ 上一版只敢用两个、还抄了别处的 `m31/m32` ✗ ⇒ 摆错 ✓ 见 `_LBL_ATTR` 那条注 ✓）
+                    _m2 = sch_net.MATRIX[_rot2]
+                    _geom2 = sch_net.label_geom(_q2, _net, _m2)     # ★ **反解** `geometry` ✓
+                    _bx2 = sch_net.label_box(_geom2, _net, _m2)     # ★ 本体框：**一处实现** ✓
+                    _v2 = 0
+                    for _w2 in wires:
+                        _a2, _b2 = _w2["p"], _w2["q"]
+                        if _w2 is _w:
+                            # ★★ 自己那根线**也不许被身体包住** ✗（用户 2026-09-29 看图指出
+                            #   “竖着的 GND 和两个 RC 都被穿了” ✓）—— 只在**引脚处留 2 单位**容差 ✓。
+                            _L2 = math.dist(_a2, _b2)
+                            if _L2 <= 2.0:
+                                continue
+                            _t2 = 2.0 / _L2
+                            if math.dist(_a2, _q2) < math.dist(_b2, _q2):
+                                _a2 = (_a2[0] + (_b2[0] - _a2[0]) * _t2,
+                                       _a2[1] + (_b2[1] - _a2[1]) * _t2)
+                            else:
+                                _b2 = (_b2[0] + (_a2[0] - _b2[0]) * _t2,
+                                       _b2[1] + (_a2[1] - _b2[1]) * _t2)
+                        if SG.seg_hits_box(_a2, _b2, _bx2):
+                            _v2 += 1
+                    for (_t3, _bb3) in _lbl_boxes:
+                        if (_bx2[0] < _bb3[2] and _bb3[0] < _bx2[2]
+                                and _bx2[1] < _bb3[3] and _bb3[1] < _bx2[3]):
+                            _v2 += 1
+                    # ★★★ 2026-09-30 ✓ **标签的脚也不许被别的线贴近** ✗（判据与“脚”同一条 ✓
+                    #   `CLEAR_PIN` = 2.03mm ✓）：✗ 原来只查“线穿过旗标本体” ✗ ⇒ 实测标签挪到
+                    #   引脚旁之后，另一根线离它的脚只有 **0.85mm** ✗（渲染器当场报“贴近不相连的
+                    #   引脚 1 处”✗）= 看着像接上了 ✗ ⇒ 补上这条 ✓（自己那根引线豁免 ✓）。
+                    for _w4 in wires:
+                        if _w4 is _w:
+                            continue
+                        if SG.p2seg(_q2, _w4["p"], _w4["q"]) < CLEAR_PIN:
+                            _v2 += 1
+                    if _d:                                # ★ 伸长的那一截本身也不许蹭脚 ✗
+                        for _p3 in PIN_ALL:
+                            # ★★ 2026-09-30 ✓ **自己出发的那只脚不算** ✗✗（实测找出来的 ✓）：
+                            #   引线是从那只脚上长出来的 ✓ ⇒ 它到引线的距离**恒为 0** ✗ ⇒ 不排它的话
+                            #   **每条带引线的候选都白背 1 个违例** ✗ ⇒ 贴在本侧引脚旁边的候选
+                            #   **全被否掉** ✗，只能退到 28.8 单位外的结点上 ✗ ——
+                            #   而用户手改版恰恰就贴在引脚旁 15.4 单位处 ✓（截图那只 `RC` ✓）。
+                            #   容差取全仓统一的 **1 单位** ✓（= §5b ⑫ 那条口径 ✓）。
+                            if math.dist((_p3[2], _p3[3]), _end) < 1.0:
+                                continue
+                            if SG.p2seg((_p3[2], _p3[3]), _end, _q2) < CLEAR_PIN:
+                                _v2 += 1
+                    for _p3 in PIN_ALL:                   # 标签本体附近不许有别的脚 ✓
+                        if (_bx2[0] - CLEAR_PIN < _p3[2] < _bx2[2] + CLEAR_PIN
+                                and _bx2[1] - CLEAR_PIN < _p3[3] < _bx2[3] + CLEAR_PIN):
+                            _v2 += 1
+                    # ★★★ 2026-09-30 ✓ **标签（一个元件 ✓）不许压在/贴住任何元件的本体上** ✗
+                    #   —— 用户 2026-09-30 指着截图问“**RC 本体压在了 U1 上，这没有违规吗**？”✓
+                    #   （他手改版里那只 `RC` 落在 `(176.48,81.00)` ✓ = **就在 `U1` 方框里** ✗）
+                    #   ⇒ 原因：这里原来只查 导线 / 别的标签 / 引脚 ✗，**没查本体框** ✗。
+                    #   ★ 留边距用 `CLEAR`（6.0 单位 ≈ 1.7mm ✓）—— 与“导线离元件本体”**同一条** ✓
+                    #     （不是 0 ✓：贴着边框看着仍旧是“压住”✗）。
+                    for _t6, _bb6 in boxes.items():
+                        if _bb6 is None or len(_bb6) < 4:
+                            continue
+                        if (_bx2[0] - CLEAR < _bb6[2] and _bb6[0] < _bx2[2] + CLEAR
+                                and _bx2[1] - CLEAR < _bb6[3] and _bb6[1] < _bx2[3] + CLEAR):
+                            _v2 += 1
+                    if _pick is None or ((_v2, _rank, _di, _d, _rot2)
+                                         < (_pick[0], _pick[1], _pick[2], _pick[3], _pick[4])):
+                        _pick = (_v2, _rank, _di, _d, _rot2, _q2, _bx2, _w, _cid, _tk, _dist0)
+        if _pick is None:
+            print("      ⊘ NL1：本侧 (%.2f,%.2f) 这一侧**找不到能贴标签的地方** ✗ ⇒ 不贴 ✓"
+                  % (_pt[0], _pt[1]))
             continue
-        _w, _cid, _tk = _hit
-        # ★★★ 2026-09-29 ✓ **位置 + 朝向一起挑** ✓（用户定 ✓ —— B3.1.1 ✓）
-        #   ① 「**要有引线连接**」✓：标签脚**永远是这根线的某一端** ✓
-        #      ⇒ 做法照用户手改版的形态 ✓：**沿这根线的轴向往外挪**（他的 `RC` 就是
-        #      在同一 y 上往左挪到没线的地方 ✓）⇒ 挪完把线端**跟着伸过去** ✓ ⇒ 引脚仍在线端上 ✓。
-        #   ② 「**标签是一个元件**」✓：本体框不许**穿线** ✗、不许**压别的标签** ✗、
-        #      不许蹭到**任何别的脚**（< `CLEAR_PIN` ✓）✗；这根线伸长的那一截也不许蹭脚 ✗。
-        #   ★ 候选 = 轴向 7 个距离 × 两种**实测过的**朝向（0°/90° ✓）✓ ⇒ 取**违例最少**的 ✓
-        #     （并列时取挪得近的、朝向 0° ✓）。
+        _v2, _rank2, _di2, _d2, _rot2, _q2, _bx2, _w, _cid, _tk, _dist0 = _pick
         _other = _w["q"] if _tk == "start_tgt" else _w["p"]
         _end = _w["p"] if _tk == "start_tgt" else _w["q"]
-        _ex, _ey = _end[0] - _other[0], _end[1] - _other[1]
-        _EL = math.hypot(_ex, _ey)
-        _ux, _uy = (_ex / _EL, _ey / _EL) if _EL > 1e-9 else (0.0, 0.0)
-        _pick = None
-        for _d in LBL_OFFS:
-            _q2 = (_end[0] + _ux * _d, _end[1] + _uy * _d)
-            for _rot2 in LBL_ROTS:                 # ★ **四个朝向都是实测口径** ✓，但 180° 不许挑 ✓
-                #   （2026-09-29 ✓ 拿到 Fritzing 导出后**反解**出“绕板心转” ✓ ⇒
-                #    三个朝向与 Fritzing 画出来的**逐点一致** ✓（各差 < 1e-4 ✓）；
-                #    ✗ 上一版只敢用两个、还抄了别处的 `m31/m32` ✗ ⇒ 摆错 ✓ 见 `_LBL_ATTR` 那条注 ✓）
-                _m2 = sch_net.MATRIX[_rot2]
-                _geom2 = sch_net.label_geom(_q2, _net, _m2)     # ★ **反解** `geometry` ✓
-                _bx2 = sch_net.label_box(_geom2, _net, _m2)     # ★ 本体框：**一处实现** ✓
-                _v2 = 0
-                for _w2 in wires:
-                    _a2, _b2 = _w2["p"], _w2["q"]
-                    if _w2 is _w:
-                        # ★★ 自己那根线**也不许被身体包住** ✗（用户 2026-09-29 看图指出
-                        #   “竖着的 GND 和两个 RC 都被穿了” ✓）—— 只在**引脚处留 2 单位**容差 ✓。
-                        _L2 = math.dist(_a2, _b2)
-                        if _L2 <= 2.0:
-                            continue
-                        _t2 = 2.0 / _L2
-                        if math.dist(_a2, _q2) < math.dist(_b2, _q2):
-                            _a2 = (_a2[0] + (_b2[0] - _a2[0]) * _t2,
-                                   _a2[1] + (_b2[1] - _a2[1]) * _t2)
-                        else:
-                            _b2 = (_b2[0] + (_a2[0] - _b2[0]) * _t2,
-                                   _b2[1] + (_a2[1] - _b2[1]) * _t2)
-                    if SG.seg_hits_box(_a2, _b2, _bx2):
-                        _v2 += 1
-                for (_t3, _bb3) in _lbl_boxes:
-                    if (_bx2[0] < _bb3[2] and _bb3[0] < _bx2[2]
-                            and _bx2[1] < _bb3[3] and _bb3[1] < _bx2[3]):
-                        _v2 += 1
-                if _d:                                # ★ 伸长的那一截本身也不许蹭脚 ✗
-                    for _p3 in PIN_ALL:
-                        if SG.p2seg((_p3[2], _p3[3]), _end, _q2) < CLEAR_PIN:
-                            _v2 += 1
-                for _p3 in PIN_ALL:                   # 标签本体附近不许有别的脚 ✓
-                    if (_bx2[0] - CLEAR_PIN < _p3[2] < _bx2[2] + CLEAR_PIN
-                            and _bx2[1] - CLEAR_PIN < _p3[3] < _bx2[3] + CLEAR_PIN):
-                        _v2 += 1
-                if _pick is None or (_v2, _d, _rot2) < (_pick[0], _pick[1], _pick[2]):
-                    _pick = (_v2, _d, _rot2, _q2, _bx2)
-        _v2, _d2, _rot2, _q2, _bx2 = _pick
+        print("      · NL1 选点 ✓：本侧第 %d 近的结点（离本侧最近的脚 %.1f 单位 ✓）｜ "
+              "外推方向 %s ✓ —— 比“贴在断口 (%.2f,%.2f)”近 ✓"
+              % (_rank2 + 1, _dist0, ("沿轴向外", "沿轴反向", "垂向 A", "垂向 B")[_di2],
+                 _pt[0], _pt[1]))
         _mi = str(next_mi)
         next_mi += 1
-        if _d2 and end_is_free(wires, _w, _end, PIN_ALL):
+        # ★ 只有**沿轴**那两个方向能“搬线端” ✓ —— 垂方向搬过去会把这根线**弄成斜线** ✗
+        #   （用户手改版的做法是再加一截垂直引线 ✓ = 下面 `elif` 那条 ✓）。
+        if _d2 and _di2 < 2 and end_is_free(wires, _w, _end, PIN_ALL):
             # ★★ 2026-09-29 ✓ 用户定 ✓：**那一端上没有别人** ⇒ **直接把它搬过去** ✓
             #   （= 这根线变长一点点 ✓，标签脚正好落在线端上 ✓）
             #   ⇒ 没有接缝 ⇒ **不会凭空多一个圆点** ✓（判据与正反两面证据见 `end_is_free` ✓）。
@@ -3996,6 +4236,7 @@ def emit(sroot, insts, z, nets_segs, orig_path, out_path, PIN_ALL=(), boxes=None
                 _w["p"] = _q2
             else:
                 _w["q"] = _q2
+            _w[_tk] = ("label", _mi)      # ★ 那一端现在属于**标签** ✓（否则会被当悬空端清掉 ✗）
             _w["el"] = build_wire(tmpl, _w)
             _w["view"] = pm.child(pm.child(_w["el"], "views"), "schematicView")
             if _at is None:
@@ -4014,7 +4255,7 @@ def emit(sroot, insts, z, nets_segs, orig_path, out_path, PIN_ALL=(), boxes=None
             #   ★ 代价：多一个**接缝** ⇒ Fritzing 会在那儿画个**小圆点** ✓
             #     （≥2 个线端 ✓）—— 这是**换来的**（保接头 ✓），不是白拿的 ✓。
             _stub = {"mi": str(next_mi), "p": _end, "q": _q2, "net": _net,
-                     "start_tgt": ("wire", _w, _cid), "end_tgt": None}
+                     "start_tgt": ("wire", _w, _cid), "end_tgt": ("label", _mi)}
             next_mi += 1
             _stub["el"] = build_wire(tmpl, _stub)
             _stub["view"] = pm.child(pm.child(_stub["el"], "views"), "schematicView")
@@ -4031,15 +4272,17 @@ def emit(sroot, insts, z, nets_segs, orig_path, out_path, PIN_ALL=(), boxes=None
             print("      · 加引线 ✓ %s：(%.2f,%.2f)→(%.2f,%.2f) ✓（%.1f 单位 ✓）"
                   % (_stub["mi"], _end[0], _end[1], _q2[0], _q2[1], _d2))
         _lbl_boxes.append((_mi, _bx2))
+        _lbl_pins.append((_q2[0], _q2[1]))
         _el = build_label(_net, _q2, _mi, rot=_rot2)
-        print("      · 标签 ✓ %s（%s ✓）@(%.2f,%.2f) ✓ 朝向 %d° ✓ 沿轴挪 %.1f 单位 ✓ "
-              "违例 %d %s｜盒 (%.1f,%.1f→%.1f,%.1f)"
-              % (_mi, _net, _q2[0], _q2[1], _rot2, _d2, _v2, "✓" if not _v2 else "✗",
+        print("      · 标签 ✓ %s（%s ✓）@(%.2f,%.2f) ✓ 朝向 %d° ✓ 挪 %.1f 单位（%s ✓）违例 %d %s｜盒 (%.1f,%.1f→%.1f,%.1f)"
+              % (_mi, _net, _q2[0], _q2[1], _rot2, _d2,
+                 ("沿轴向外", "沿轴反向", "垂向 A", "垂向 B")[_di2], _v2, "✓" if not _v2 else "✗",
                  _bx2[0], _bx2[1], _bx2[2], _bx2[3]))
         host.append(_el)
         _sub = pm.child(pm.child(_el, "views"), "schematicView")
         _key = "LBL" + _mi
-        insts[_key] = {"mi": _mi, "mid": "NetLabelModuleID", "el": _el, "sub": _sub}
+        insts[_key] = {"mi": _mi, "mid": "NetLabelModuleID", "net": _net,
+                       "el": _el, "sub": _sub}
         # ★ 两个字典的**键不一样** ✗（实测撞过两次 ✓）：`insts` 用 `_key` ✓，
         #   而 `part_by_mi` 是**按 `mi`** 建的 ✓ ⇒ 写连接时查的是 `part_by_mi[mi]` ✓
         #   （✗ 我上一版写成 `part_by_mi[_key]` ⇒ `KeyError: '90012775'` ✗✗）
@@ -4048,6 +4291,66 @@ def emit(sroot, insts, z, nets_segs, orig_path, out_path, PIN_ALL=(), boxes=None
         links.append((_w["mi"], _cid, "schematicTrace", _mi, "connector0", "schematic"))
         print("      ✓ NL1：标签 %s（%s ✓）@(%.2f,%.2f) ↔ 导线 %s.%s ✓"
               % (_mi, _net, _pt[0], _pt[1], _w["mi"], _cid))
+
+    # ★★★ 2026-09-30 ✓ 标签挪到“本侧引脚旁”之后 ✓，**原来通到断口那一截就成了断头** ✗
+    #   ⇒ 顺手**级联清掉** ✓（判据 = 叶子：一端悬空、且那一端上没有终端 ✓）
+    if _lbl_jobs:
+        _pruned = prune_dangling(wires, PIN_ALL)
+        if _pruned:
+            _n0 = len(links)
+            for _mi0 in sorted(_pruned, key=lambda s: int(s) if str(s).isdigit() else 10 ** 9):
+                _w0 = wire_by_mi.pop(_mi0, None)
+                if _w0 is None:
+                    continue
+                if _w0.get("el") is not None and _w0["el"] in list(host):
+                    host.remove(_w0["el"])
+                if _w0 in wires:
+                    wires.remove(_w0)
+            for _w0 in wires:
+                for _tk in ("start_tgt", "end_tgt"):
+                    _t0 = _w0.get(_tk)
+                    if (_t0 and _t0[0] == "wire" and _t0[1] is not None
+                            and str(_t0[1].get("mi")) in _pruned):
+                        _w0[_tk] = None
+            links = [L for L in links
+                     if str(L[0]) not in _pruned and str(L[3]) not in _pruned]
+            # ★★★ 2026-09-30 ✓ **清完之后，端点正好落在“真脚 / 标签”上的，要当场补连接** ✓：
+            #   ✗ 实测漏网的一种 ✗：标签的新落脚点**就是某只脚所在的结点**（`RC` 那只落在
+            #     `R1` 脚上 ✓）⇒ 给它拉的那截引线，`start_tgt` 指的是**原来那根线** ✗
+            #     ⇒ 那根线被清掉之后目标被置空 ✗ ⇒ 图上**引线端点正压在脚上、却没有连接** ✗
+            #     = “看着接上、其实没接” ✗（判据 ② 的 `(B)` 正好抓住它 ✓ 实测 `(B)=1` ✗）。
+            #   ✓ 口径：**裸端点**（目标为空 ✓）落在某只脚 / 某个标签的画出位置上（≤ 0.05 ✓）
+            #     ⇒ 登记连接 ✓（与“同点即连”同一条思路 ✓：Fritzing 的连接是**声明**的 ✓，
+            #       “端点重合”本身不算连 ✓）。
+            _nfix = 0
+            for _w0 in wires:
+                for _cid0, _e0, _tk0 in (("connector0", _w0["p"], "start_tgt"),
+                                         ("connector1", _w0["q"], "end_tgt")):
+                    if _w0.get(_tk0) is not None:
+                        continue
+                    _hit = None
+                    for (_r5, _c5, _x5, _y5) in PIN_ALL:
+                        # ★ `PIN_ALL` 的元素是 `(实例键, 连接器 id, x, y)` ✓ ——
+                        #   ✗ 我第一版把 `_c5` 当成 `{"ref":…, "cid":…}` 那个字典了 ✗
+                        #   （字典是**目标元组**里的第二项 ✓，不是这张表里的 ✗）⇒ `AttributeError` ✗。
+                        if abs(_x5 - _e0[0]) < 0.05 and abs(_y5 - _e0[1]) < 0.05:
+                            _hit = (_r5, _c5)
+                            break
+                    if _hit is None:
+                        continue
+                    _d5 = insts.get(_hit[0]) or {}
+                    if _d5.get("mi") is None:
+                        continue
+                    _w0[_tk0] = ("pin", {"ref": _hit[0], "cid": _hit[1]})
+                    links.append((_w0["mi"], _cid0, "schematicTrace",
+                                  _d5["mi"], _hit[1], "schematic"))
+                    _nfix += 1
+            if _nfix:
+                print("      ↪ 断头清理后**补连接** %d 处 ✓（端点正落在脚/标签上、原来没声明 ✗）"
+                      % _nfix)
+            print("   ★ 标签挪位后的**断头**清理 ✓：删 %d 根 ✓（%s）—— 都是“一端悬空、那一端"
+                  "又没有终端”的叶子 ✓ ⇒ 不动任何端子之间的连通 ✓；顺手剔掉 %d 条连接 ✓"
+                  % (len(_pruned), "、".join(sorted(_pruned)), _n0 - len(links)))
 
     # ★★★ 2026-09-30 ✓ **`--ground=<网>`：给地网挂接地符号** ✓（用户 2026-09-29 的改法 ✓）
     #   · 那些网**不切** ✓（见上面两处 `continue` ✓）⇒ 电气上仍是**一整张网** ✓（导线连着 ✓）；
@@ -4114,7 +4417,8 @@ def emit(sroot, insts, z, nets_segs, orig_path, out_path, PIN_ALL=(), boxes=None
             host.append(_el)
             _sub = pm.child(pm.child(_el, "views"), "schematicView")
             _key = "GND" + _mi
-            insts[_key] = {"mi": _mi, "mid": "GroundModuleID", "el": _el, "sub": _sub}
+            insts[_key] = {"mi": _mi, "mid": "GroundModuleID", "net": _gnet,
+                           "el": _el, "sub": _sub}
             part_by_mi[_mi] = insts[_key]
             _att[_atk] = ("pin", {"ref": _key, "cid": "connector0"})
             links.append((_att["mi"], _acid, "schematicTrace", _mi, "connector0", "schematic"))
@@ -4123,6 +4427,193 @@ def emit(sroot, insts, z, nets_segs, orig_path, out_path, PIN_ALL=(), boxes=None
                   "违例 %d %s ｜ %s"
                   % (_gcnt, _mi, _grp, _Q[0], _Q[1], _dist, _v,
                      "✓" if not _v else "✗", "、".join(_why) if _why else "（干净 ✓）"))
+
+    # ★★★ 2026-09-30 ✓ `--trim=<网>`：**剪冗余 ＋ 改接点** ✓（口径见 `trim_plan` ✓）
+    #   ★★ 位置**改到“标签/接地都挂完之后”** ✗✓（原来放在它们之前 ✗ ⇒ 少算了一条语义 ✗✗）：
+    #     同名标签 / 接地符号在 Fritzing 里**本来就同网** ✓（`LocalGrounds` / 同名即连 ✓）
+    #     ⇒ 它们接的两侧**不用线连着也算通** ✓ ⇒ 用户手改版删掉“GND 左侧回路”就是这么成立的 ✓
+    #     （实测：那三根是 `D3.c0/c1 ＋ C1.c1` **唯一**的线路径 ✗，但两侧靠两个**接地符号**同网 ✓
+    #     ⇒ 电气上没断 ✓，`check_netlist.py` 也照这个语义判 ✓）。✗ 放在挂之前 ⇒ 这块永远删不掉 ✗。
+    #   ★ 另：删掉的线要把 `links` 里指向它的条目也剔掉 ✓（links 早就收集过了 ✓）。
+    if TRIM_NETS:
+        _merge = []
+        for _w0 in wires:
+            for _tk in ("start_tgt", "end_tgt"):
+                _t0 = _w0.get(_tk)
+                if not (_t0 and _t0[0] == "pin" and _t0[1] is not None):
+                    continue
+                _d0 = insts.get(str(_t0[1].get("ref"))) or {}
+                _mid0 = _d0.get("mid") or ""
+                _pt0 = _w0["p"] if _tk == "start_tgt" else _w0["q"]
+                if sch_net.is_ground_symbol(_mid0):
+                    _merge.append((_pt0, "@GROUND"))          # ★ 全图地脚 = 一张网 ✓
+                elif sch_net.is_label_module(_mid0):
+                    _merge.append((_pt0, "@LBL:" + (_d0.get("net") or "")))   # ★ 同名即同网 ✓
+        if _merge:
+            print("   ★ `--trim`：**同名标签 / 接地符号先按 Fritzing 语义并起来** ✓（%d 个脚 ✓ —— "
+                  "不并的话，靠符号同网的那两块会被误判成“删了就断” ✗）" % len(_merge))
+        for _tnet in sorted(TRIM_NETS):
+            _del, _add, _rep = trim_plan(_tnet, wires, boxes or {}, _lbl_boxes, PIN_ALL,
+                                         K=K_TRIM, merge=_merge)
+            for _l in _rep:
+                print(_l)
+            for _mi0 in sorted(_del, key=lambda s: int(s) if str(s).isdigit() else 10 ** 9):
+                _w0 = wire_by_mi.pop(_mi0, None)
+                if _w0 is None:
+                    continue
+                if _w0.get("el") is not None and _w0["el"] in list(host):
+                    host.remove(_w0["el"])
+                if _w0 in wires:
+                    wires.remove(_w0)
+            for _w0 in wires:                    # 指向被删线的那些头尾要清掉 ✓（悬空端交给后面判 ✓）
+                for _tk in ("start_tgt", "end_tgt"):
+                    _t0 = _w0.get(_tk)
+                    if (_t0 and _t0[0] == "wire" and _t0[1] is not None
+                            and str(_t0[1].get("mi")) in _del):
+                        _w0[_tk] = None
+            if _del:
+                _n0 = len(links)
+                links = [L for L in links
+                         if str(L[0]) not in _del and str(L[3]) not in _del]
+                print("   ★ 剪掉的线上原本还挂着 %d 条连接 ✓ ⇒ 一并剔除 ✓" % (_n0 - len(links)))
+            for (_p, _ti, _pt) in _add:          # 改接后的新路径 ✓（中继点靠“同点即连”✓）
+                for _j in range(len(_p) - 1):
+                    _seg = {"mi": str(next_mi), "p": _p[_j], "q": _p[_j + 1], "net": _tnet,
+                            "start_tgt": None, "end_tgt": None}
+                    next_mi += 1
+                    if _j == 0 and _ti == 0:
+                        _seg["start_tgt"] = _pt
+                    if _j == len(_p) - 2 and _ti == len(_p) - 1:
+                        _seg["end_tgt"] = _pt
+                    _seg["el"] = build_wire(tmpl, _seg)
+                    _seg["view"] = pm.child(pm.child(_seg["el"], "views"), "schematicView")
+                    host.append(_seg["el"])
+                    wires.append(_seg)
+                    wire_by_mi[_seg["mi"]] = _seg
+                    # ★★ 新线**自己那一端要接线** ✗✗（2026-09-30 实测撞上 ✓）：`links` 是**早先**
+                    #   收集好的 ✓ —— ✗ 那时这根线还不存在 ⇒ 它的 `<connect>` 永远写不出来 ✗ ⇒
+                    #   实测 `(B)=1` 假连线 ✗（`Wire90012784` 的端落在 `U1.connector5` 上、
+                    #   表里却声明为空 ✗）⇒ 新线的那一端必须**在这里补一条连接** ✓。
+                    for _tk2, _cid2 in (("start_tgt", "connector0"), ("end_tgt", "connector1")):
+                        _t2 = _seg.get(_tk2)
+                        if not (_t2 and _t2[0] == "pin" and _t2[1] is not None):
+                            continue
+                        _d2 = insts.get(str(_t2[1].get("ref"))) or {}
+                        if _d2.get("mi") is not None:
+                            links.append((_seg["mi"], _cid2, "schematicTrace",
+                                          _d2["mi"], _t2[1].get("cid"), "schematic"))
+
+    # ★★★ 2026-09-30 ✓ **同网 ＋ 共端点 ＋ 完全共线**的两根导线 ⇒ **并成一根** ✗✗
+    #   ★ 为什么（用户 2026-09-30 指着截图说「**红色线上多了一个接线点**」✓）：
+    #     `--trim` 的“改接”会把一条**长直线切成两段共线的线** ✗（实测 5V：
+    #     `(29.78,-57.60)→(49.38,-57.60)` ＋ `(49.38,-57.60)→(180.38,-57.60)` ✗ ✓），
+    #     而 Fritzing 会在那个**切口**上画一个**小圆点** ✓ ⇒ 看着就像“凭空多出一个接线点” ✗
+    #     （用户手改版那条是**一整根** ✓ ⇒ 没有点 ✓）。
+    #   ★ 判据（很保守 ✓）：两点①同网 ✓ ②在那一点上**恰好只有这两个线端**（度 2 ✓）
+    #     ③从该点伸向两边的方向**严格反向**（叉积≈0 ✓、点积<0 ✓）⇒ 才并 ✓；
+    #     折角（不共线 ✓）**一律不动** ✗（手改版里那些折角就是普通接头 ✓ 不该并 ✓）。
+    #   ★ 合并后要：重建元素（保持原**叠放位置** ✓）、把指向被并那根的连接剔掉 ✓、
+    #     两端归属照旧跟着**外侧**两个端走 ✓（内部那个接头从此不存在 ✓）。
+    #   ★★ 两条**安全条件**（2026-09-30 第一版没写、当场撞了 ✗）：
+    #     ① 合并点上**不许有真终端**（脚 / 标签 ✓）—— 实测：标签那截引线的接头
+    #        正是 `R1` 的脚 ✗，并进去就等于“让线**穿过**那只脚”✗ ⇒ 脚上没有线端了 ✗
+    #        ⇒ 判据 `(A)/(B)` 当场各报 1 ✗；
+    #     ② 只在**带开关**（`--label/--ground/--trim` ✓）时才跑 —— 无开关时输出必须与
+    #        `v29` 逐字节相同 ✓（实测：不限制的话它会去并 `v29` 自己那两段 ✗ ⇒ 26/26 变 25/26 ✗）。
+    if TRIM_NETS or _lbl_jobs or GROUND_NETS:
+      for _round in range(200):
+        _pts = {}
+        for _w0 in wires:
+            for _tk0, _e0, _o0 in (("start_tgt", _w0["p"], _w0["q"]),
+                                   ("end_tgt", _w0["q"], _w0["p"])):
+                _pts.setdefault(_rk(_e0), []).append((_w0, _tk0, _o0))
+        _done = False
+        for _k, _lst in _pts.items():
+            if len(_lst) != 2:
+                continue
+            (_w1, _tk1, _o1), (_w2, _tk2, _o2) = _lst
+            if _w1 is _w2 or _w1.get("net") != _w2.get("net"):
+                continue
+            if _w1["mi"] not in wire_by_mi or _w2["mi"] not in wire_by_mi:
+                continue
+            _c = _k
+            if any(abs(_px - _c[0]) < 0.05 and abs(_py - _c[1]) < 0.05
+                   for (_r7, _c7, _px, _py) in PIN_ALL):
+                continue                           # ① 那一点上有**真脚** ⇒ 不许并 ✗
+            if any(abs(_px - _c[0]) < 0.05 and abs(_py - _c[1]) < 0.05
+                   for (_px, _py) in _lbl_pins):
+                continue                           # ① 那一点上是**标签的脚** ⇒ 不许并 ✗
+            _va = (_o1[0] - _c[0], _o1[1] - _c[1])
+            _vb = (_o2[0] - _c[0], _o2[1] - _c[1])
+            _la, _lb = math.hypot(*_va), math.hypot(*_vb)
+            if _la < 1e-6 or _lb < 1e-6:
+                continue
+            _cr = abs(_va[0] * _vb[1] - _va[1] * _vb[0]) / (_la * _lb)
+            _dt = (_va[0] * _vb[0] + _va[1] * _vb[1]) / (_la * _lb)
+            if _cr > 1e-3 or _dt > -0.999:        # 不严格共线反向 ⇒ 折角 ✓ 不动 ✓
+                continue
+            _at = list(host).index(_w1["el"]) if _w1.get("el") in list(host) else None
+            if _w1.get("el") in list(host):
+                host.remove(_w1["el"])
+            if _w2.get("el") in list(host):
+                host.remove(_w2["el"])
+            _far2 = "end_tgt" if _tk2 == "start_tgt" else "start_tgt"
+            if _tk1 == "start_tgt":
+                _w1["p"], _w1["q"] = _o1, _o2
+                _w1["start_tgt"] = _w1.get("start_tgt")     # 外侧端照旧 ✓
+                _w1["end_tgt"] = _w2.get(_far2)
+            else:
+                _w1["q"], _w1["p"] = _o1, _o2
+                _w1["end_tgt"] = _w1.get("end_tgt")
+                _w1["start_tgt"] = _w2.get(_far2)
+            _w1["el"] = build_wire(tmpl, _w1)
+            _w1["view"] = pm.child(pm.child(_w1["el"], "views"), "schematicView")
+            if _at is None:
+                host.append(_w1["el"])
+            else:
+                host.insert(_at, _w1["el"])
+            links = [L for L in links
+                     if not (str(L[0]) == str(_w1["mi"]) and str(L[3]) == str(_w2["mi"]))
+                     and not (str(L[3]) == str(_w1["mi"]) and str(L[0]) == str(_w2["mi"]))]
+            # ★★ 别的线 / 别的连接里**还指着被并掉那根**的要改指 ✓（✗ 不改就 `KeyError` ✗
+            #   实测：写文件时 `part_by_mi['90012736']` 找不到 ✗）—— 口径：
+            #   · 指的是它**外侧那一端** ⇒ 改指 w1 对应的那一端 ✓；
+            #   · 指的是它**被并掉的那一端**（= 现在不存在的那个接头 ✓）⇒ 这条连接**丢掉** ✓。
+            _c2_share = "connector0" if _tk2 == "start_tgt" else "connector1"
+            _c2_far = "connector1" if _tk2 == "start_tgt" else "connector0"
+            _c1_far = "connector1" if _tk1 == "start_tgt" else "connector0"
+            _fin = []
+            for _L in links:
+                _a = (str(_L[0]), _L[1])
+                _b = (str(_L[3]), _L[4])
+                if _a[0] == str(_w2["mi"]) or _b[0] == str(_w2["mi"]):
+                    _cid2 = _a[1] if _a[0] == str(_w2["mi"]) else _b[1]
+                    _other1 = (_b[0] if _a[0] == str(_w2["mi"]) else _a[0]) == str(_w1["mi"])
+                    if _other1 or _cid2 == _c2_share:
+                        continue
+                    if _a[0] == str(_w2["mi"]):
+                        _a = (str(_w1["mi"]), _c1_far)
+                    else:
+                        _b = (str(_w1["mi"]), _c1_far)
+                _fin.append((_a[0], _a[1], _L[2], _b[0], _b[1], _L[5]))
+            links[:] = _fin
+            for _w0 in wires:
+                for _tk0 in ("start_tgt", "end_tgt"):
+                    _t0 = _w0.get(_tk0)
+                    if (_t0 and _t0[0] == "wire" and _t0[1] is not None
+                            and str(_t0[1].get("mi")) == str(_w2["mi"])):
+                        _w0[_tk0] = (None if _t0[2] == _c2_share
+                                     else ("wire", _w1, _c1_far))
+            wires.remove(_w2)
+            wire_by_mi.pop(_w2["mi"], None)
+            print("      ⋈ 共线合并 ✓ %s ＋ %s ⇒ %s：%.1f ＋ %.1f ⇒ %.1f 单位 ✓"
+                  "（**去掉那个多余的接线点** ✓）"
+                  % (_w1["mi"], _w2["mi"], _w1["mi"],
+                     math.dist(_o1, _c), math.dist(_c, _o2), math.dist(_o1, _o2)))
+            _done = True
+            break
+        if not _done:
+            break
 
     # ★★ “**同点即连**” ✓（2026-09-28 ✓ 电源轨架构必需 ✓）：两条导线的**端点重合** ⇒ 互记连接 ✓
     #   ★ 为什么必需 ✗：Fritzing 的连接是**端点对端点** ✓ ⇒ 支线落在干线**中段**上连不上 ✗
