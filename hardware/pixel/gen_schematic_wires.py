@@ -3709,7 +3709,15 @@ def relabel(insts, boxes, used, extra=False):
         if not ln or tg is None or (tg.get("visible") or "true") == "false":
             continue
         items.append((t, d, tg, ln, fs,
-                      max(ST.twidth(s, fs) for s in ln), fs * len(ln)))
+                      max(ST.twidth(s, fs) for s in ln),
+                      # ★★★ 2026-09-30 ✓ **盒高要用 `label_bbox` 那一份** ✗✓（用户对整的两把尺子 ✓）：
+                      #   ✗ 这里原来写 `fs * len(ln)` ✗（= 纯字高 ✓）⇒ 而渲染器/本文件其他地方
+                      #     都用 `ST.label_bbox()` ✓（还把**上下留白**算进去 ✓）⇒ 候选矩形**矮了 4.75 单位** ✗
+                      #     ⇒ 实测：`U1` 的位号落在一个“我认为不压 `R1` ✓”而“渲染器说压了” ✗
+                      #     的位置上 —— 同一个概念两个口径 ✗（本仓那条老毛病 ✗）。
+                      #   ✓ 现在：**就调 `label_bbox` 反推** ✓ ⇒ 两边永远一致 ✓（`label_bbox(x, y-0.25fs, …)`
+                      #     的**上缘正好是 y** ✓ ⇒ “盒左上角 = (x, y)” 这个对外语义没变 ✓）。
+                      ST.label_bbox(0.0, 0.0, fs, ln)[3] - ST.label_bbox(0.0, 0.0, fs, ln)[1]))
 
     def score(b, t):
         sc = 0
