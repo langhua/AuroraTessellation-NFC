@@ -64,6 +64,27 @@ def on_seg(p, a, b, tol=0.05):
     return ((p[0] - (a[0] + t * dx)) ** 2 + (p[1] - (a[1] + t * dy)) ** 2) ** 0.5 < tol
 
 
+def seg_hits_box(a, b, box, eps=0.0):
+    """线段 `a-b` 与**轴对齐方框** `box=(x0,y0,x1,y1)` 有没有交 ✓（端点在框内也算 ✓）
+
+    ★ 用途 ✓：**标签是一个元件** ✓（`fritzing-parts-langhua/docs/schem-drawing-rules.md`
+      **B3.1.1** ✓，2026-09-29 用户定 ✓）⇒ 导线**不许穿**标签本体 ✗
+      ⇒ 生成器挑标签朝向时要拿它当闸门 ✓（与批量判据**同一份实现** ✓，不给标签另写一套 ✗）。
+    """
+    x0, y0, x1, y1 = box
+    x0, x1 = min(x0, x1) - eps, max(x0, x1) + eps
+    y0, y1 = min(y0, y1) - eps, max(y0, y1) + eps
+    if x0 <= a[0] <= x1 and y0 <= a[1] <= y1:
+        return True
+    if x0 <= b[0] <= x1 and y0 <= b[1] <= y1:
+        return True
+    _c = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+    for i in range(4):
+        if seg_cross(a, b, _c[i], _c[(i + 1) % 4]):
+            return True
+    return False
+
+
 def p2seg(p, a, b):
     """点 p 到线段 a→b 的**最短距离** ✓（含两端 ✓）—— ★ **全仓唯一实现** ✓
     （2026-09-28 ✓ 从 `render_sch.py` 的 `_p2seg` **逐字搬来** ✓：可读性判据 ✓、

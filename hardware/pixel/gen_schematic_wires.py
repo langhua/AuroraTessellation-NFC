@@ -34,7 +34,8 @@ from pin_ruler import apply, mul, parse_tf       # noqa: E402
 #   ✗ 原来本文件自己 walk 尺子 svg 算盒 ✗ ⇒ 实测与判据（渲染器）差 **0.43 单位** ✗ ⇒
 #     硬闸门物理上看不见判据报的那一段 ✗✗（详见 `sch_box.py` 开头那段血教训 ✓）。
 import part_box as PB                           # noqa: E402
-import sch_box as SB                            # noqa: E402
+import sch_box as SB
+import sch_net                                  # ★ 网标签规则（**唯一实现** ✓）                            # noqa: E402
 
 # ── 网表（照 `hardware/pixel/pixel-netlist.md` §2 ✓；脚名按 .fzp 的连接器名，
 #    大小写不敏感 ✓；"#N" = 第 N 个脚（core 件没有名字 ✓））────────────────────────
@@ -1254,6 +1255,28 @@ def hits_other_body(path, boxes, mine, R=0.0):
 
 
 
+# ★★★ NL2 ✓（2026-09-29 用户定 ✓）：**功能模块 A** 的零件标题 ✓（其余 = 模块 B ✓）
+#   像素板：A = L1/D3/R1/C1 ✓（取能+整流+RC 取出 ✓）；B = 以 MCU 为核心 ✓。
+LABEL_MOD_A = set()
+
+# ★★★ NL1 ✓（2026-09-29 ✓）：要贴网标签的**网名**集合 ✓。
+#   ✗ 原来只在 `main()` 里 `global LABEL_NETS`（`if _lblv is not None:` 那一支 ✓）⇒
+#     **不给 `--label` 开关时这个全局压根没被创建** ✗ ⇒ `emit()` 一读就
+#     `NameError: name 'LABEL_NETS' is not defined` ✗✗ ——
+#     而"不给开关 ⇒ 行为不变（v29 可复现 ✓）"正是这一支的**唯一用途** ✓
+#     ⇒ 等于**承诺的那条路从来没跑过** ✗（2026-09-29 实测复现 v29 时当场撞上 ✓）。
+#   ✓ 正解：和 `LABEL_MOD_A` 一样，**模块级给空集初值** ✓（"零 = 不生效" ✓，两种模式都安全 ✓）。
+LABEL_NETS = set()
+
+# ★★★ 标签朝向的**候选集** ✓（2026-09-29 ✓）：**不许 180°** ✗ ——
+#   ✗ 原来这里逐个挑 `(0, 90, 180, 270)` ✗ ⇒ 实测**真的挑中了 180°** ✗
+#     （`_work/v30.fzz` 的 `RC` 标签：`m11=-1 m22=-1` ✓ = 倒 180° ✓）⇒
+#     那就是把字**倒着写** ✗ —— 得把图纸转过来才读得出 ✓，用户要的"可读"就没了 ✗。
+#   ★ 同一个口径在 `_scratch/fix_label_place.py --auto-rot`（原朝向 → 0 → 270 → 90 ✓）
+#     里**早就有** ✓ ⇒ 现在两边用同一个常量 ✓（**一件事一份口径** ✓）。
+LBL_ROTS = (0, 90, 270)
+
+
 def main(argv):
     fzz, svg, out_path = argv[0], argv[1], argv[2]
     if "--ratio" in argv:
@@ -1264,6 +1287,32 @@ def main(argv):
         global RATIO
         RATIO = float(argv[argv.index("--ratio") + 1])
         print("尺子换算：RATIO = %.4f（导出尺子 1.25 ✓ / 渲染尺子 1.0 ✓）" % RATIO)
+    # ★ 写法**两种都收** ✓（`--label=GND,5V` ✓ / `--label GND,5V` ✓）——
+    #   ✗ 我第一版只判 `"--label" in argv` ✗ ⇒ 传 `--label=GND` 时**根本进不来** ✗
+    #     （命令行里那个字符串是 `--label=GND` ✗，不等于 `--label` ✗）⇒ 静默没生效 ✗。
+    _modv = None
+    for _i, _a in enumerate(argv):
+        if _a.startswith("--modules="):
+            _modv = _a.split("=", 1)[1]
+        elif _a == "--modules" and _i + 1 < len(argv):
+            _modv = argv[_i + 1]
+    if _modv is not None:                     # ★★ NL2 ✓（用户定 ✓：功能模块划分 ✓）
+        global LABEL_MOD_A
+        LABEL_MOD_A = set(v.strip() for v in _modv.split(",") if v.strip())
+        print("★ **NL2 功能模块 A** ✓：%s ✓（其余当作模块 B ✓）"
+              % ", ".join(sorted(LABEL_MOD_A)))
+    _lblv = None
+    for _i, _a in enumerate(argv):
+        if _a.startswith("--label="):
+            _lblv = _a.split("=", 1)[1]
+        elif _a == "--label" and _i + 1 < len(argv):
+            _lblv = argv[_i + 1]
+    if _lblv is not None:                     # ★★ NL1 ✓（2026-09-29 用户定 ✓，从他手改 pilot 学 ✓）
+        global LABEL_NETS
+        LABEL_NETS = set(v.strip() for v in _lblv.split(",") if v.strip())
+        print("★ **NL1 网标签** ✓：对 `%s` 里的网 ⇒ 切掉一段长直段 ✓、"
+              "**两个断口各贴一个同名标签** ✓（电气靠“同名即连通”✓；不给 = 行为不变 ✓）"
+              % ", ".join(sorted(LABEL_NETS)))
     if "--choffs" in argv:                    # 走廊偏移可扫 ✓（逗号分隔 ✓，单位=sketch ✓）
         global CH_OFFS
         CH_OFFS = tuple(float(v) for v in argv[argv.index("--choffs") + 1].split(","))
@@ -2688,12 +2737,257 @@ def main(argv):
             print("   " + w)
 
     if orig[0]:
-        emit(sroot, insts, z, nets_segs, orig[0], out_path)
+        emit(sroot, insts, z, nets_segs, orig[0], out_path, PIN_ALL)
     return ov_fail              # ★ 真闸门 ✓：重叠非 0 ⇒ 退出码 1 ✓（见上面那条自检 ✓）
 
 
 def fmt(v):
     return str(int(round(v))) if abs(v - round(v)) < 1e-6 else ("%.4f" % v)
+
+
+# ★★★ 2026-09-29 ✓ **NL1：网标签替代长直段** ✓（用户定 ✓，规格来自他手改的 pilot ✓）——
+#   · 模板**逐字照抄** Fritzing 自己写出来的那份 ✓（`pixel-schematic-v29_netlabel.fzz` ✓）：
+#     `moduleIdRef="NetLabelModuleID"` ✓、`path=":/resources/parts/core/netlabel.fzp"` ✓、
+#     `<property name="label">` ＋ `<title>` **都**写网名 ✓（Fritzing 显示用前者 ✓、判定器用后者 ✓）、
+#     三个视图 ✓（原理图里那个带 `transform` ✓）。
+#   · **锚点 = 引脚 − (0, 4.5)** ✓ —— 实测两个样本都是 `(0, +4.5)` 单位 ✓（`m31` 分别是
+#     `12.5219` / `18.2055` ✗ **不影响** ✓）⇒ 这条是**量出来的**，不是我推的 ✓。
+# ★ 几何（`geometry` 写多少 / `transform` 写什么 / 本体框多大）**全在 `sch_net.py`** ✓
+#   —— **一处实现** ✓，常数全是**实测**的 ✓（见那边的「本体几何」一节 ✓）；
+#   ✗ 这里**不再自己拼变换** ✗ —— 原来那个 `_LBL_ATTR` 是把 v29 里**某个位置的标签**的
+#   `m31/m32` **逐字抄**过来 ✗ ⇒ 换个位置就摆错 ✗（实测教训 ✓：Fritzing 画图**不用**
+#   `m31/m32` ✗，它**绕板心**转 ✓）。
+_LBL_MIN_GAP = 14.4        # 切掉的空档至少 **2 格** ✓（1 格 = 7.2 单位 ✓）——
+#   ★ 为什么不用更大 ✗：✗ 第一版取 36（5 格）⇒ 实测**一个候选都没有** ✓（上轨各落点之间
+#     平均才 ~30 ✓）⇒ 规则等于不存在 ✗。标签**本体本来就在断口外侧** ✓ ⇒
+#     断口只要**看得清是两截**（≥ CLEAR_PIN = 7.2 ✓）就够了 ✓。
+
+
+def fmt4(v):
+    """矩阵/小位移用 **4 位** ✓（`fmt` 是 2 位 ✓ ⇒ 写 `m31/m32` 精度不够 ✗）"""
+    s = "%.4f" % v
+    return s.rstrip("0").rstrip(".") if "." in s else s
+
+
+def build_label(net, pin_pt, mi, direction="right", rot=0):
+    """造一个**核心库网标签**实例 ✓ —— **画出来的脚**正落在 `pin_pt` 上 ✓
+
+    ★ 几何一律问 `sch_net` ✓（实测口径 ✓）：
+      `geometry = sch_net.label_geom(pin_pt, net, R)` ✓（**反解** ✓）
+      `transform = [R | (I−R)·C]` ✓（Fritzing 自己就是这么写的 ✓ 见 `sch_net.canonical_d` ✓）
+    """
+    _m = sch_net.MATRIX[rot]
+    gx, gy = sch_net.label_geom(pin_pt, net, _m)
+    _d = sch_net.canonical_d(net, _m)
+    _tf = ('m11="%s" m12="%s" m13="0" m21="%s" m22="%s" m23="0" '
+           'm31="%s" m32="%s" m33="1"'
+           % (fmt4(_m[0]), fmt4(_m[1]), fmt4(_m[2]), fmt4(_m[3]),
+              fmt4(_d[0]), fmt4(_d[1])))
+    return ET.fromstring(
+        '<instance moduleIdRef="NetLabelModuleID" modelIndex="%s" '
+        'path=":/resources/parts/core/netlabel.fzp">'
+        '<property name="label" value="%s"/><property name="direction" value="%s"/>'
+        "<title>%s</title><views>"
+        '<breadboardView layer="schematic"><geometry z="3.50007" x="%s" y="%s"/></breadboardView>'
+        '<pcbView layer="schematic"><geometry z="3.50007" x="%s" y="%s"/></pcbView>'
+        '<schematicView layer="schematic">'
+        '<geometry z="2.50025" x="%s" y="%s"><transform %s/></geometry>'
+        "</schematicView></views></instance>"
+        % (mi, net, direction, net, fmt(gx), fmt(gy), fmt(gx), fmt(gy), fmt(gx), fmt(gy), _tf))
+
+
+def cut_at_module_boundary(wires, net, mod_a, eps=1e-3):
+    """NL2 ✓：把**跨功能模块**的那一根线挑出来删掉 ✓
+       ⇒ 返回 `(要删的 mi 集合, [(断口点, 侧, 长度) × 2])` ✓
+
+    ★ 判据（用户 2026-09-29 定 ✓ ⇒ `fritzing-parts-langhua/docs/schem-drawing-rules.md` **B3.1** ✓）：
+      **切点必须落在功能模块的边界上** ✓ —— 删掉它之后，
+      「模块 A 的脚」与「模块 B 的脚」**正好**被分开 ✓（两边各自都还连着东西 ✓）。
+      ✗ 不许在模块**内部**找个空档切一刀 ✗ —— 那是“剪断再接回去” = **净信息为零** ✗
+        （实测 ✓：GND 上轨中间切 135.8 单位 + 2 标签 ⇒ 判据全绿 ✓ 但用户判「**毫无意义**」✗）。
+    ★ 只删**自己不连脚**的线 ✓（否则删完就有脚没线 ✗ ⇒ 网表 ✗）。
+    ★ 挑**最短**的那一根 ✓（删得越少越好 ✓ —— 目的不是省长度 ✓，是让两个模块各成一块 ✓）。
+    """
+    _wn = [w for w in wires if w.get("net") == net]
+    if len(_wn) < 3:
+        return set(), []
+    _pins = {}
+    for w in _wn:
+        _pins[w["mi"]] = [_t[1]["ref"] for _t in (w.get("start_tgt"), w.get("end_tgt"))
+                           if _t and _t[1] and _t[1].get("ref")]
+    best = None
+    for w in _wn:
+        if _pins.get(w["mi"]):
+            continue                          # ★ 自己不连脚 ✓
+        rest = [x for x in _wn if x is not w]
+        par = {}
+
+        def _f(x):
+            par.setdefault(x, x)
+            while par[x] != x:
+                par[x] = par[par[x]]
+                x = par[x]
+            return x
+
+        def _u(x, y):
+            _rx, _ry = _f(x), _f(y)
+            if _rx != _ry:
+                par[_ry] = _rx
+
+        for i in range(len(rest)):            # 用“端点重合”把剩下的线并块 ✓（与写文件同口径 ✓）
+            for j in range(i + 1, len(rest)):
+                for _e in (rest[i]["p"], rest[i]["q"]):
+                    for _f2 in (rest[j]["p"], rest[j]["q"]):
+                        if math.dist(_e, _f2) < eps:
+                            _u(rest[i]["mi"], rest[j]["mi"])
+        grp = {}
+        for x in rest:
+            grp.setdefault(_f(x["mi"]), []).append(x["mi"])
+        if len(grp) != 2:
+            continue                          # 分不成就不是模块边界 ✓
+        sides = []
+        for ms in grp.values():
+            _s = set()
+            for m in ms:
+                for r in (_pins.get(m) or []):
+                    _s.add("A" if r in mod_a else "B")
+            sides.append(_s)
+        if any(len(s) != 1 for s in sides) or sides[0] == sides[1]:
+            continue                          # 必须一边全 A、另一边全 B ✓
+        _ln = math.dist(w["p"], w["q"])
+        if best is None or _ln < best[0]:
+            best = (_ln, w)
+    if best is None:
+        return set(), []
+    _ln, w = best
+    print("      · NL2 诊断 ✓：网 `%s` 靠删这一根（%.1f 单位 ✓）正好分开 A/B ✓ ｜ 断口 %s ↔ %s ✓"
+          % (net, _ln, tuple(w["p"]), tuple(w["q"])))
+    return {w["mi"]}, [(w["p"], "L", _ln), (w["q"], "R", _ln)]
+
+
+def cut_span_for_labels(segs, eps=1e-3, min_gap=_LBL_MIN_GAP):
+    """✗ **已废弃** ✗（2026-09-29 用户判定「毫无意义」✓）——它切的是**模块内部**的空档 ✗ ⇒
+    “剪断再接回去”= 净信息为零 ✗。口径已改为 `cut_at_module_boundary` ✓（B3.1 ✓）；
+    这里只在 **`--modules` 没给** 时才可能被调到 ✓（= 旧行为 ✓，保留只为对照 ✓，下次清代码时删 ✓）。
+    """
+    return segs, []
+
+
+def _cut_span_unused(segs, eps=1e-3, min_gap=_LBL_MIN_GAP):
+    """NL1 ✓：在这条**长直段**（轨 ✓）上，把**相邻两个落点之间**的那截切掉 ✓
+    ⇒ 返回 `(新 segs, [(断口点, 侧, 省下的长度) × 2])` ✓
+
+    ★★ 事实（实测两版才对上 ✓，与“轨是断的”那个**猜测**相反 ✗）：
+      轨在 `nets_segs` 里是**一整条** ✓（例：GND 上轨 = 一个段 ✓，path 从 `(-6.22,-72.0)`
+      一直到 `(271.96,-72.0)` = **278.2 单位** ✓）；断开成一段段是**后面建链时**才做的 ✓。
+      ⇒ ✗ “整条删掉一段”会连**所有支线的落点**一起删 ⇒ 支线全成断头 ✗（实测 ✓）；
+      ⇒ ✓ 正解 = **切掉两个相邻落点之间的一截** ✓（那截里**没有**落点 ✓）⇒
+        两半各自都还挂着自己的落点 ✓、断口就是那两个落点 ✓、标签贴在那两点上 ✓。
+
+    ★ 三道护栏都**从几何读** ✓（不看标志位 ✓）：
+      ① `i ≥ 1` 且 `j ≤ len-2` ✓ ⇒ 两半各自都还剩**至少一个点** ✓；
+      ② 两半**各自有正长度** ✓（✗ 实测：一条“脚→落点”的支线，它的两个落点就是首尾 ✗ ⇒
+        邻着切会把**整条支线**切光 ⇒ 那半根线被丢 ⇒ 那只脚凭空少一根线 ⇒ **网表 ✗** ✓）；
+      ③ 空档 ≥ `min_gap`（2 格 ✓）⇒ 两个断口肉眼分得开 ✓。
+
+    ★★★ 最后定下来的做法 ✓（实测三轮才对 ✓）：**轨在 `nets_segs` 里是一条“光板”直段** ✓——
+      GND 上轨 = 一个段 ✓，path 就是 `[(-6.22,-72.0), (271.96,-72.0)]` **两个点** ✓（278.2 单位 ✓），
+      而支线的落点（= 别的段的端点 ✓）**落在它的中段上** ✗ —— **不是**它的 path 点 ✓！
+      ⇒ ✗ 按“path 上的归属点”去找相邻对，永远只有 `{0, 1}` 两个（= 自己的首尾 ✓）⇒
+        **一个候选都没有** ✗（实测两次 ✓）。
+      ✓ 所以：**落点从别处的端点算 x** ✓，在轨上**插入**两个断点 ✓ ⇒
+        左半 = `[起点 … (x0,y)]` ✓、右半 = `[(x1,y) … 终点]` ✓
+        ⇒ 两边各自的落点**全都还在** ✓、断口正好是两个落点 ✓、标签贴那两点 ✓。
+    """
+    best = None
+    for s in segs:
+        p = list(s.get("path") or [])
+        if len(p) < 2 or s.get("from") or s.get("to"):
+            continue                      # 只动“两端都不连脚”的段（= 轨 ✓）
+        if not all(abs(q[1] - p[0][1]) < eps for q in p):
+            continue                      # 只切**直线**段 ✓（有拐角的先不动 ✓）
+        _y = p[0][1]
+        _x0, _x1 = min(q[0] for q in p), max(q[0] for q in p)
+        xs = set()
+        for t in segs:
+            if t is s:
+                continue
+            tp = t.get("path") or []
+            if not tp:
+                continue
+            for e in (tp[0], tp[-1]):
+                if abs(e[1] - _y) < eps and _x0 + eps < e[0] < _x1 - eps:
+                    xs.add(round(e[0], 4))
+        xs = sorted(xs)
+        for _k in range(len(xs) - 1):
+            g = xs[_k + 1] - xs[_k]
+            if g < min_gap:
+                continue
+            if best is None or g > best[0]:
+                best = (g, s, xs[_k], xs[_k + 1], _y)
+    if best is None:
+        return segs, []
+    g, s, xa, xb, y = best
+    p = list(s["path"])
+    left, right = dict(s), dict(s)
+    left["path"] = [q for q in p if q[0] <= xa + eps] + [(xa, y)]
+    right["path"] = [(xb, y)] + [q for q in p if q[0] >= xb - eps]
+    left["to"], right["from"] = None, None
+    print("      · NL1 选段诊断 ✓：轨 y=%.1f ✓ 落点 x：%s ✓ ｜ 切掉 **%.1f 单位** ✓"
+          "（x %.1f → %.1f ✓）"
+          % (y, ["%.1f" % v for v in (xa, xb)], g, xa, xb))
+    return [t for t in segs if t is not s] + [left, right], \
+        [((xa, y), "L", g), ((xb, y), "R", g)]
+
+
+def _cut_span_unused(segs, eps=1e-3, min_gap=_LBL_MIN_GAP):
+    best = None
+    for s in segs:
+        p = list(s.get("path") or [])
+        if len(p) < 3:
+            continue
+        att = set()
+        if s.get("from"):
+            att.add(0)
+        if s.get("to"):
+            att.add(len(p) - 1)
+        for t in segs:
+            if t is s:
+                continue
+            tp = t.get("path") or []
+            if not tp:
+                continue
+            for k, q in enumerate(p):
+                for e in (tp[0], tp[-1]):
+                    if abs(q[0] - e[0]) < eps and abs(q[1] - e[1]) < eps:
+                        att.add(k)
+        _a = sorted(att)
+        for _k in range(len(_a) - 1):
+            i, j = _a[_k], _a[_k + 1]
+            if j <= i + 1:
+                continue
+            if i < 1 or j > len(p) - 2:
+                continue
+            if math.dist(p[0], p[i]) < eps or math.dist(p[j], p[-1]) < eps:
+                continue
+            g = sum(math.dist(p[k], p[k + 1]) for k in range(i, j))
+            if g < min_gap:
+                continue
+            if best is None or g > best[0]:
+                best = (g, s, i, j, len(p))
+    if best is None:
+        return segs, []
+    g, s, i, j, _np = best
+    p = list(s["path"])
+    left, right = dict(s), dict(s)
+    left["path"], left["to"] = p[:i + 1], None
+    right["path"], right["from"] = p[j:], None
+    print("      · NL1 选段诊断 ✓：原 path %d 点 ✓ ｜ 切掉 [%d..%d] = **%.1f 单位** ✓ ｜ "
+          "左半 %d 点（%s → %s ✓）｜ 右半 %d 点（%s → %s ✓）"
+          % (_np, i, j, g, i + 1, tuple(p[0]), tuple(p[i]),
+             len(p) - j, tuple(p[j]), tuple(p[-1])))
+    return [t for t in segs if t is not s] + [left, right], \
+        [(p[i], "L", g), (p[j], "R", g)]
 
 
 def build_wire(tmpl, w):
@@ -2856,7 +3150,38 @@ def _seg_in_box(p, q, b):
     return False
 
 
-def emit(sroot, insts, z, nets_segs, orig_path, out_path):
+def end_is_free(wires, w_self, pt, pin_all, eps=0.05):
+    r"""这个线端上，**除了它自己**，还有没有**别人的端点 / 脚** ✓（`True` = 没有 ✓）
+
+    ★ 用途（2026-09-29 ✓ 用户定 ✓）：挪标签时**先问这一句** ——
+      · **没有**（`True` ✓）⇒ **直接把这根线的线端搬过去** ✓（= 线变长一点 ✓）
+        ⇒ 标签脚正落在线端上 ✓、**一根线直通** ✓ ⇒ **不留接缝、不长多余的圆点** ✓；
+      · **有**（`False` ✓）⇒ 那个线端是个**真接头**（别人的线端 / 某只脚 ✓）⇒ **动不得** ✗
+        ⇒ 照旧**另拉一小段引线** ✓（老接头原地不动 ✓）。
+
+    ★ 为什么这是**判据**、不是两种喜好挑一个 ✗（2026-09-29 实测 ✓）：
+      ✗ 原来**一律加引线** ✗ ⇒ 实测 `_work/v30.fzz` 的 `RC` 标签：沿轴左挪 7.2 后，
+        在 (46.38,−9.00) 留下一个**纯接缝**（`Wire90012777` 的端 ↔ 引线的端 ✓）⇒
+        Fritzing 按「**≥2 个线端 ⇒ 画圆点** ✓」在那儿画了个**小圆点** ✗ ——
+        而两根线其实**在同一条直线**上 ✗ ⇒ 这个圆点**不代表任何分叉** ✗（用户当场问
+        “为什么要有这个圆点”✓）。
+      ✗ 反过来**一律搬线端** ✗ 也错 ✓：那个线端若正落在**别的线端**（或某只脚 ✓）上，
+        一搬就把接头扯断 ✗ ⇒ 实测网表 ✗、连通块 9 → 10 ✗（= 现有那段引线代码的出处 ✓）。
+      ⇒ 两条路**各对一半** ✓ ⇒ 判据就是这一句：**先问那儿有没有别人** ✓。
+    """
+    for w in wires:
+        if w is w_self:
+            continue
+        for q in (w["p"], w["q"]):
+            if math.dist(q, pt) <= eps:
+                return False
+    for (_t, _c, _x, _y) in pin_all:
+        if math.dist((_x, _y), pt) <= eps:
+            return False
+    return True
+
+
+def emit(sroot, insts, z, nets_segs, orig_path, out_path, PIN_ALL=()):
     """把每对脚的正交路径拆成「一段一根导线」✓；两端各记一份连接 ✓（链式，不出现 junction 点 ✓）"""
     oz = zipfile.ZipFile(orig_path)
     oroot = ET.fromstring(oz.read([n for n in oz.namelist() if n.endswith(".fz")][0]))
@@ -3002,6 +3327,47 @@ def emit(sroot, insts, z, nets_segs, orig_path, out_path):
               "—— 这正是用户实测「删掉面包板就没虚线了 ✓」的**等效做法** ✓" % _bk)
     else:
         print("   ★ 面包板**退出电气** ✓：本来就没有「脚 ↔ 孔」连接 ✓（已断开 ✓）")
+    # ★★★ 2026-09-29 ✓ **NL1：网标签替代长直段** ✓（用户定 ✓）——
+    #   只对 `--label=<网>` 点名的网生效 ✓ ⇒ **不给就一字节不差** ✓（v29 可复现 ✓）。
+    #   切在**建链之前** ✓（链是从 `s["path"]` 建的 ✓）。
+    _lbl_jobs = []
+    _lbl_boxes = []          # ★ 已放好的标签本体框 ✓（后放的标签不许压先放的 ✓）
+    if LABEL_NETS and not LABEL_MOD_A:
+        for _net in sorted(nets_segs):
+            if _net not in LABEL_NETS:
+                continue
+            _new, _jobs = cut_span_for_labels(nets_segs[_net])
+            if _jobs:
+                nets_segs[_net] = _new
+                _lbl_jobs += [(_net, q) for q in _jobs]
+                print("   ★ **NL1** ✓：网 `%s` 切掉 **%.1f 单位** ✓ ｜ 断口 "
+                      "(%.1f,%.1f) ↔ (%.1f,%.1f) ⇒ 两端各贴一个同名标签 ✓"
+                      % (_net, _jobs[0][2], _jobs[0][0][0], _jobs[0][0][1],
+                         _jobs[1][0][0], _jobs[1][0][1]))
+            else:
+                print("   ⊘ **NL1**：网 `%s` 找不到“切了**两半都还有脚**、且空档 ≥ %.0f 单位”"
+                      "的长直段 ✗ ⇒ 不动 ✓" % (_net, _LBL_MIN_GAP))
+                _sgs = nets_segs.get(_net) or []
+                print("      · 诊断 ✓：本网 %d 段 ✓" % len(_sgs))
+                for _s9 in _sgs[:14]:
+                    _p9 = list(_s9.get("path") or [])
+                    _l9 = sum(math.dist(_p9[k], _p9[k + 1]) for k in range(len(_p9) - 1)) \
+                        if len(_p9) > 1 else 0.0
+                    _n9 = 0
+                    for _t9 in _sgs:
+                        if _t9 is _s9 or not (_t9.get("path") or []):
+                            continue
+                        for _e9 in (_t9["path"][0], _t9["path"][-1]):
+                            for _q9 in (_p9[0], _p9[-1]):
+                                if abs(_e9[0] - _q9[0]) < 1e-3 and abs(_e9[1] - _q9[1]) < 1e-3:
+                                    _n9 += 1
+                    print("        %-1s 点 %d ✓ 长 %7.1f ✓ 两端被邻段接上 %d 次 ✓ "
+                          "from=%s to=%s ✓ ｜ %s → %s"
+                          % ("✗" if (_s9.get("from") or _s9.get("to") or _l9 < _LBL_MIN_GAP
+                                     or _n9 < 2) else "✓", len(_p9), _l9, _n9,
+                             bool(_s9.get("from")), bool(_s9.get("to")),
+                             tuple(_p9[0]) if _p9 else "-",
+                             tuple(_p9[-1]) if _p9 else "-"))
     for net in sorted(nets_segs):
         for s in nets_segs[net]:
             chain = []
@@ -3031,6 +3397,31 @@ def emit(sroot, insts, z, nets_segs, orig_path, out_path):
                 chain[k + 1]["start_tgt"] = ("wire", chain[k], "connector1")
             wires.extend(chain)
 
+    # ★★ NL2 ✓（2026-09-29 用户定 ✓）：**在功能模块边界上**切 ✓ —— 判据见 `cut_at_module_boundary` ✓
+    #   口径：切点必须让「模块 A 的脚」与「模块 B 的脚」**正好分开** ✓ ⇒ 两边各贴一个同名标签 ✓。
+    if LABEL_NETS and LABEL_MOD_A:
+        _del2, _jobs2 = set(), []
+        for _net2 in sorted(set(w["net"] for w in wires)):
+            if _net2 not in LABEL_NETS:
+                continue
+            _d2, _j2 = cut_at_module_boundary(wires, _net2, LABEL_MOD_A)
+            if _j2:
+                _del2 |= _d2
+                _jobs2 += [(_net2, q) for q in _j2]
+                print("   ★ **NL2 模块边界** ✓：网 `%s` 删掉 %d 根跨块线 ✓"
+                      " ⇒ A/B 两块边界各贴一个同名标签 ✓" % (_net2, len(_d2)))
+        if _del2:
+            wires = [w for w in wires if w["mi"] not in _del2]
+            _n2 = 0
+            for w in wires:                      # 断口那两头的指向要改回**裸端** ✓
+                for _k2 in ("start_tgt", "end_tgt"):
+                    _t2 = w.get(_k2)
+                    if _t2 and _t2[0] == "wire" and _t2[1] and _t2[1].get("mi") in _del2:
+                        w[_k2] = None
+                        _n2 += 1
+            print("   ★ **NL2** ✓：删了 %d 根导线 ✓（%d 个头尾改回裸端 ✓）" % (len(_del2), _n2))
+        _lbl_jobs += _jobs2
+
     for w in wires:                              # 建实例 ✓
         w["el"] = build_wire(tmpl, w)
         host.append(w["el"])
@@ -3052,6 +3443,149 @@ def emit(sroot, insts, z, nets_segs, orig_path, out_path):
                 ow = tgt[1]
                 links.append((w["mi"], cid, "schematicTrace",
                               ow["mi"], tgt[2], "schematicTrace"))
+
+    # ★★ NL1 ✓：把标签实例**建出来**、贴到两个断口上 ✓ —— **声明要双向写** ✓
+    #   （判定器按**连接表**认网 ✓ ⇒ 光画在那儿、不写 `<connect>` 是不算的 ✗）
+    for _net, (_pt, _side, _gain) in _lbl_jobs:
+        _hit = None
+        for _w in wires:
+            if _w.get("net") != _net:
+                continue
+            for _cid, _q4, _tk in (("connector0", _w["p"], "start_tgt"),
+                                   ("connector1", _w["q"], "end_tgt")):
+                if _w.get(_tk) is not None and _w[_tk][1] is not None:
+                    continue                     # 这一端已经有归属 ✓ ⇒ 不是断口 ✓
+                if math.dist(_q4, _pt) < 0.05:
+                    _hit = (_w, _cid, _tk)
+        if _hit is None:
+            print("      ⊘ NL1：断口 (%.2f,%.2f) 上找不到裸端 ✗ ⇒ 不贴 ✓" % (_pt[0], _pt[1]))
+            continue
+        _w, _cid, _tk = _hit
+        # ★★★ 2026-09-29 ✓ **位置 + 朝向一起挑** ✓（用户定 ✓ —— B3.1.1 ✓）
+        #   ① 「**要有引线连接**」✓：标签脚**永远是这根线的某一端** ✓
+        #      ⇒ 做法照用户手改版的形态 ✓：**沿这根线的轴向往外挪**（他的 `RC` 就是
+        #      在同一 y 上往左挪到没线的地方 ✓）⇒ 挪完把线端**跟着伸过去** ✓ ⇒ 引脚仍在线端上 ✓。
+        #   ② 「**标签是一个元件**」✓：本体框不许**穿线** ✗、不许**压别的标签** ✗、
+        #      不许蹭到**任何别的脚**（< `CLEAR_PIN` ✓）✗；这根线伸长的那一截也不许蹭脚 ✗。
+        #   ★ 候选 = 轴向 7 个距离 × 两种**实测过的**朝向（0°/90° ✓）✓ ⇒ 取**违例最少**的 ✓
+        #     （并列时取挪得近的、朝向 0° ✓）。
+        _other = _w["q"] if _tk == "start_tgt" else _w["p"]
+        _end = _w["p"] if _tk == "start_tgt" else _w["q"]
+        _ex, _ey = _end[0] - _other[0], _end[1] - _other[1]
+        _EL = math.hypot(_ex, _ey)
+        _ux, _uy = (_ex / _EL, _ey / _EL) if _EL > 1e-9 else (0.0, 0.0)
+        _pick = None
+        for _d in (0.0, 7.2, 14.4, 21.6, 28.8, 36.0, 43.2):
+            _q2 = (_end[0] + _ux * _d, _end[1] + _uy * _d)
+            for _rot2 in LBL_ROTS:                 # ★ **四个朝向都是实测口径** ✓，但 180° 不许挑 ✓
+                #   （2026-09-29 ✓ 拿到 Fritzing 导出后**反解**出“绕板心转” ✓ ⇒
+                #    三个朝向与 Fritzing 画出来的**逐点一致** ✓（各差 < 1e-4 ✓）；
+                #    ✗ 上一版只敢用两个、还抄了别处的 `m31/m32` ✗ ⇒ 摆错 ✓ 见 `_LBL_ATTR` 那条注 ✓）
+                _m2 = sch_net.MATRIX[_rot2]
+                _geom2 = sch_net.label_geom(_q2, _net, _m2)     # ★ **反解** `geometry` ✓
+                _bx2 = sch_net.label_box(_geom2, _net, _m2)     # ★ 本体框：**一处实现** ✓
+                _v2 = 0
+                for _w2 in wires:
+                    _a2, _b2 = _w2["p"], _w2["q"]
+                    if _w2 is _w:
+                        # ★★ 自己那根线**也不许被身体包住** ✗（用户 2026-09-29 看图指出
+                        #   “竖着的 GND 和两个 RC 都被穿了” ✓）—— 只在**引脚处留 2 单位**容差 ✓。
+                        _L2 = math.dist(_a2, _b2)
+                        if _L2 <= 2.0:
+                            continue
+                        _t2 = 2.0 / _L2
+                        if math.dist(_a2, _q2) < math.dist(_b2, _q2):
+                            _a2 = (_a2[0] + (_b2[0] - _a2[0]) * _t2,
+                                   _a2[1] + (_b2[1] - _a2[1]) * _t2)
+                        else:
+                            _b2 = (_b2[0] + (_a2[0] - _b2[0]) * _t2,
+                                   _b2[1] + (_a2[1] - _b2[1]) * _t2)
+                    if SG.seg_hits_box(_a2, _b2, _bx2):
+                        _v2 += 1
+                for (_t3, _bb3) in _lbl_boxes:
+                    if (_bx2[0] < _bb3[2] and _bb3[0] < _bx2[2]
+                            and _bx2[1] < _bb3[3] and _bb3[1] < _bx2[3]):
+                        _v2 += 1
+                if _d:                                # ★ 伸长的那一截本身也不许蹭脚 ✗
+                    for _p3 in PIN_ALL:
+                        if SG.p2seg((_p3[2], _p3[3]), _end, _q2) < CLEAR_PIN:
+                            _v2 += 1
+                for _p3 in PIN_ALL:                   # 标签本体附近不许有别的脚 ✓
+                    if (_bx2[0] - CLEAR_PIN < _p3[2] < _bx2[2] + CLEAR_PIN
+                            and _bx2[1] - CLEAR_PIN < _p3[3] < _bx2[3] + CLEAR_PIN):
+                        _v2 += 1
+                if _pick is None or (_v2, _d, _rot2) < (_pick[0], _pick[1], _pick[2]):
+                    _pick = (_v2, _d, _rot2, _q2, _bx2)
+        _v2, _d2, _rot2, _q2, _bx2 = _pick
+        _mi = str(next_mi)
+        next_mi += 1
+        if _d2 and end_is_free(wires, _w, _end, PIN_ALL):
+            # ★★ 2026-09-29 ✓ 用户定 ✓：**那一端上没有别人** ⇒ **直接把它搬过去** ✓
+            #   （= 这根线变长一点点 ✓，标签脚正好落在线端上 ✓）
+            #   ⇒ 没有接缝 ⇒ **不会凭空多一个圆点** ✓（判据与正反两面证据见 `end_is_free` ✓）。
+            #   ★ 一个坑 ✓：实例**已经建过**了（建实例在前、贴标签在后 ✓）⇒ 搬完必须**重建** ✓；
+            #     ✗ 直接 `append` 会把这根线挪到 `<instances>` 末尾 ✗ ⇒ 叠放次序跟着变 ✗ ——
+            #     那是**白改** ✓（肉眼与文件都变了 ✓、而需求只是“标签挪个位置”✗）⇒ 按**原位插回** ✓。
+            _oldel = _w.get("el")
+            _at = list(host).index(_oldel) if _oldel is not None else None
+            if _oldel is not None:
+                host.remove(_oldel)
+            if _tk == "start_tgt":
+                _w["p"] = _q2
+            else:
+                _w["q"] = _q2
+            _w["el"] = build_wire(tmpl, _w)
+            _w["view"] = pm.child(pm.child(_w["el"], "views"), "schematicView")
+            if _at is None:
+                host.append(_w["el"])
+            else:
+                host.insert(_at, _w["el"])
+            print("      · 直接搬线端 ✓ %s：%s 端 (%.2f,%.2f) ⇒ (%.2f,%.2f) ✓"
+                  "（线长 %.1f → %.1f ✓；那一端**没有别人的端点/脚** ✓"
+                  " ⇒ 不留接缝、不长多余圆点 ✓）"
+                  % (_w["mi"], "p" if _tk == "start_tgt" else "q",
+                     _end[0], _end[1], _q2[0], _q2[1],
+                     math.dist(_other, _end), math.dist(_other, _q2)))
+        elif _d2:
+            # ★★ 那一端上**有别人**（别的线端 / 某只脚 ✓）⇒ 那个接头**动不得** ✗ ⇒
+            #   原地保留 ✓、从原线端**新拉一小段**（引线 ✓）伸到标签脚 ✓ ⇒ 老接头不动 ✓。
+            #   ★ 代价：多一个**接缝** ⇒ Fritzing 会在那儿画个**小圆点** ✓
+            #     （≥2 个线端 ✓）—— 这是**换来的**（保接头 ✓），不是白拿的 ✓。
+            _stub = {"mi": str(next_mi), "p": _end, "q": _q2, "net": _net,
+                     "start_tgt": ("wire", _w, _cid), "end_tgt": None}
+            next_mi += 1
+            _stub["el"] = build_wire(tmpl, _stub)
+            _stub["view"] = pm.child(pm.child(_stub["el"], "views"), "schematicView")
+            host.append(_stub["el"])
+            wires.append(_stub)
+            wire_by_mi[_stub["mi"]] = _stub
+            if _tk == "start_tgt":
+                _w["start_tgt"] = ("wire", _stub, "connector1")
+            else:
+                _w["end_tgt"] = ("wire", _stub, "connector1")
+            links.append((_w["mi"], _cid, "schematicTrace",
+                          _stub["mi"], "connector0", "schematicTrace"))
+            _w, _tk, _cid = _stub, "end_tgt", "connector1"
+            print("      · 加引线 ✓ %s：(%.2f,%.2f)→(%.2f,%.2f) ✓（%.1f 单位 ✓）"
+                  % (_stub["mi"], _end[0], _end[1], _q2[0], _q2[1], _d2))
+        _lbl_boxes.append((_mi, _bx2))
+        _el = build_label(_net, _q2, _mi, rot=_rot2)
+        print("      · 标签 ✓ %s（%s ✓）@(%.2f,%.2f) ✓ 朝向 %d° ✓ 沿轴挪 %.1f 单位 ✓ "
+              "违例 %d %s｜盒 (%.1f,%.1f→%.1f,%.1f)"
+              % (_mi, _net, _q2[0], _q2[1], _rot2, _d2, _v2, "✓" if not _v2 else "✗",
+                 _bx2[0], _bx2[1], _bx2[2], _bx2[3]))
+        host.append(_el)
+        _sub = pm.child(pm.child(_el, "views"), "schematicView")
+        _key = "LBL" + _mi
+        insts[_key] = {"mi": _mi, "mid": "NetLabelModuleID", "el": _el, "sub": _sub}
+        # ★ 两个字典的**键不一样** ✗（实测撞过两次 ✓）：`insts` 用 `_key` ✓，
+        #   而 `part_by_mi` 是**按 `mi`** 建的 ✓ ⇒ 写连接时查的是 `part_by_mi[mi]` ✓
+        #   （✗ 我上一版写成 `part_by_mi[_key]` ⇒ `KeyError: '90012775'` ✗✗）
+        part_by_mi[_mi] = insts[_key]
+        _w[_tk] = ("pin", {"ref": _key, "cid": "connector0"})
+        links.append((_w["mi"], _cid, "schematicTrace", _mi, "connector0", "schematic"))
+        print("      ✓ NL1：标签 %s（%s ✓）@(%.2f,%.2f) ↔ 导线 %s.%s ✓"
+              % (_mi, _net, _pt[0], _pt[1], _w["mi"], _cid))
 
     # ★★ “**同点即连**” ✓（2026-09-28 ✓ 电源轨架构必需 ✓）：两条导线的**端点重合** ⇒ 互记连接 ✓
     #   ★ 为什么必需 ✗：Fritzing 的连接是**端点对端点** ✓ ⇒ 支线落在干线**中段**上连不上 ✗

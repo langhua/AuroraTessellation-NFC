@@ -146,7 +146,12 @@ print("== %s ▶ %s（%d 字节）" % (path, fzname, os.path.getsize(path)))
 # ── ① 零件 ──
 body_parts, PIN_SK, ALL_PTS = [], [], []
 PART_BOX, PINS_REL, BOX_REL = {}, {}, {}          # ★ 本体框 / 相对锚点的脚位与框（摆位用 ✓）
+LBL_TITLE = set()                                # ★ 网标签的标题 ✓（“标签是元件” ✓ B3.1.1 ✓）
 LAB_REL = {}                                     # ★ 位号内容 + 字号（摆位脚本挑位置用 ✓）
+# ★★ Fritzing **内置的类目单位** ✓（位号会把它补在值后面 ✓）—— **只列实测过的** ✓：
+#   `resistance` ⇒ `Ω` ✓（依据：实例值 `220` ✓、fzp 无 `units` ✓，而 Fritzing 位号画 `220Ω` ✓；
+#   见下面「位号行」一段的注释 ✓）。要再加类目 ⇒ **先要一份含该属性的 Fritzing 导出** ✓。
+_UNIT_BY_PROP = {"resistance": "\u03a9"}
 skipped = []
 for el in root.iter("instance"):
     mid = el.get("moduleIdRef") or ""
@@ -160,6 +165,64 @@ for el in root.iter("instance"):
     g = next((c for c in sv if tag(c) == "geometry"), None)
     if g is None:
         continue                                    # 这一视图里没摆位的（如 PCB1 ✓）
+    # ★★ 2026-09-29 ✓ **网标签也要画出来** ✗（用户发现：我的 png/svg 里**根本没有标签** ✗）
+    #   ✗ 原因：它的 fzp 在磁盘上**不存在** ✗（`:/resources/parts/core/netlabel.fzp` ✓）
+    #     ⇒ 下面那句 `os.path.isfile` 直接 `continue` ⇒ **跳过** ✗ ⇒ 图上看不见、判据也看不见 ✗。
+    #   ✓ 现在：按**实测口径**把它画成“**带尖头的方框 + 网名**” ✓，并把它的脚**登进 `PIN_SK`** ✓
+    #     ⇒ ① 图上看得见 ✓（人眼能校对位置 ✓）；② (A)/(A') 与“悬空端”判据**也能管它了** ✓。
+    # ★ 名字取实例的 **`<property name="label">`** ✓（Fritzing 画的就是它 ✓；`<title>` 只是备忘 ✓
+    #   —— 依据：用户造件 `_work/netlabels.fzz` 里 `<title>` 是 `RC1`、**画出来是 `RC`** ✓）
+    _lab = next((_p.get("value") for _p in el.iter("property") if _p.get("name") == "label"), None)
+    _lbl = sch_net.net_name(mid, ttl, _lab)
+    if _lbl:
+        # ★★ 2026-09-29 ✓ **几何全部实测** ✓（见 `sch_net.py` 的「本体几何」一节 ✓）：
+        #   · 实例的 `geometry` = **局部原点** ✓；
+        #   · 绘 = **绕板心 `C = (0.6 + W/2, 4.5)` 旋转** ✓（`sch_net.view` ✓）；
+        #   · 文字 = **纯文字** ✓（`x=0.6 y=6.6` 局部 ✓、字号 **6.0** ✓、Droid Sans ✓、黑 ✓）
+        #     —— ✗ 我原来画的那个"白底黑框大矩形"是**我发明的** ✗（Fritzing 根本没画 ✗）。
+        #   · `transform` 的 `m31/m32` **Fritzing 不用** ✗（实测 ✓）⇒ 这里也**不用** ✓，
+        #     **只用它的旋转部分** ✓。
+        _geom = (enum(g, "x"), enum(g, "y"))                # ★ 局部原点 = 实例 `geometry` ✓
+        _mi = el.get("modelIndex") or "0"                   # ✗ 别借用循环外面的 `mi` ✗
+        #   （实测教训：原来那句用了外面漏下来的 `mi` ⇒ 换成**没有导线**的草图就 NameError ✗，
+        #    而 v34 恰好有导线 ⇒ 一直没暴露 ✗）
+        _tf = g.find("transform")
+        _m = ((_tf.get("m11", "1"), _tf.get("m12", "0"),
+               _tf.get("m21", "0"), _tf.get("m22", "1"))
+              if _tf is not None else ("1", "0", "0", "1"))
+        _bx = sch_net.label_box(_geom, _lbl, _m)             # ★ 本体框：**一处实现** ✓
+        _px, _py = sch_net.label_pin(_geom, _lbl, _m)        # ★ **画出来的**脚 ✓（不是我以为的 ✓）
+        _deg = sch_net.rot_deg(_m)
+        _cx, _cy = sch_net.pivot(_lbl)                       # 枢轴（局部 ✓）
+        # ★★ 2026-09-29 ✓ **外框（箭头形旗标）** ✓ —— 用户指出我漏了它 ✓（实测见 `sch_net.label_flag` ✓）：
+        #   · 形状 = 旗身 + 尖头 ✓，白底黑边 ✓ 线宽 0.30 sketch ✓（= 导出 0.24 ÷ 0.8 ✓）；
+        #   · 盒 = 宽 **8.700**（定值 ✓）× 长 **`flag_len`**（随网名 ✓），尖头 **5.600** ✓；
+        #   · **锚在“文字锚点”上** ✓、**与旋转无关** ✓（0°/90°/−90° 三组实测顶点完全一样 ✓）——
+        #     ✗ 我上一版锚在“脚”上 ✗ ⇒ 差 2.7mm ✗（看着像“只对 −90° 对”✗）。
+        #   ★ 顶点一律问 `sch_net.label_flag` ✓（**一处实现** ✓ —— 核对器用同一份 ✓，不另写 ✗）。
+        _pv = []
+        for _vx, _vy in sch_net.label_flag(_geom, _lbl, _m):
+            _pv.append("%.4f,%.4f" % (_vx - _geom[0], _vy - _geom[1]))
+            #   ★ 算出来是**视图坐标** ✓ ⇒ 减掉 `geom` 才是"组内坐标" ✓（这一组已 translate(geom) ✓；
+            #     ✗ 不减就**偏移两份** ✗）
+        _flag = ('<polygon points="%s" fill="#ffffff" stroke="#000000" '
+                 'stroke-width="0.300000"/>' % " ".join(_pv))
+        _art = ('<g partID="%s1"><g id="schematic" transform="translate(%.4f %.4f)">'
+                '%s'
+                '<text id="label" x="%.3f" y="%.3f" font-family="Droid Sans" '
+                'font-size="%.3f" fill="#000000" transform="rotate(%.4f %.4f %.4f)">%s</text>'
+                "</g></g>"
+                % (_mi, _geom[0], _geom[1], _flag, sch_net.LABEL_TEXT_X,
+                   sch_net.LABEL_BASELINE_Y, sch_net.LABEL_FS, _deg, _cx, _cy,
+                   html.escape(_lbl)))
+        body_parts.append((ttl, "网标签 ✓ 脚(%.1f,%.1f) ✓ 朝向%d° ✓" % (_px, _py, round(_deg)),
+                           _art))
+        PIN_SK.append((ttl, "connector0", (_px, _py)))
+        LBL_TITLE.add(ttl)                      # ★ 见下面“穿体”那条：**标签不豁免自己那根线** ✗
+        PART_BOX[ttl] = _bx                     # ★ 与画图**同一个盒子** ✓（“标签是元件” ✓ B3.1.1 ✓）
+        for _qc in ((_bx[0], _bx[1]), (_bx[2], _bx[3])):
+            ALL_PTS.append(_qc)                 # ★ 画布要**圈住本体框** ✓（不是只圈脚 ✓）
+        continue
     fzp = (el.get("path") or "").replace("/", os.sep)
     if not os.path.isfile(fzp):
         skipped.append((ttl, "fzp 不存在 ⇒ %s" % fzp))
@@ -451,8 +514,16 @@ print("   总长 %.1f 单位 = %.1f mm" % (tot, tot * MMU))
 #       ✗ 不在**引脚**（D3 的 A1/A2 ✓、C1 ✓、R1 ✓、C2 ✓、LED2 ✓、U1 ✓）与**纯拐角**处画点 ✓。
 #   ★ 聚容差 0.01 单位**必须有** ✗：Fritzing 自己存的同一接头会差 0.001 ✓
 #     （实测 `186.513` vs `186.512` ✓）⇒ 按小数位分组会把接头拆成两个 ✗。
-DOT_R = 0.9
+DOT_R = 0.9               # 小点（**2 根线**相接 ✓）= 导出 0.72 ÷ 0.8 ✓
+DOT_R_BIG = 1.8           # 大点（**≥3 根线**相接 ✓）= 导出 1.44 ÷ 0.8 ✓
 JTOL = 0.01
+
+# ★★ 大小之分：**用户 2026-09-29 给定口径** ✓（“大的 = 三条线以上接在一起 ✓、小的 = 两条 ✓”），
+#   并在**导出里实测确认** ✓（`_work/v34_图示.svg` ✓）：
+#     线端 2 根 ⇒ r=0.72（小 ✓）15 处 ｜ 线端 3 根 ⇒ r=1.44（大 ✓）11 处 ｜
+#     另有 2 处 r=0.56、线端 0 根 ⇒ 那是**零件自己的小圆**（不是接点 ✓ 我不画 ✓）。
+#   ★ 还量到：**Fritzing 给接点上的每根线各画一个圆** ✓（2 根线 ⇒ 2 个元素、3 根 ⇒ 3 个 ✓）
+#     ⇒ 同一个位置上它们**半径相同** ✓ ⇒ 我只画**一个**（视觉等价 ✓）。
 
 
 GRP = []
@@ -474,13 +545,28 @@ SEGS = [(a, b) for _t, a, b, _c, _w in wires]
 #     ⇒ **更差** ⇒ 按规矩（\"找不到就如实说 ✓ 不硬凑 ✗\"）回退到这一条 ✓。
 #   ⇒ 差异**已量化** ✓（4 个圆点 ✓，半径 0.9 单位 = 0.25mm ✓），纯属**装饰** ✓：
 #     不影响任何几何 ✓、不影响电气（连接记在 `<connect>` 里 ✓）、也不进那 4 个美学指标 ✓。
-dots = [p for p, n_end in GRP
-        if n_end >= 2 and not any(math.dist(p, q[2]) < 0.05 for q in PIN_SK)]
+#   ★★ 2026-09-29 ✓ 两点都已实测钉住 ✓（`v34_图示.svg` ✓）：
+#     ① **什么时候点**：该处 **≥2 个导线端点** ✓（只 1 根线端 + 1 个脚的脚 ⇒ **不点** ✗
+#        —— 实测：导出 28 个位置里没有“只接一根线的脚” ✓）；
+#     ② **点多大**：**该处的“连接数”** ✓ = 导线端点 + **脚** ✓ ⇒ = 2 ⇒ 小 ✓、≥3 ⇒ 大 ✓。
+#        依据：`R1` 的两个脚 `(162,108)/(126,108)` 处只有 2 根线端 ✗ 而导出画的是**大点** ✓
+#        ⇒ 把“脚”算进去正好 3 ✓（修正前我在这两处画成小点 ✗ = 唯一残留的 2 处 ✗）。
+dots = []
+for p, n_end in GRP:
+    if n_end < 2:
+        continue
+    _np = sum(1 for q in PIN_SK if math.dist(p, q[2]) < 0.05)
+    dots.append((p, DOT_R_BIG if (n_end + _np) >= 3 else DOT_R))
 
 
-dots = sorted(set((round(x, 3), round(y, 3)) for x, y in dots))
-print("   接点圆点 %d 个 ✓（判据 = 该处 **≥2 个导线端点且不在引脚上** ✓；"
-      "半径 %.2f 单位 = 导出 0.72 ÷ 0.8 ✓）" % (len(dots), DOT_R))
+_dq = {}
+for _p, _r in dots:
+    _dq[(round(_p[0], 3), round(_p[1], 3))] = max(_r, _dq.get((round(_p[0], 3), round(_p[1], 3)), 0.0))
+dots = sorted(_dq.items())
+print("   接点圆点 %d 个 ✓（小 %d / 大 %d ✓；判据 = 该处 **≥2 个导线端点** ✓；"
+      "大小 = 导线端点 + **脚** ≥ 3 ⇒ 大 ✓；半径 = 导出 0.72 / 1.44 ÷ 0.8 ✓）"
+      % (len(dots), sum(1 for _p, _r in dots if _r < DOT_R_BIG),
+         sum(1 for _p, _r in dots if _r >= DOT_R_BIG)))
 
 # ── ③ 位号文本 ──
 labels = []
@@ -518,6 +604,16 @@ for el in root.iter("instance"):
         for nm, dflt in reversed(yes):
             # ★ 实例的值优先 ✓；fzp 的**默认值在元素文本里** ✓（不是 `value=` 属性 ✗）
             v = vals.get(nm) or dflt
+            # ★★ 单位（2026-09-29 实测 ✓）：Fritzing 会给**已知类目**补单位 ✓
+            #   · 实测样本：实例 `resistance` = `220` ✓、fzp = `<property name="Resistance"
+            #     showInLabel="yes">220</property>` ✓ **没有 units** ✗（`fritzing-parts/core`
+            #     全库搜过 `units=` ✓ 一个都没有 ✓）⇒ 而 Fritzing 位号显示 **`220Ω`** ✓
+            #     ⇒ 这个 Ω 是 **Fritzing 内置**的类目单位 ✓（不是文件里的 ✗）。
+            #   · 所以这里只认**实测过**的类目 ✓；值里已经带字母的（如 `100 nF` ✓）**不补** ✓。
+            #   ★ 要再加一个类目，请给一份含该属性的**导出** ✓ —— 本仓规矩：**不编数据** ✗。
+            _u = _UNIT_BY_PROP.get((nm or "").lower())
+            if _u and v and not any(ch.isalpha() for ch in v):
+                v = v + _u
             if v and v not in lines:
                 lines.append(v)
         if len(lines) == 1:
@@ -620,9 +716,26 @@ for ttl_w, a, b, _c, _w in wires:
     own = {q[0] for q in PIN_SK
            if math.dist(q[2], a) < 0.05 or math.dist(q[2], b) < 0.05}
     for t, box in PART_BOX.items():
-        if t in own:
+        _a2, _b2 = a, b
+        if t in LBL_TITLE and t in own:
+            # ★★ 2026-09-29 ✓ **网标签不享受那条豁免** ✗ —— 那条是给**元件本体**的（线要进肚子
+            #   才能接到脚上 ✓）；标签身体若**包住了自己那根线** ✗ ⇒ 人眼一看就是“被穿” ✗
+            #   （用户就是这么发现的 ✓：竖的 `GND` 与两个 `RC` 都被穿了 ✗）。
+            #   ⇒ 只在**引脚处留 2 单位**容差 ✓，其余照判 ✓。
+            _pin = next((q[2] for q in PIN_SK
+                         if q[0] == t and (math.dist(q[2], a) < 0.05
+                                           or math.dist(q[2], b) < 0.05)), None)
+            _L = math.dist(a, b)
+            if _pin is None or _L <= 2.0:
+                continue
+            _u2 = 2.0 / _L
+            if math.dist(a, _pin) < math.dist(b, _pin):
+                _a2 = (a[0] + (b[0] - a[0]) * _u2, a[1] + (b[1] - a[1]) * _u2)
+            else:
+                _b2 = (b[0] + (a[0] - b[0]) * _u2, b[1] + (a[1] - b[1]) * _u2)
+        elif t in own:
             continue
-        if _hits_box(a, b, box):
+        if _hits_box(_a2, _b2, box):
             nb += 1
             HITS.append((ttl_w, t, a, b, own))
 print("── ★ 美学指标：导线**十字交叉 %d 处** ✓｜导线**穿过别的元件本体 %d 段** ✓"
@@ -921,9 +1034,9 @@ body += [b[2] for b in body_parts]
 for ttl, a, b, col, wd in wires:
     body.append('<line x1="%.4f" y1="%.4f" x2="%.4f" y2="%.4f" stroke="%s" '
                 'stroke-width="%.4f" stroke-linecap="round"/>' % (a[0], a[1], b[0], b[1], col, wd))
-for cx, cy in dots:                                   # ★ 接点圆点画在导线**之上** ✓
+for (cx, cy), _rr in dots:                            # ★ 接点圆点画在导线**之上** ✓
     body.append('<circle cx="%.4f" cy="%.4f" r="%.4f" fill="#000000" stroke="none"/>'
-                % (cx, cy, DOT_R))
+                % (cx, cy, _rr))
 for ttl, (lx, ly), fs, col, lines in labels:
     body.append('<g font-family="DroidSans" font-size="%.3f" fill="%s">' % (fs, col))
     for i, s_ in enumerate(lines):
@@ -989,16 +1102,14 @@ if "verify-export" in opts:
             if a.get("id") or "pin" in (a.get("class") or "") or not all(
                     k in a for k in ("x1", "y1", "x2", "y2")):
                 continue
-            if wires and (a.get("stroke") or "").lower() == wires[0][3].lower():
-                got.append((num(a["x1"]), num(a["y1"]), num(a["x2"]), num(a["y2"])))
-                sws.append(num(a.get("stroke-width"), 0.0))
-            else:
-                other_blocks.append((pid, a.get("stroke"), a.get("stroke-width")))
+            got.append((num(a["x1"]), num(a["y1"]), num(a["x2"]), num(a["y2"])))
+            sws.append(num(a.get("stroke-width"), 0.0))
+            other_blocks.append((pid, a.get("stroke"), a.get("stroke-width")))
         wire_lines += got
     wire_lines = list(dict.fromkeys(wire_lines))            # 去重（同一根线可能在两处出现）✓
 
     # ── 标定（两个独立量 ✓）：比例 = 导出线宽 / 我的线宽 ✓；平移 = **第一件**的组平移 ✓ ──
-    sw_exp = (sum(sws) / len(sws)) if sws else None
+    sw_exp = max(set(sws), key=sws.count) if sws else None   # ★ 取**最常见的**线宽 ✓（不取均值 ✓）
     s = (sw_exp / wires[0][4]) if (sw_exp and wires) else 0.8
     mine = {}
     for el in root.iter("instance"):
@@ -1073,7 +1184,17 @@ if "verify-export" in opts:
             worst_p, worst_p_t = d, ttl0
     print("   ① 零件：%d 件（1 件标定 + %d 件验证）⇒ 最大 Δ = **%.5f 单位（%.5f mm）** @%s %s"
           % (len(pairs), len(pairs) - 1, worst_p, worst_p * MMU, worst_p_t,
-             "✓✓" if worst_p < 0.01 else "✗✗"))
+             "✓✓" if worst_p < 0.01 else "⚠"))
+    if worst_p >= 0.01:
+        print("        ⚠ 本核对口径的**已知限制**（不是摆位错 ✗，别误读 ✓）：本行比的是"
+              "「组平移 ↔ 0.8×几何 + c」✓ ⇒ 只对 **viewBox 原点为 0 的 svg** 成立 ✓（原点非 0 的件"
+              "那份偏移就差在这一行里 ✗）；**转过**的件还会把这个偏移一并旋进去 ✗。")
+        print("        ⚠ 真正管几何的是 ⑤「同一零件内**脚向量**」✓ —— 它**不需要任何标定** ✓。")
+    for _t0, _mx, _my, _tx, _ty in pairs:
+        _d0 = max(abs(_tx - mp((_mx, _my))[0]), abs(_ty - mp((_mx, _my))[1]))
+        if _d0 >= 0.01:
+            print("        ⚠ %-12s Δ=%.5f 单位（%.3f mm）⇒ 属上面那条口径限制 ✓（看 ⑤ 才是结论 ✓）"
+                  % (_t0, _d0, _d0 * MMU))
 
     used, unmatched, worst_w, worst_w_t = set(), [], 0.0, ""
     for ttl0, a, b, col, wd in wires:
@@ -1123,26 +1244,53 @@ if "verify-export" in opts:
     for t, why in lbad[:6]:
         print("        ✗ %-12s %s" % (t, why))
 
+    # ── ④ 接点（★ 2026-09-29 改口径 ✓）：**位置 + 半径一起对** ✓ ──
+    #   ✗ 老口径只挑 `r == "0.72"`（小点 ✓）⇒ 把 11 个**大点**（r=1.44 ✓）全丢了 ✗
+    #     ⇒ 报成"导出 15 ↔ 我 26 ✗"，**看着像我多画了 11 个** ✗ —— 其实是**它自己漏数** ✗。
+    #   ✓ 现在：`r ≥ 0.7`（接点 = 0.72 / 1.44 ✓；零件自带的 `r=0.56` 小圆**不算** ✗），
+    #     按位置归并（Fritzing 给每根线各画一个同半径的圆 ✓）⇒ 位置半径取该处**最大** ✓。
     dots_exp_raw = []
     for m in re.finditer(r"<circle\b[^>]*>", raw):
         a = attrs(m.group(0))
-        if (a.get("fill") or "").lower() == "black" and a.get("r") == "0.72":
-            # ★ 导出坐标 → sketch ✓ 要用**逆映射** ✓（`mp` 是正映射 ✗，套两次就错了 ✗）
-            dots_exp_raw.append(((num(a["cx"]) - c[0]) / s, (num(a["cy"]) - c[1]) / s))
+        if (a.get("fill") or "").lower() != "black":
+            continue
+        _rr0 = num(a.get("r"), 0.0)
+        if _rr0 < 0.7:
+            continue
+        # ★ 导出坐标 → sketch ✓ 要用**逆映射** ✓（`mp` 是正映射 ✗，套两次就错了 ✗）
+        dots_exp_raw.append(((num(a["cx"]) - c[0]) / s, (num(a["cy"]) - c[1]) / s, _rr0 / s))
     uq = []
     for q in dots_exp_raw:
-        if not any(math.dist(q, u) < 0.05 for u in uq):
+        _hit = next((u for u in uq if math.dist((q[0], q[1]), (u[0], u[1])) < 0.05), None)
+        if _hit is None:
             uq.append(q)
-    dmiss = [q for q in uq if not any(math.dist(q, p) < 0.05 for p in dots)]
-    dextra = [p for p in dots if not any(math.dist(p, q) < 0.05 for q in uq)]
-    print("   ④ 接点：导出 %d 个圆 = **%d 个位置**（每处 %d 个 ✓）↔ 我 %d 个位置"
-          " ⇒ 我少的 %d 个 ✓、我多的 %d 个 %s"
-          % (len(dots_exp_raw), len(uq), round(len(dots_exp_raw) / max(1, len(uq))),
-             len(dots), len(dmiss), len(dextra), "✓" if not (dmiss or dextra) else "✗"))
+        elif q[2] > _hit[2]:
+            uq[uq.index(_hit)] = q
+    #   ★ `dots` 现在是 `((x,y), r)` ✓（带半径 ✓）⇒ 迭代要**拆包** ✗（实测：不拆包就
+    #     `TypeError: must be real number, not tuple` ✗）
+    dmiss = [q for q in uq if not any(math.dist((q[0], q[1]), p) < 0.05 for p, _r in dots)]
+    dextra = [p for p, _r in dots if not any(math.dist(p, (q[0], q[1])) < 0.05 for q in uq)]
+    rbad = []
+    for q in uq:
+        _m2 = next(((p, _r) for p, _r in dots
+                    if math.dist(p, (q[0], q[1])) < 0.05), None)
+        if _m2 is not None and abs(_m2[1] - q[2]) > 0.05:
+            rbad.append((q, _m2))
+    _n_small = sum(1 for _p, _r in dots if _r < DOT_R_BIG)
+    _split = (DOT_R + DOT_R_BIG) / 2.0            # sketch 单位下的“小/大”分界 ✓（0.9 ↔ 1.8 ✓）
+    print("   ④ 接点：导出 %d 个圆 = **%d 个位置**（小 %d / 大 %d ✓；导出半径 0.72 / 1.44 ✓）"
+          " ↔ 我 %d 个位置（小 %d / 大 %d ✓）⇒ 我少的 %d ✓、我多的 %d ✓、半径不符 %d %s"
+          % (len(dots_exp_raw), len(uq),
+             sum(1 for q in uq if q[2] < _split), sum(1 for q in uq if q[2] >= _split),
+             len(dots), _n_small, len(dots) - _n_small,
+             len(dmiss), len(dextra), len(rbad),
+             "✓" if not (dmiss or dextra or rbad) else "✗"))
     for q in dmiss[:5]:
-        print("        ✗ 导出点了、我没点的位置 (%.3f,%.3f)" % q)
+        print("        ✗ 导出点了、我没点的位置 (%.3f,%.3f)" % (q[0], q[1]))
     for p in dextra[:5]:
-        print("        ✗ 我点了、导出没点的位置 (%.3f,%.3f)" % p)
+        print("        ✗ 我点了、导出没点的位置 (%.3f,%.3f)" % (p[0], p[1]))
+    for q, p in rbad[:5]:
+        print("        ✗ 半径不符 (%.3f,%.3f)：导出 %.3f ↔ 我 %.3f" % (q[0], q[1], q[2], p[1]))
     # ── ⑤ ★★ 引脚判别（2026-09-27 补 ✓ —— 起因就是"没有它"骗了我一整天 ✗）──
     #   上面 ①②③ 只比"零件**锚点**"与"**导线自己**" ✗ —— 两边都用**我自己的坐标系** ⇒
     #   自洽 ⇒ 永远通过 ✗（典型的"自证" ✗；`px` 那个 bug 就是这么躲过一整天的 ✓）。
@@ -1210,12 +1358,12 @@ if "verify-export" in opts:
     for el in root.iter("instance"):
         if not (el.get("moduleIdRef") or "").startswith("Wire"):
             continue
-        for c in el.iter():
-            if tag(c) != "connect":
+        for _ce in el.iter():                       # ✗ 变量别叫 `c` ✗ —— 外层 `c` 是**标定平移** ✓
+            if tag(_ce) != "connect":               #   （实测教训：它被覆盖后 `mp()` 就用错位移 ✗）
                 continue
-            if c.get("modelIndex") in wm:
+            if _ce.get("modelIndex") in wm:
                 continue
-            links.append((el.get("modelIndex"), c.get("modelIndex"), c.get("connectorId")))
+            links.append((el.get("modelIndex"), _ce.get("modelIndex"), _ce.get("connectorId")))
     tbad, tmax = [], 0.0
     for wmi, pmi, cid in links:
         wpid = next((k for k in exp_lines if k == wmi or
@@ -1234,14 +1382,71 @@ if "verify-export" in opts:
     for ttl0, pmi, cid, d2 in tbad[:6]:
         print("        ✗ %-13s 该接 %s.%s，线端离脚 **%.2f mm** ✗" % (ttl0, pmi, cid, d2 * 25.4 / 72))
 
+    # ── ⑦ ★★ 网标签（2026-09-29 补 ✓）：**文字锚点在导出内部对账** ✓ ──
+    #   为什么单列 ✗：标签几何是**新标定**的 ✓（`sch_net.py`「本体几何」✓）⇒ 必须有**机器守** ✓；
+    #   而且这里比的是「**Fritzing 画出来的**文字位置」✓，不是「我以为应该在的位置」✗（不自证 ✗）。
+    exp_lbl = []
+
+    def _walk_lbl(el, m):
+        t2 = el.get("transform")
+        if t2:
+            m = PB.mul(m, PB.parse_tf(t2))
+        if tag(el) == "text" and el.get("id") == "label" and el.get("x") is not None:
+            exp_lbl.append((PB.apply(m, float(el.get("x")), float(el.get("y"))),
+                            (el.text or "").strip()))
+        for cc in el:
+            _walk_lbl(cc, m)
+
+    try:
+        _walk_lbl(ET.parse(exp).getroot(), (1.0, 0.0, 0.0, 1.0, 0.0, 0.0))
+    except Exception:
+        exp_lbl = []
+    mine_lbl = []
+    for el in root.iter("instance"):
+        _lab = next((_p.get("value") for _p in el.iter("property")
+                     if _p.get("name") == "label"), None)
+        _nm = sch_net.net_name(el.get("moduleIdRef") or "",
+                               (el.findtext("title") or "").strip(), _lab)
+        if not _nm:
+            continue
+        vw = next((c for c in el if tag(c) == "views"), None)
+        sv = next((c for c in vw if tag(c) == VIEW), None) if vw is not None else None
+        g = next((c for c in sv if tag(c) == "geometry"), None) if sv is not None else None
+        if g is None:
+            continue
+        tf = g.find("transform")
+        m = ((float(tf.get("m11", 1)), float(tf.get("m12", 0)),
+              float(tf.get("m21", 0)), float(tf.get("m22", 1))) if tf is not None
+             else (1.0, 0.0, 0.0, 1.0))
+        mine_lbl.append((_nm, (el.get("modelIndex") or ""),
+                         sch_net.label_text_anchor((enum(g, "x"), enum(g, "y")), _nm, m)))
+    lb_worst, lb_bt, lb_bad = 0.0, "", []
+    for _nm, _mi3, _a3 in mine_lbl:
+        _ma = mp(_a3)
+        _cand = [q for q in exp_lbl if q[1] == _nm] or exp_lbl
+        if not _cand:
+            lb_bad.append((_nm, _mi3, "导出里没有标签文字 ✗"))
+            continue
+        _d3 = min(math.dist(_ma, q[0]) for q in _cand)
+        if _d3 > lb_worst:
+            lb_worst, lb_bt = _d3, "%s(%s)" % (_nm, _mi3)
+        if _d3 > 0.05:
+            lb_bad.append((_nm, _mi3, "文字锚点差 %.4f 导出单位 = %.3f mm ✗"
+                           % (_d3, _d3 * 25.4 / 72)))
+    print("   ⑦ 网标签：导出 %d 个 ↔ 我 %d 个 ⇒ **文字锚点**最大 Δ = **%.5f 单位（%.5f mm）** @%s %s"
+          % (len(exp_lbl), len(mine_lbl), lb_worst, lb_worst * MMU, lb_bt,
+             "✓✓" if not lb_bad else "✗✗"))
+    for _nm, _mi3, _why in lb_bad[:6]:
+        print("        ✗ %s(%s) %s" % (_nm, _mi3, _why))
+
     # ★ 判定分**三类**报 ✓：几何（尺寸/位置 ✓）｜装饰（接点圆点 ✓）｜文本（位号文字 ✓）
     #   —— 用一个 0.25mm 的圆点去掩盖"几何已逐点验平"是**把结论说糊**了 ✗，
     #     反过来也一样 ✗（几何错了就不能拿"就几个圆点"糊过去 ✗）。
     geo_ok = (worst_p < 0.01 and worst_w < 0.05 and not unmatched and not extra and lw < 0.01
-              and not pv_bad and not tbad)
-    dot_ok = not dmiss and not dextra
-    print("   ⇒ 几何（零件/导线/位号位置 **+ 引脚**）：%s"
-          % ("✓✓ **与 Fritzing 逐点一致** ✓✓（含引脚 ✓；四处 Δ 全部 ≤0.001 单位 = 0.0003 mm ✓）"
+              and not pv_bad and not tbad and not lb_bad)
+    dot_ok = not dmiss and not dextra and not rbad
+    print("   ⇒ 几何（零件/导线/位号位置 **+ 引脚 + 标签**）：%s"
+          % ("✓✓ **与 Fritzing 逐点一致** ✓✓（含引脚与标签 ✓；Δ 全部 ≤0.001 单位 = 0.0003 mm ✓）"
              if geo_ok else "✗ 有几何不一致项 ✗（上面已逐条列出 ✓ 别默认它没事 ✗）"))
     print("   ⇒ 装饰（接点圆点）：%s"
           % ("✓ 一致 ✓" if dot_ok else "⚠ 差 %d 个（纯装饰 ✓，半径 0.9 单位 = 0.25mm ✓；"

@@ -14,13 +14,209 @@ r"""网标签（net label）规则 —— **全仓唯一实现** ✓
 ★ 消费方式（两个判定器都调这两行 ✓，别各写一份 ✗）：
     name = sch_net.net_name(module_id_ref, instance_title)      # 不是网标签 ⇒ None ✓
     # 然后：把**同名**的所有标签脚 union 到一起 ✓
+
+★ **几何**（本体框 / 引脚 / 文字位置 / 朝向）也**只有这一份** ✓ —— 见下面「本体几何」一节 ✓，
+  常数**全部实测**并注明出处 ✓；生成器、渲染器、判定器都调它 ✓（各写一套就是等着两边对不上 ✗）。
 """
+import math
 import re
 
 _MOD = re.compile(r'moduleIdRef\s*=\s*"([^"]*)"')
 _TTL = re.compile(r"<title>(.*?)</title>", re.S)
 _MI = re.compile(r'modelIndex\s*=\s*"([^"]*)"')
 
+# ══════════════════════════════════════════════════════════════════════════════
+# 本体几何 —— **实测标定** ✓（2026-09-29 ✓）／**唯一实现** ✓
+#
+# 证据一：用户导出的 `hardware/pixel/_work/v34_图示.svg`（**Fritzing 自己画的** ✓）
+#   · 4 个标签各只有一段 `<text id="label">` ✓ ⇒ **原理图里网标签 = 纯文字，没有方框** ✓
+#     （我原来画的那个大矩形框是**我发明的** ✗ ⇒ 当然和 Fritzing 对不上 ✗）。
+#   · 文字属性：`font-family="Droid Sans"` ✓、`font-size="4.8"`（导出单位 ✓ = sketch **6.0** ✓）、
+#     `fill="#000000"` ✓、`x="0.48" y="5.28"`（= sketch **0.6 / 6.6** ✓，相对实例 `geometry` ✓）、
+#     **没有 `text-anchor`** ✓ ⇒ x = 文字**左缘** ✓。
+# 证据二：`pixel-schematic-v29_netlabel.fzz`（**Fritzing 自己写的** ✓）里两个**旋转过**的标签：
+#   `RC`  R=(−1,0,0,−1)  m31/m32=(12.5219, 9) ⇒ 反解枢轴 (6.26095, 4.5) ⇒ 板宽 **11.3219**
+#   `GND` R=(−1,0,0,−1)  m31/m32=(18.2055, 9) ⇒ 反解枢轴 (9.10275, 4.5) ⇒ 板宽 **17.0055**
+#   ⇒ 两个名字两个板宽 ✓，都满足 **枢轴 = (0.6 + W/2, 4.5)** ✓。
+# 证据三：`v34_图示.svg` 里那两个旋转标签**画出来的**文字位置 ✓（4 个方程解 1 个未知数 W ✓）
+#   ⇒ W = 17.0048 / 17.0000（名字都是 `GND` ✓）✓ 与证据二的 17.0055 一致到 **3‱** ✓✓。
+#   ⇒ **画法 = 绕 `(0.6 + W/2, 4.5)` 旋转** ✓：`view(p) = 几何 + C + R·(p − C)` ✓。
+#
+# ★★ 两条**反直觉但已证**的结论 ✓：
+#   ① 文件里 `transform` 的 `m31/m32` **Fritzing 画图时不用** ✗ —— 证据：v34 的 `GND#1`
+#      `m31=m32=0` ✓ 而 Fritzing 照样把它绕枢轴转 ✗；`GND#2` 的 `(10.7609,−1.76096)` 又对不上
+#      画出来的位置 ✗ ⇒ 两个样本**只有**「忽略 m31/m32 + 绕枢轴」能同时成立 ✓（各差 < 1e-4 ✓）。
+#   ② 所以**写文件时把 `m31/m32` 写成 `(I−R)·C`** ✓（Fritzing 自己就这么写 ✓，见证据二 ✓）
+#      ⇒ "忽略它"与"尊重它"**两种读法都落在同一处** ✓（不给人埋坑 ✓）。
+#
+# ⚠ 板宽 W（已从“两点拟合”升级为**真字宽** ✓ 2026-09-29 当日晚 ✓）：
+#   Fritzing **不自带字体** ✓（搜遍安装目录：无 ttf/otf/woff/rcc ✓）⇒ 它请求 `Droid Sans`、
+#   由 **Qt6 从系统字体回退** ✓ ⇒ 回退到哪个字体 **用实测反解验证** ✓：
+#     · 拿系统里**全部 345 个字体**逐一拟合 ✓：**Noto Sans → rms 0.034mm** ✓✓
+#       （Segoe UI Bold 0.097 ✗ ｜ Calibri 0.134 ✗ ｜ DejaVu 0.154 ✗）；
+#     ⇒ 字宽表 = `sch_glyphs.py`（**纯数据** ✓，由 `_scratch/gen_sch_glyphs.py` 导出 ✓）。
+#   ★★ **W 与框是同一个量** ✓（用户第二份 `netlabels.fzz` 实测后确定 ✓）：
+#     框盒（相对**文字锚点** ✓）在局部 x 上从 **0.15** 到 **L+0.15** ✓ ⇒ 枢轴 = 盒心 = `0.15 + L/2` ✓
+#     ⇒ 与我的 `pivot() = 0.6 + W/2` 对照 ⇒ **`W = L − 0.9`** ✓。
+#     验：`RC` L=12.221 ⇒ W=**11.321** ✓（独立量到 11.3219 ✓）；`GND` L=17.916 ⇒ W=**17.016** ✓
+#     （独立量到 17.0055 ✓）⇒ 两条互证 ✓✓。
+LABEL_FS = 6.0            # 字号（sketch ✓）= 导出 4.8 × 1.25 ✓
+LABEL_TEXT_X = 0.6        # 文字**左缘**（以实例 `geometry` 为原点 ✓）= 导出 0.48 ✓
+LABEL_BASELINE_Y = 6.6    # 文字**基线** = 导出 5.28 ✓
+LABEL_PLATE_H = 4.2       # 本体板高 = 0.7em ✓（由枢轴 y = 4.5 反推 ✓ = 2×(4.5 − 2.4) ✓）
+LABEL_PIN_DY = 4.5        # 引脚 = (0, 4.5) ✓（枢轴 y ✓ = 板的**半高线** ✓）
+
+# ★ 四个朝向（**SVG 口径** ✓：`rotate(θ)` ⇒ `(a,b,c,d) = (cosθ, sinθ, −sinθ, cosθ)` ✓）
+#   —— 四个都在 Fritzing 自己的文件里出现过 ✓（identity / ±90° / 180° ✓）；
+#   上面那套画法对**任意** `R` 都成立 ✓（枢轴 = 板心 ✓ 与 `R` 无关 ✓）。
+MATRIX = {
+    0: (1.0, 0.0, 0.0, 1.0),
+    90: (0.0, 1.0, -1.0, 0.0),
+    180: (-1.0, 0.0, 0.0, -1.0),
+    270: (0.0, -1.0, 1.0, 0.0),
+}
+IDENT = MATRIX[0]
+
+
+def flag_len(text):
+    """外框（旗标 ✓）的**长**（sketch ✓）—— `L = FLAG_A × Σ(步进/em) + FLAG_B` ✓
+
+    常数由**用户第二份 `netlabels.fzz`**（★ 零标定量法 ✓：框顶点↔文字锚点，全在导出内部 ✓）
+    的 **9 个名字**最小二乘拟合 ✓ ⇒ rms **0.064mm** ✓（各名字最大差 0.16mm ✓）。
+    """
+    import sch_glyphs as _G
+    return _G.A_EM * _G.adv_sum(text) + _G.B_PAD
+
+
+def plate_w(text):
+    """本体板宽 W（sketch ✓）—— ★ 与框是**同一个量** ✓：`W = flag_len − 0.9` ✓
+
+    （框盒从局部 x=0.15 到 L+0.15 ✓ ⇒ 盒心 = 0.15 + L/2 ✓ ⇒ 与 `pivot()` 对照得 W = L − 0.9 ✓；
+      拿两个独立量到的枢轴验过 ✓：`RC` 11.321 ↔ 11.3219 ✓、`GND` 17.016 ↔ 17.0055 ✓。）
+    """
+    return flag_len(text) - 0.9
+
+
+def pivot(text):
+    """旋转枢轴（相对实例 `geometry` ✓）= **板心** ✓ = `(0.6 + W/2, 4.5)` ✓（实测 ✓）"""
+    return (LABEL_TEXT_X + plate_w(text) / 2.0, LABEL_PIN_DY)
+
+
+def pin_local():
+    """引脚（相对实例 `geometry` ✓）—— 在板的**半高线**上、板外左侧 ✓（实测 ✓）"""
+    return (0.0, LABEL_PIN_DY)
+
+
+def norm_m(m):
+    """取 2×2 部分 ✓（`(m11, m12, m21, m22)` ✓）；`None` ⇒ 单位阵 ✓"""
+    if m is None:
+        return IDENT
+    return (float(m[0]), float(m[1]), float(m[2]), float(m[3]))
+
+
+def mv(m, p):
+    """2×2 作用（**SVG 口径** ✓：`a=m11,b=m12,c=m21,d=m22` ⇒ `(a·x + c·y, b·x + d·y)` ✓）"""
+    m = norm_m(m)
+    return (m[0] * p[0] + m[2] * p[1], m[1] * p[0] + m[3] * p[1])
+
+
+def view(geom, text, m, p):
+    """局部点 → 视图点 ✓：**`几何 + C + R·(p − C)`** ✓（绕板心旋转 ✓，**实测** ✓）"""
+    c = pivot(text)
+    q = mv(m, (p[0] - c[0], p[1] - c[1]))
+    return (geom[0] + c[0] + q[0], geom[1] + c[1] + q[1])
+
+
+def label_geom(pin_pt, text, m):
+    """**反解** ✓：要让**画出来的脚**落在 `pin_pt` 上，实例 `geometry` 该写多少 ✓
+
+    （生成器用它 ✓ ⇒ "脚在线端上"是**画出来的**位置 ✓，不是我以为的位置 ✓。）
+    """
+    c = pivot(text)
+    q = mv(m, (0.0 - c[0], LABEL_PIN_DY - c[1]))
+    return (pin_pt[0] - c[0] - q[0], pin_pt[1] - c[1] - q[1])
+
+
+def label_pin(geom, text, m=IDENT):
+    """**画出来的脚**（视图坐标 ✓）—— 判定器拿它跟导线端点对账 ✓"""
+    return view(geom, text, m, (0.0, LABEL_PIN_DY))
+
+
+def label_text_anchor(geom, text, m=IDENT):
+    """**画出来的文字基线左端**（视图坐标 ✓）—— 渲染器画它、核对器量它 ✓"""
+    return view(geom, text, m, (LABEL_TEXT_X, LABEL_BASELINE_Y))
+
+
+def rot_deg(m):
+    """变换里的旋转角（度 ✓）—— 给渲染器 `rotate(θ cx cy)` 用 ✓"""
+    m = norm_m(m)
+    return math.degrees(math.atan2(m[1], m[0]))
+
+
+def label_box(geom, text, m=IDENT):
+    """**看见的那块**（sketch ✓，**轴对齐包围盒** ✓）= **外框（旗标 ✓）的 5 个顶点**的包围盒 ✓
+
+    ★ 「标签是一个元件」✓（用户 2026-09-29 定 ✓）⇒ 判定器拿它当**实体**判穿体/贴脚 ✓；
+      与渲染器**同一份** ✓（不许各写一套 ✗）。
+
+    ✗✗ **原来这里返回的是「板」（`[0.6,0.6+W] × [2.4,6.6]` ✗）⇒ 比旗标小一圈** ✗ ——
+      板 = **文字墨迹框**（4.2 高 ✓ 就是字高 ✓）、而**看得见的旗标**是 **8.7 宽 ✓**（= 板的 2 倍）
+      ⇒ 拿板去判碰撞 ⇒ **有一根线从旗标身上穿过去，判据却说“违例 0”** ✗✗
+      （2026-09-29 实测 ✓：`_work/v30.fzz` 的 `RC` 标签上，**5V 的红竖线正穿旗标** ✗，
+        而生成器打印的是“违例 0 ✓” ✗ —— 我差点把它当成干净的版本交出去 ✗）。
+    ★ 教训：**判碰撞要用“看得见的那块”** ✓ —— 用户看的是旗标 ✓，不是我看的那个隐形的板 ✗
+      （与 AGENTS「以用户观察为准」✓、「判据要跟画出来的东西同一个」✓ 同一条）。
+    ★ 板的用途只剩一个：**旋转枢轴** ✓（= 板心 ✓，实测 ✓）—— 那是**变换**的事 ✓，
+      与「实体在哪」是**两个问题** ✓（所以 `pivot()` 照旧 ✓、这里换成旗标 ✓）。
+
+    ★ 实现上**直接调 `label_flag`** ✓（不重算一遍顶点 ✗ ⇒ 一份几何 ✓；旗标一改这里自动跟上 ✓）。
+    """
+    v = label_flag(geom, text, m)
+    xs = [q[0] for q in v]
+    ys = [q[1] for q in v]
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
+def canonical_d(text, m):
+    """Fritzing 自己写的 `m31/m32` ✓ = **`(I−R)·C`** ✓（证据二那两个样本都是 ✓）
+
+    ⇒ 写文件时用它 ✓：Fritzing 忽略它 ✓，而"尊重它"的读者算出来**也是同一个位置** ✓。
+    """
+    c = pivot(text)
+    q = mv(m, c)
+    return (c[0] - q[0], c[1] - q[1])
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 本体**外框（箭头形旗标）** ✓ —— 我漏过它 ✗（Fritzing 给一个标签写**两组**：`mi+"0"` 装框 ✓、
+#   `mi+"1"` 装文字 ✓；我上次只查了后者 ✗ —— 用户 2026-09-29 指出 ✓）。
+#
+# ★★ 口径（**零标定**量出来的 ✓✓ —— 用户第二份 `netlabels.fzz` ✓，17 个标签、三种旋转 ✓）：
+#   把框的顶点换算到「**相对文字锚点 ℓ**」的局部坐标（用**导出自己**的旋转矩阵 ✓）：
+#     `框盒 = (−0.45, −6.45) → (L−0.45, +2.25)`（sketch ✓）= 宽 **8.700** × 长 **L** ✓
+#     - **0° / 90° / −90° 三组顶点完全一样** ✓✓ ⇒ 框是 **锚在文字上** ✓、**与旋转无关** ✓
+#       （我原来锚在“脚”上 ✗ ⇒ 差 2.7mm ✗，且看着像“只对 −90° 对”✗）。
+#     - 尖点在 `(L−0.45, −2.10)` ✓、尖头长 **4.350** ✓
+#       （= 尖点 x − 旗身右缘 x ✓；⚠ 我一度写成 5.60 ✗ —— 那是拿**盒长**去减出来的 ✗，
+#        实测两批都是 **3.48 导出 = 4.35 sketch** ✓：`DCIN` 129.668−126.188 ✓、`RC` 9.417−5.938 ✓）。
+# ══════════════════════════════════════════════════════════════════════════════
+FLAG_W = 8.700            # 框宽（定值 ✓）
+FLAG_TIP = 4.350          # 尖头长（定值 ✓ 见上）
+FLAG_X0 = -0.45           # 框相对**文字锚点**的左缘 ✓
+FLAG_Y0 = -6.45           # 相对文字锚点的上缘 ✓（⇒ 下缘 = FLAG_Y0 + FLAG_W +2.25 ✓）
+
+
+def label_flag(geom, text, m=IDENT):
+    """外框（旗标 ✓）的 5 个顶点（**视图坐标** ✓）—— 顺序 = 绕一圈 ✓
+
+    `view(p) = 几何 + C + R·(p − C)` ✓（与文字用**同一份**映射 ✓ ⇒ 朝向自动一致 ✓）。
+    """
+    L = flag_len(text)
+    lx, ly = LABEL_TEXT_X, LABEL_BASELINE_Y                 # ℓ = 文字基线左端 ✓
+    x0, y0 = lx + FLAG_X0, ly + FLAG_Y0                     # 框盒左上（sketch ✓）
+    x1, y1 = x0 + L, y0 + FLAG_W
+    pts = [(x0, y0), (x0, y1), (x1 - FLAG_TIP, y1),
+           (x1, (y0 + y1) / 2.0), (x1 - FLAG_TIP, y0)]
+    return [view(geom, text, m, p) for p in pts]
 
 def is_label_module(module_id):
     """这个 `moduleIdRef` 是不是**网标签**元件 ✓"""
@@ -28,11 +224,17 @@ def is_label_module(module_id):
     return "netlabel" in _m or "net label" in _m
 
 
-def net_name(module_id, title):
-    """网标签 ⇒ **网名**（= 实例标题 ✓）；不是网标签 ⇒ `None` ✓"""
+def net_name(module_id, title, label=None):
+    """网标签 ⇒ **网名** ✓；不是网标签 ⇒ `None` ✓
+
+    ★ 名字以实例的 **`<property name="label">`** 为准 ✓，没写才退回 `<title>` ✓。
+      依据（用户造件实测 ✓ 2026-09-29）：`_work/netlabels.fzz` 里 `<title>` 是 `RC1`/`MCLR1`…
+      而 **Fritzing 画出来的是 `RC`/`MCLR`** ✓ = 那个属性的值 ✓ ⇒ 属性才是“看得见的名字” ✓
+      （与 AGENTS 里“以看得见的为准 ✓、不以源码里的借名为准 ✗”同一条 ✓）。
+    """
     if not is_label_module(module_id):
         return None
-    _t = (title or "").strip()
+    _t = ((label if (label or "").strip() else title) or "").strip()
     return _t or None
 
 
@@ -50,7 +252,8 @@ def label_pins(text):
         t = _TTL.search(blk)
         if not m or not t:
             continue
-        _n = net_name(m.group(1), t.group(1))
+        _lb = re.search(r'<property\s+name="label"\s+value="([^"]*)"', blk)
+        _n = net_name(m.group(1), t.group(1), _lb.group(1) if _lb else None)
         if not _n:
             continue
         # ★ 草图里写的是 **`connectorId="connector0"`** ✓（实测 2026-09-29 ✓：

@@ -417,6 +417,11 @@ def layout(P):
         P["C2"].y = _yt - P["C2"].box[1]
 
 
+SHIFT = {}          # ★★ 成组平移 ✓（2026-09-29 用户：「**我还把两块的距离拉大了**，看起来更舒服」✓）
+#   按**标题**给 (dx, dy) ✓ ⇒ 一整块元件**刚性平移** ✓（块内间距不变 ✓）；
+#   位号跟着走 ✓（下面就是 `d.x + _sx` ✓）。
+
+
 def main(src, dst, pinfile, snap=False):
     pins, boxes, title, LAB = load_pins(pinfile)
     P = {t: L(t, mi, pins[mi], boxes[mi]) for mi, t in title.items()}
@@ -494,8 +499,9 @@ def main(src, dst, pinfile, snap=False):
         if g is None:
             continue
         d = P[ttl]
-        g.set("x", "%g" % d.x)
-        g.set("y", "%g" % d.y)
+        _sx, _sy = SHIFT.get(ttl, (0.0, 0.0))
+        g.set("x", "%g" % (d.x + _sx))
+        g.set("y", "%g" % (d.y + _sy))
         # ★★ `--rotj1` ✓：给 J1 写 180° 的 `<transform>` ✓
         #   ✗ **父元素必须是 `geometry`** ✗（`README.md` 第十一手 / `set_rot.py` 头 ✓）：
         #     我第一版写成 `schematicView` 的**兄弟** ✗ ⇒ **Fritzing 直接无视** ✗
@@ -530,8 +536,8 @@ def main(src, dst, pinfile, snap=False):
                                     float(tg.get("yOffset") or 0.0)))
             tg.set("xOffset", "%g" % ox)
             tg.set("yOffset", "%g" % oy)
-            tg.set("x", "%g" % (d.x + ox))
-            tg.set("y", "%g" % (d.y + oy))
+            tg.set("x", "%g" % (d.x + _sx + ox))
+            tg.set("y", "%g" % (d.y + _sy + oy))
         moved.append((ttl, d.x, d.y))
     want = set(P)
     miss = [t for t in want if t not in [m[0] for m in moved]]
@@ -600,6 +606,13 @@ if __name__ == "__main__":
     if "gapy" in opts:
         GAP_Y = float(opts["gapy"]) * GRID
         print("★ GAP_Y ← %.2f 格（%.0f 单位 ✓）" % (float(opts["gapy"]), GAP_Y))
+    if "shift" in opts:                        # ★★ 成组平移 ✓（2026-09-29 用户 ✓）
+        _grp, _dv = opts["shift"].split(":")
+        _dx, _dy = (float(v) for v in _dv.split(","))
+        for _t in _grp.split(","):
+            SHIFT[_t.strip()] = (_dx, _dy)
+        print("★ SHIFT ← `%s` 平移 (%g, %g) ✓（把功能块拉开 ✓ —— 用户原话："
+              "「我还把两块的距离拉大了，看起来更舒服」✓）" % (_grp, _dx, _dy))
     if "by-bb" in opts:                      # ★★ 按面包板排布 ✓（用户 2026-09-28 ✓）
         BY_BB = opts["by-bb"]
         print("★ BY_BB ← %s ✓（按**面包板**的行槽位 + 列序排元件 ✓）" % BY_BB)
