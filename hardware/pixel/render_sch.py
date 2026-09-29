@@ -265,11 +265,9 @@ for el in root.iter("instance"):
         if _gart:
             body_parts.append((ttl, "接地符号 ✓ 脚(%.1f,%.1f) ✓" % (_gpx, _gpy), _gart))
             # 本体盒（三根横线 + 竖杆的包围盒 ✓，sketch 坐标 ✓）—— 给“穿体/可读性”判据用 ✓
-            _g0 = (enum(g, "x"), enum(g, "y"))
-            PART_BOX[ttl] = (_gpx - 7.201 * 1.25 + 0.5 * 1.25,
-                             _gpy - 0.375 * 1.25,
-                             _gpx - 7.201 * 1.25 + 13.9 * 1.25,
-                             _gpy - 0.375 * 1.25 + 13.175 * 1.25)
+            # ★ 2026-09-30 ✓：口径**搬到 `sch_net.ground_box`** ✓（生成器画接地符号时判碰撞
+            #   要用**同一个盒子** ✓ —— 原来这一行只在本文件里 ✓ ⇒ 迟早两边对不上 ✗）。
+            PART_BOX[ttl] = sch_net.ground_box((enum(g, "x"), enum(g, "y")))
             for _qc in ((PART_BOX[ttl][0], PART_BOX[ttl][1]),
                         (PART_BOX[ttl][2], PART_BOX[ttl][3])):
                 ALL_PTS.append(_qc)

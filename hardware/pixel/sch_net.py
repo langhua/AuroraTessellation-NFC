@@ -297,6 +297,15 @@ def is_ground_symbol(module_id):
     return (module_id or "") in GROUND_SYMBOL_MODULES
 
 
+def is_ground_net(name):
+    """这个**网名**是不是“地” ✓（判据 = Fritzing 的 `LocalGrounds` ✓，与脚名同一套口径 ✓）
+
+    ★ 用途（2026-09-30 ✓ 用户定 ✓）：生成器把**地网**画成**接地符号** ✓（用户 2026-09-29 换的那套 ✓）
+      ⇒ “哪些网是地”**只有这一份**判据 ✓（`grounded_connectors` 也调它 ✓）。
+    """
+    return (name or "").strip().lower() in GROUND_PIN_NAMES
+
+
 # ★★ 接地符号的**脚** = 它 `<geometry>` 原点 **+ (9.001, 0.596)** sketch ✓（实测反推 ✓）
 #   ★ 它也在**自己的 svg 里**（`schematic/ground.svg` 的 `connector0pin` ✓）✗ —— `.fzz` 不带那份
 #     SVG ✗ ⇒ 拿不到就**反推** ✓（和网标签同一招 ✓：用**用户手画**的线端 ✓ = Fritzing 吸附后的真脚位 ✓）。
@@ -313,6 +322,15 @@ def ground_pin(geom):
     return (geom[0] + GROUND_PIN_DX, geom[1] + GROUND_PIN_DY)
 
 
+def ground_geom(pin_pt):
+    """**反解** ✓：要让**画出来的脚**落在 `pin_pt` 上，实例 `<geometry>` 该写多少 ✓
+
+    （= `ground_pin` 的逆 ✓；生成器用它 ✓ ⇒ “脚在线端上”是**画出来的**位置 ✓，
+      与 `label_geom` 同一个套路 ✓。）
+    """
+    return (pin_pt[0] - GROUND_PIN_DX, pin_pt[1] - GROUND_PIN_DY)
+
+
 # ★★ 接地符号的**图形** ✓（2026-09-30 ✓ 用户同意入库 ✓）—— 数据在 `_assets/ground_symbol.svg`
 #   （逐字取自 Fritzing 自己导出的 svg ✓ + `_assets/LICENSE-ground.txt` 记来源与许可 ✓）。
 #   ★ 内层 → sketch：**×1.25** ✓（内层 1 单位 = 1/72 in ✓）；**脚**在内层 `(7.201, 0.375)` ✓
@@ -321,6 +339,23 @@ def ground_pin(geom):
 GROUND_ART = ("_assets", "ground_symbol.svg")
 GROUND_ART_PIN = (7.201, 0.375)          # 内层脚位 ✓（见上 ✓）
 GROUND_ART_SCALE = 1.25                  # 内层 → sketch ✓
+
+# ★★ 接地符号**看得见的那块**（相对**脚** ✓，sketch 单位 ✓）—— **实测** ✓
+#   内层墨迹框（导出单位 ✓，相对那张图自己的脚 `(7.201, 0.375)` ✓）：
+#     x：`0.5` → `13.9` ✓ ｜ y：`0.375` → `13.175` ✓（= 竖杆 + 三根横线占的那块 ✓）
+#   ★ `render_sch.py` 原来**自己写了一份** ✗ ⇒ 2026-09-30 搬到这里 ✓
+#     —— 生成器画接地符号时也要用它判碰撞 ✓，各写一套就是等着两边对不上 ✗。
+GROUND_ART_BOX = ((0.5 - GROUND_ART_PIN[0]) * GROUND_ART_SCALE,        # −8.3763 ✓
+                  (0.0 - GROUND_ART_PIN[1]) * GROUND_ART_SCALE,        # −0.4688 ✓
+                  (13.9 - GROUND_ART_PIN[0]) * GROUND_ART_SCALE,       # +8.3738 ✓
+                  (13.175 - GROUND_ART_PIN[1]) * GROUND_ART_SCALE)     # +16.0000 ✓
+
+
+def ground_box(geom):
+    """接地符号的本体盒（**视图坐标** ✓，轴对齐 ✓）—— 生成器判碰撞 / 渲染器判穿体都调它 ✓"""
+    px, py = ground_pin(geom)
+    return (px + GROUND_ART_BOX[0], py + GROUND_ART_BOX[1],
+            px + GROUND_ART_BOX[2], py + GROUND_ART_BOX[3])
 _ground_cache = {}
 
 
@@ -374,7 +409,7 @@ def grounded_connectors(inst_module, module_conn_names, inst_conn_ids=None):
         if is_ground_symbol(mod):
             continue
         for cid, nm in (module_conn_names.get(mod) or {}).items():
-            if (nm or "").strip().lower() in GROUND_PIN_NAMES:
+            if is_ground_net(nm):
                 out.append((str(mi), cid))
     return sorted(set(out))
 
