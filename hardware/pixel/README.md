@@ -1222,6 +1222,113 @@ py -3.13 render_sch.py pixel-schematic-v30.fzz pixel-schematic-v30_preview.png
 **藏掉了** ✗ ⇒ 我拿**旧图**当新图看 ✗，一度以为圆点没去掉 ✗。露馅靠的是**文件时间戳对不上** ✓ ——
 与 `AGENTS.md`「过滤掉的东西会骗人 / 不许自证」同一条 ✓。
 
+### 第二十五手：**脚位模型修正** ✗✗ ＋ **接地符号** ＋ 用户手改版 ⇒ **v31**（2026-09-29 ✓ 用户定 ✓）
+
+**起因** ✓：用户手改了一版 `pixel-schematic-v30_byHand.fzz` 让我“检查” ✓ ——
+思路两处：**① 把两个 `GND` 网标签换成更常见的接地符号** ✓；**② 挪了 `RC` 标签的位置、去掉多余导线** ✓。
+
+#### ① 接地符号：**按名字把全图的地拉到一起** ✓（判定器原来不认它 ✗ = 假警 ✗）
+
+规则**在 Fritzing 源码里** ✓（逐条抄进 `sch_net.py` 的注释 ✓）：
+
+```cpp
+bool ConnectorItem::isGrounded() {          // src/connectors/connectoritem.cpp
+    return name == "gnd" || name == "vss" || name == "ground";   // 大小写不敏感
+}
+// src/items/symbolpaletteitem.cpp::busConnectorItems
+else if (bus->id().compare("groundbus", Qt::CaseInsensitive) == 0)  mitems = LocalGrounds;
+```
+
+件定义（嵌在 `Fritzing.exe` 里的 `resources/parts/core/ground.fzp` ✓，与草图里那条
+`path=":/resources/parts/core/ground.fzp"` 对得上 ✓）：`<connector id="connector0" name="GND">`
+＋ `<bus id="groundbus">` ✓。
+
+⇒ **接地符号不是“两个符号互连”** ✗ —— 它把**全图「脚名 ∈ {GND,VSS,GROUND}」的连接器**
+一把拉成一张网 ✓（`U1` 的 **`VSS`** ✓、`LED2` 的 **`GND`** ✓、以及**符号自己的脚** ✓）。
+★ 反过来说：**图里没有接地符号 ⇒ 什么也不合并** ✗（那些脚只是“名字叫 GND”而已 ✓）。
+★ 判据**只在 `sch_net.py` 一份** ✓（`grounded_connectors` / `ground_links` ✓，脚名从
+`.fzz` **自带的那份 `.fzp`** 里读 ✓ —— 草图里只有 `connectorId` ✗、看不到脚名 ✗）。
+⇒ 本图：合并 4 只脚（`LED2.connector1` ✓、`U1.connector3` ✓、两个符号自己的 ✓）⇒ **9 网全对** ✓✓。
+
+#### ② ✗✗ **脚位模型是错的**（错了整整一个旗标长 ≈ 3.4mm ✗）—— 这一手真正的病 ✓
+
+我一直以为标签的脚在**平端** `(0, 4.5)` ✗。Fritzing 自己生成标签 SVG 的源码
+（`NetLabel::makeSvg` ✓）写的是：
+
+```cpp
+double totalHeight = 300/divisor;   double arrowWidth = totalHeight / 2;      // 100 / 50
+double strokeWidth = 10/divisor;    double halfStrokeWidth = strokeWidth / 2; // 3.333 / 1.667
+if (goLeft)  pin = pin.arg(0).arg(0).arg(arrowWidth).arg(totalHeight);
+else         pin = pin.arg(totalWidth - arrowWidth - 0.1).arg(0).arg(arrowWidth).arg(totalHeight);
+```
+
+⇒ 脚 = **pin rect 的外缘** ✓，在**箭头尖端那一侧** ✓：
+`direction="right"`（默认 ✓）⇒ 局部 x = 旗标右缘 **+0.141**（sketch ✓）；`direction="left"` ⇒ 旗标左缘 **−0.150** ✓。
+
+**证据（两条独立）** ✓：
+- **手画的线**（Fritzing 存的是**吸附后**的真脚位 ✓ = 权威尺子 ✓）：
+  `v30_byHand` `RC`(180°) 旧模型差 **3.535 mm** ✗ ／ 新模型 **0.004 mm** ✓✓；
+  `v31_rcgnd_byHand` `RC`(90°) 旧 3.535 ✗ ／ 新 **0.004** ✓✓；
+  `v31_rcgnd_byHand` `RC`(0°) 旧 3.535 ✗ ／ 新 **0.258** ✓。
+- ⇒ **`pixel-schematic-v30.fzz` 里四个标签，在 Fritzing 里其实全没接上** ✗✗（线停在平端 ✓、
+  脚在尖端 ✓ = “看着接上、其实没接” ✓）—— 这也解释了用户为什么用接地符号换掉 `GND` 标签 ✓
+  （符号靠**名字**连通 ✓，根本不接线 ✓）。◎ 已复跑确认：`v30` 的 `(A)` = **4 处** ✗✗
+  （4 个标签全断 ✓）、`v29`（无标签 ✓）= **0 处** ✓。
+
+**并且**：`(A)` 那条判据的容差原来写死 `0.05` 单位 = **0.014 mm** ✗ ⇒ 把 Fritzing 吸附后
+仍带的零头（实测 **0.09~0.13 单位** = 0.03~0.04 mm ✓）全判成“没画到” ✗ ⇒ **假警**永远在叫 ✗
+⇒ 改成实测口径 `PIN_HIT_TOL = 0.5`（= 0.14 mm ✓，仍 ≪ 一根线宽 0.25 mm ✓）；
+**真断**那些差 **3.5~12 单位** ✓ —— 与零头**差两个量级** ✓，阈值很好定 ✓。
+
+★ **教训** ✓（第三次同一条 ✓）：这个错**躲过了当时所有自检** ✗ —— 因为 ② 量的是
+「线端 ↔ **我自己算的脚**」✓ = **自证** ✗（`AGENTS.md` §0 ⑦ ✓）。这次是靠**换一把不信我自己的尺子**
+（用户手画的线 ✓ + Fritzing 源码 ✓）才翻出来的 ✓。
+
+#### ③ v31 = 用户手改版 ＋ **只修那一处** ✓
+
+用户那版里 **3 处接头是准的** ✓✓（他自己画的 ✓：0.004 mm ✓），只剩**我生成的那一根**
+（`Wire90012777 → RC` ✗，差 3.50 mm ✗）⇒ **不动导线** ✓、改**标签**：
+把 `mi 90012781` 的 `geometry` 按**新模型**反解（`sch_net.label_geom` ✓）＋ 朝向 `270°→90°` ✓
+（90° 时旗标朝上 ✓，实测**不被任何线穿** ✓；270° 会横在 `DATA_IN` 上 ✗）⇒ 脚正好落回线端 ✓。
+
+```
+# 只读输入、另存输出；只改那一个实例的 schematicView 里的 geometry + m11..m32 ✓
+py -3.13 f:\git\_scratch\fix_label_geom.py pixel-schematic-v30_byHand.fzz pixel-schematic-v31.fzz \
+        90012781 39.1779 -9.0 90
+py -3.13 check_netlist.py pixel-schematic-v31.fzz      # ✓ 9 个网全对
+py -3.13 check_fake_wires.py pixel-schematic-v31.fzz   # (A)=0 (B)=0 ✅ 合格
+py -3.13 check_flags.py pixel-schematic-v31.fzz        # 被穿旗标 0/2 ✓✓
+py -3.13 render_sch.py pixel-schematic-v31.fzz pixel-schematic-v31_preview.png
+```
+
+| | v30（旧 ✗ 脚位模型） | **v31** |
+|---|---|---|
+| ① 网表 | 9 网全对 ✓ | 9 网全对 ✓ |
+| ② 假连线 (A)/(B) | **4 ✗** / 0 | **0** ✓ / 0 ✓ ⇒ ✅ 合格 ✓ |
+| ④ 被穿旗标 | —（同一批错 ✗） | **0 / 2** ✓✓ |
+| 导线 | 49 | 47 ✓（用户去掉 2 根 ✓） |
+| 十字交叉 | 11 | 11 ✓ |
+| 跨网擦身 | 4 ✗ | **0** ✓✓ |
+| 假接头 / 穿元件本体 / 可读性 | 0 / 0 / 0 ✓ | 0 / 0 / 0 ✓ |
+| 画布 | 105.8 × 92.5 mm | **104.1 × 86.1 mm** ✓（更紧凑 ✓） |
+
+<table>
+<tr>
+<td><a href="pixel-schematic-v30_preview.png"><img src="pixel-schematic-v30_preview.png" width="420"></a></td>
+<td><a href="pixel-schematic-v31_preview.png"><img src="pixel-schematic-v31_preview.png" width="420"></a></td>
+</tr>
+<tr>
+<td><b>v30</b> ✗ 旧（标签脚位错 ⇒ Fritzing 里四个标签全没接上 ✗）</td>
+<td><b>v31</b> ✓✓ <b>接地符号 + 脚位修正</b>（②✅ ④ 0/2 ✓；擦身 <b>0</b> ✓）</td>
+</tr>
+</table>
+
+⚠ **预览里两块接地符号是空的** ✗ —— `render_sch.py` 画不出它：它的 SVG 是 **core 库件** ✓
+（`:/resources/parts/core/ground.svg` ✓，嵌在 Fritzing app 里 ✓），`.fzz` **不带**它 ✗
+⇒ 渲染器只能**跳过** ✗（图上那两根孤零零的短线就是它俩的连线 ✓）。
+**不以我的预览为准** ✗ —— 请以 **Fritzing 里打开 `pixel-schematic-v31.fzz`** 为准 ✓
+（要我把那份 core SVG 抠出来入库、给渲染器补上也可以 ✓ —— 那要走 `svg/_assets/` + 许可说明 ✓）。
+
 （★ 下一手可选：`--label` 目前是“点名制” ✓，将来若要把**所有**跨模块网都自动贴 ✓，
 判据已经就位 ✓ —— `cut_at_module_boundary` 只要不按 `LABEL_NETS` 过滤即可 ✓；未动 ✗。）
 

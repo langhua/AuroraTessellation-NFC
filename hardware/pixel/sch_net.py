@@ -64,7 +64,35 @@ LABEL_FS = 6.0            # 字号（sketch ✓）= 导出 4.8 × 1.25 ✓
 LABEL_TEXT_X = 0.6        # 文字**左缘**（以实例 `geometry` 为原点 ✓）= 导出 0.48 ✓
 LABEL_BASELINE_Y = 6.6    # 文字**基线** = 导出 5.28 ✓
 LABEL_PLATE_H = 4.2       # 本体板高 = 0.7em ✓（由枢轴 y = 4.5 反推 ✓ = 2×(4.5 − 2.4) ✓）
-LABEL_PIN_DY = 4.5        # 引脚 = (0, 4.5) ✓（枢轴 y ✓ = 板的**半高线** ✓）
+LABEL_PIN_DY = 4.5        # 引脚在**半高线**上 ✓（枢轴 y ✓）—— 但**横坐标不在平端** ✗，见下 ✗✗
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ★★★ **脚到底在哪** ✓✗ —— 2026-09-29 修正 ✗✗（我错了**整整一个旗标长 ≈ 3.4mm** ✗）
+#
+# 证据 = Fritzing **自己生成标签 SVG 的源码** ✓（`src/items/symbolpaletteitem.cpp`
+#   `NetLabel::makeSvg` ✓；本机 exe 里跑的就是这份逻辑 ✓）：
+#     double totalHeight = 300/divisor;  double arrowWidth = totalHeight / 2;   // 100 / 50
+#     double strokeWidth = 10/divisor;   double halfStrokeWidth = strokeWidth / 2;  // 3.333 / 1.667
+#     if (goLeft)  pin = pin.arg(0).arg(0).arg(arrowWidth).arg(totalHeight);
+#     else         pin = pin.arg(totalWidth - arrowWidth - 0.1).arg(0).arg(arrowWidth).arg(totalHeight);
+#     // 旗标 polygon：goLeft ⇒ 尖点在**左** (halfStrokeWidth)；否则尖点在**右** (totalWidth − halfStrokeWidth)
+#   ⇒ 脚的局部 x = **pin rect 的外缘** ✓（靠箭头那侧 ✓）：
+#       · `direction="right"`（默认 ✓ = goLeft=false）：x = (W − 0.1) 单位
+#         = 旗标右缘 + (1.667 − 0.1) × 0.09 = **+0.141 sketch** ✓
+#       · `direction="left"`（goLeft=true）        ：x = 0 单位
+#         = 旗标左缘 − 1.667 × 0.09 = **−0.150 sketch** ✓
+#     （1 SVG 单位 = 1/1000 in ✓；1 sketch 单位 = 1/90 in ✓ ⇒ ×0.09 ✓）
+#
+# ★ 用**手画的线**验过 ✓✓（Fritzing 存的是**吸附后**的真脚位 ✓ ⇒ 手改版就是权威尺子 ✓）：
+#     `v30_byHand` `RC`(180°)   旧模型差 **3.535 mm** ✗ ｜ 新模型差 **0.004 mm** ✓✓
+#     `v31_rcgnd_byHand` `RC`(90°) 旧 3.535 ✗ ｜ 新 **0.004** ✓✓
+#     `v31_rcgnd_byHand` `RC`(0°)  旧 3.535 ✗ ｜ 新 **0.258** ✓
+#   ★★ 后果（必须记住 ✗）：按旧模型生成的 `pixel-schematic-v30.fzz` 里，**四个标签在 Fritzing 里
+#     全部是断的** ✗✗（线停在平端、脚在尖端 ✓ = “看着接上、其实没接” ✗）——
+#     而当时的自检（②）**量的是我自己的模型** ✗ ⇒ 它当然报 0 ✓✓ = “**自证**”那条教训又吃了一次 ✗。
+#     现在 ② 的真尺子是**手画数据 + 源码** ✓，不再是自己编的坐标 ✓。
+LABEL_PIN_GAP_R = (10.0 / 3 / 2 - 0.1) * 0.09     # = 0.141 ✓（指向右 ⇒ 脚在右 ✓）
+LABEL_PIN_GAP_L = (10.0 / 3 / 2) * 0.09           # = 0.150 ✓（指向左 ⇒ 脚在左 ✓）
 
 # ★ 四个朝向（**SVG 口径** ✓：`rotate(θ)` ⇒ `(a,b,c,d) = (cosθ, sinθ, −sinθ, cosθ)` ✓）
 #   —— 四个都在 Fritzing 自己的文件里出现过 ✓（identity / ±90° / 180° ✓）；
@@ -102,9 +130,18 @@ def pivot(text):
     return (LABEL_TEXT_X + plate_w(text) / 2.0, LABEL_PIN_DY)
 
 
-def pin_local():
-    """引脚（相对实例 `geometry` ✓）—— 在板的**半高线**上、板外左侧 ✓（实测 ✓）"""
-    return (0.0, LABEL_PIN_DY)
+def pin_local(text, go_left=False):
+    """引脚（相对实例 `geometry` ✓）—— 在**半高线**上、**箭头尖端那一侧** ✓
+
+    ★ 2026-09-29 修正 ✗✗：旧模型写“平端 `(0, 4.5)`”✗ —— 那是**错的** ✗，
+      差了整整一个旗标长（≈ 3.4mm ✗）⇒ 照它生成的线**碰不到脚** ✗。
+      现行口径 + 证据见上面那段 ✗✗（源码 `NetLabel::makeSvg` ✓ + 手画数据 ✓）。
+    """
+    L = flag_len(text)
+    x0 = LABEL_TEXT_X + FLAG_X0                   # 旗标左缘 ✓（= 0.15 ✓）
+    x1 = x0 + L                                   # 旗标右缘 ✓
+    return ((x0 - LABEL_PIN_GAP_L) if go_left else (x1 + LABEL_PIN_GAP_R),
+            LABEL_PIN_DY)
 
 
 def norm_m(m):
@@ -127,19 +164,20 @@ def view(geom, text, m, p):
     return (geom[0] + c[0] + q[0], geom[1] + c[1] + q[1])
 
 
-def label_geom(pin_pt, text, m):
+def label_geom(pin_pt, text, m, go_left=False):
     """**反解** ✓：要让**画出来的脚**落在 `pin_pt` 上，实例 `geometry` 该写多少 ✓
 
     （生成器用它 ✓ ⇒ "脚在线端上"是**画出来的**位置 ✓，不是我以为的位置 ✓。）
     """
     c = pivot(text)
-    q = mv(m, (0.0 - c[0], LABEL_PIN_DY - c[1]))
+    _p = pin_local(text, go_left)
+    q = mv(m, (_p[0] - c[0], _p[1] - c[1]))
     return (pin_pt[0] - c[0] - q[0], pin_pt[1] - c[1] - q[1])
 
 
-def label_pin(geom, text, m=IDENT):
+def label_pin(geom, text, m=IDENT, go_left=False):
     """**画出来的脚**（视图坐标 ✓）—— 判定器拿它跟导线端点对账 ✓"""
-    return view(geom, text, m, (0.0, LABEL_PIN_DY))
+    return view(geom, text, m, pin_local(text, go_left))
 
 
 def label_text_anchor(geom, text, m=IDENT):
@@ -222,6 +260,81 @@ def is_label_module(module_id):
     """这个 `moduleIdRef` 是不是**网标签**元件 ✓"""
     _m = (module_id or "").lower()
     return "netlabel" in _m or "net label" in _m
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# **接地符号**（core `GroundModuleID` ✓）—— 它凭什么把网连起来 ✓（2026-09-29 ✓ 用户问 ✓）
+#
+# ★★ 证据**在 Fritzing 源码 / 它自己的件定义里** ✓（不是猜的 ✗）：
+#   · 件定义（嵌在 `…\Fritzing\Fritzing.exe` 里的 `resources/parts/core/ground.fzp` ✓，
+#     与草图里那条 `path=":/resources/parts/core/ground.fzp"` **对得上** ✓）：
+#       <connector type="male" id="connector0" name="GND"> … <erc etype="ground">
+#       <buses><bus id="groundbus"><nodeMember connectorId="connector0"/></bus></buses>
+#   · 取等电位（`src/items/symbolpaletteitem.cpp::busConnectorItems` ✓）：
+#       if (m_isNetLabel)                    mitems = LocalNetLabels[ key(getLabel()) ]
+#       else if (bus->id() == "groundbus")   mitems = **LocalGrounds**      ← ★ 就是它
+#       else                                 mitems = LocalVoltages[ voltage ]
+#   · 谁算 `LocalGrounds`（`src/connectors/connectoritem.cpp::isGrounded` ✓）：
+#       return name == "gnd" || name == "vss" || name == "ground";   // 大小写不敏感 ✓
+#
+# ⇒ ★★ **规则（反直觉 ✓，可这就是 Fritzing 干的 ✓）**：
+#     接地符号**不是**“两个符号互相连” ✗ —— 它是把**全图所有「脚名 ∈ {GND,VSS,GROUND}」的
+#     连接器**一把拉成同一张网 ✓（`LocalGrounds` ✓）。
+#     ⇒ `U1` 的 **`VSS`** 脚 ✓、`LED2` 的 **`GND`** 脚 ✓ 都**自动**与接地符号同网 ✓ ——
+#       哪怕图上**一根线都没连到它们** ✓（用户实测 ✓：把 GND 标签换成接地符号，照样一张 GND 网 ✓）。
+#   ★ 反过来：**图里没有接地符号 ⇒ 什么也不合并** ✗ —— 那些脚只是“名字叫 GND”而已 ✓，
+#     得有人（符号 ✓ / 网标签 ✓ / 导线 ✓）把它们拉起来才算同网 ✓。
+#   ★ 判据**只在 `sch_net.py` 一份** ✓（`check_netlist.py` / `render_sch.py` 都调它 ✓，
+#     各写一套就是等着两边对不上 ✗）。
+GROUND_SYMBOL_MODULES = ("GroundModuleID",)     # ★ 只认**原理图接地符号** ✓
+#   ✗ 别写成 `"ground" in moduleId` ✗ —— `GroundPlaneModuleID`（**铜箔地平面** ✓）也含这个词 ✗，
+#     它不是原理图符号、也没有 `groundbus` ✗ ⇒ 混进来就是**假合并** ✗（真做 PCB 时立刻踩 ✗）。
+GROUND_PIN_NAMES = ("gnd", "vss", "ground")     # 实测口径 ✓（大小写不敏感 ✓）
+
+
+def is_ground_symbol(module_id):
+    """这个 `moduleIdRef` 是不是**接地符号** ✓（core `GroundModuleID` ✓）"""
+    return (module_id or "") in GROUND_SYMBOL_MODULES
+
+
+def grounded_connectors(inst_module, module_conn_names, inst_conn_ids=None):
+    """按 Fritzing 规则**算作接地**的那些连接器 ✓ ⇒ `[(modelIndex, connectorId), …]`
+
+    · `inst_module`：`{modelIndex: moduleIdRef}` ✓
+    · `module_conn_names`：`{moduleIdRef: {connectorId: 脚名}}` ✓ —— **从 `.fzz` 自带的那份
+      `.fzp` 里读** ✓（草图里只写 `connectorId="connector20"` ✗，**看不到脚名** ✗）
+    · `inst_conn_ids`：`{modelIndex: [connectorId, …]}` ✓（**可省** ✓）
+    ★★ **接地符号自己的脚也算接地** ✓ —— 而且它**不能靠 `module_conn_names` 拿到** ✗：
+      `GroundModuleID` 是**嵌在 app 里的 core 件** ✗（`path=":/resources/parts/core/ground.fzp"` ✓）
+      ⇒ **`.fzz` 里根本没有它的 `.fzp`** ✗ ⇒ 少了这一条，两个接地符号各自只拉动自己那半 ✗
+      ⇒ `GND` 照样被拆成 2 段 ✗（2026-09-29 实测撞上 ✓：那时我还以为规则没生效 ✗）。
+      依据：它的连接器名就是 **`GND`** ✓（core 件定义原话 ✓）⇒ 它自己也在 `LocalGrounds` 里 ✓。
+    ★ **图里没有接地符号 ⇒ 返回空** ✗（没人把它们拉成一张网 ✓）。
+    """
+    sym = sorted(mi for mi, m in inst_module.items() if is_ground_symbol(m))
+    if not sym:
+        return []
+    out = []
+    for mi in sym:                                  # ★ 符号自己的脚 ✓（见上 ✗✗）
+        for cid in ((inst_conn_ids or {}).get(mi) or ["connector0"]):
+            out.append((str(mi), cid))
+    for mi, mod in inst_module.items():
+        if is_ground_symbol(mod):
+            continue
+        for cid, nm in (module_conn_names.get(mod) or {}).items():
+            if (nm or "").strip().lower() in GROUND_PIN_NAMES:
+                out.append((str(mi), cid))
+    return sorted(set(out))
+
+
+def ground_links(inst_module, module_conn_names, inst_conn_ids=None):
+    """接地符号带来的**额外连通** ✓ ⇒ `[((mi, cid), (mi, cid)), …]`（喂并查集 ✓）
+
+    （Fritzing 把它们并成一张网 ✓ ⇒ 这里给出“把它们并起来”的那些边 ✓；没有符号 ⇒ 空 ✓。）
+    """
+    g = grounded_connectors(inst_module, module_conn_names, inst_conn_ids)
+    return [(g[0], g[i]) for i in range(1, len(g))]
+
 
 
 def net_name(module_id, title, label=None):

@@ -90,6 +90,23 @@ def sch_connector_ids(inst):
 z = zipfile.ZipFile(sys.argv[1])
 root = ET.fromstring(z.read([n for n in z.namelist() if n.endswith(".fz")][0]))
 
+# ★★ **脚名**只能从 `.fzz` **自带的那份 `.fzp`** 里读 ✓ —— 草图里只写 `connectorId="connector20"` ✗
+#   （实例块里**没有**脚名 ✗）⇒ 要判“这只脚是不是 VSS/GND”就必须看件定义 ✓。
+#   ★ 这条只为**接地符号规则**服务 ✓（`sch_net.grounded_connectors` ✓，2026-09-29 ✓）。
+mod_conn_names = {}
+for _n in z.namelist():
+    if not _n.endswith(".fzp"):
+        continue
+    try:
+        _t = ET.fromstring(z.read(_n))
+    except ET.ParseError:
+        continue
+    _mm = _t.get("moduleId") or (_t.findtext("moduleId") or "")
+    if not _mm:
+        continue
+    mod_conn_names[_mm] = {_c.get("id"): (_c.get("name") or "")
+                           for _c in _t.iter("connector") if _c.get("id")}
+
 title, mid, edges, cids = {}, {}, {}, {}
 for e in root.iter("instance"):
     mi = e.get("modelIndex")
@@ -201,11 +218,31 @@ print("网标签：%d 个网名 / %d 个实例 ⇒ **同名合并 %d 对** ✓�
          "、".join("%s×%d" % (k, len(v)) for k, v in sorted(_lb.items())) or "（本图没有网标签 ✓）"))
 
 
+# ★★★ 2026-09-29 ✓ **接地符号**（core `GroundModuleID` ✓）—— 用户当天把 `GND` 网标签换成
+#   接地符号后让我“检查” ✓，本判定器当场报「`GND` 被拆成 2 段」✗ ⇒ 查下去发现是**判定器缺规则** ✓：
+#   ★ 规则**不是**“两个符号互连” ✗ —— 接地符号把**全图「脚名 ∈ {GND,VSS,GROUND}」的连接器**
+#     一把拉成一张网 ✓（证据在 Fritzing 源码里 ✓，逐条抄在 `sch_net.py` 那段注释 ✓）。
+#   ⇒ 本图：`U1.connector3`（**VSS** ✓）与 `LED2.connector1`（**GND** ✓）被拉进来 ✓，
+#     而它俩各自所在的那两段正好就是被拆的两段 ✓ ⇒ 一合，`GND` 就是**一张网** ✓✓。
+_gl = sch_net.ground_links(mid, mod_conn_names, cids)
+for _a, _b in _gl:
+    union(_a, _b)
+_g1 = sch_net.grounded_connectors(mid, mod_conn_names, cids)
+print("接地符号：%s ⇒ 按 Fritzing 规则把「**脚名 ∈ {GND,VSS,GROUND}**」的 **%d 只脚**"
+      "并成一张网 ✓（合并 %d 对 ✓）｜%s"
+      % ("有" if _g1 else "无", len(_g1), len(_gl),
+         "、".join("%s.%s" % (title.get(mi, mi), cid) for mi, cid in _g1) or
+         "（没有符号 ⇒ 不合并 ✓）"))
+# ★ 接地符号跟网标签一样是**桥** ✓、**不是电气成员** ✗ ⇒ 对照 `EXPECT` 时不计入 ✓
+#   （它的脚本来就“只为把别人拉起来”而存在 ✓；算成成员就会报“多了 Ground1.connector0” ✗ = 假报 ✗）。
+_GNDT = {title[_mi] for _mi in title if sch_net.is_ground_symbol(mid[_mi])}
+
+
 # ★ 网标签是**桥** ✓，**不是电气成员** ✗ ⇒ 对照 `EXPECT` 时**不计入** ✓
 #   （它的作用就是“同名即连通” ✓；把它当成员会报“多了 GND.connector0” ✗ = 假报 ✗）。
 def _ismem(_t):
-    """这个脚是**电气成员**吗 ✓ —— 网标签**不算成员** ✓（它是**桥** ✓：同名即连通 ✓）"""
-    return _t not in _LBLT
+    """这个脚是**电气成员**吗 ✓ —— 网标签 / 接地符号**不算成员** ✓（它们是**桥** ✓）"""
+    return _t not in _LBLT and _t not in _GNDT
 
 groups = {}
 for mi in title:

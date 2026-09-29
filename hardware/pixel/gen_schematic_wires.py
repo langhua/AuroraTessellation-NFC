@@ -2777,7 +2777,7 @@ def build_label(net, pin_pt, mi, direction="right", rot=0):
       `transform = [R | (I−R)·C]` ✓（Fritzing 自己就是这么写的 ✓ 见 `sch_net.canonical_d` ✓）
     """
     _m = sch_net.MATRIX[rot]
-    gx, gy = sch_net.label_geom(pin_pt, net, _m)
+    gx, gy = sch_net.label_geom(pin_pt, net, _m, go_left=(direction == "left"))
     _d = sch_net.canonical_d(net, _m)
     _tf = ('m11="%s" m12="%s" m13="0" m21="%s" m22="%s" m23="0" '
            'm31="%s" m32="%s" m33="1"'

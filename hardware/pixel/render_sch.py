@@ -191,7 +191,12 @@ for el in root.iter("instance"):
                _tf.get("m21", "0"), _tf.get("m22", "1"))
               if _tf is not None else ("1", "0", "0", "1"))
         _bx = sch_net.label_box(_geom, _lbl, _m)             # ★ 本体框：**一处实现** ✓
-        _px, _py = sch_net.label_pin(_geom, _lbl, _m)        # ★ **画出来的**脚 ✓（不是我以为的 ✓）
+        # ★★ 2026-09-29 修 ✗✗：**脚**要用源码口径（**锅头尖端那一侧** ✓）——
+        #   ✗ 旧模型写“平端”✗ ⇒ 差整整一个旗标长（≈3.4mm ✗）⇒ ② 拿它当尺子时
+        #     “线到底接没接上”根本量不准 ✗（详见 `sch_net.py` 那段 ✗✗）。
+        _dir = next((_p.get("value") for _p in el.iter("property")
+                     if _p.get("name") == "direction"), "right")
+        _px, _py = sch_net.label_pin(_geom, _lbl, _m, go_left=(_dir == "left"))
         _deg = sch_net.rot_deg(_m)
         _cx, _cy = sch_net.pivot(_lbl)                       # 枢轴（局部 ✓）
         # ★★ 2026-09-29 ✓ **外框（箭头形旗标）** ✓ —— 用户指出我漏了它 ✓（实测见 `sch_net.label_flag` ✓）：
@@ -387,14 +392,22 @@ for _el in root.iter("instance"):
     FZ_EDGE[_mi] = _fz_edges(_el)
 
 # 线**画**在哪只脚上：端点 + 线身（分两类 ✓）
+# ★★ `PIN_HIT_TOL`：线端算“落在脚上”的容差 ✓ —— **实测定的** ✓（不是拍的 ✗，2026-09-29 ✓）：
+#   Fritzing **吸附过的**坐标存进文件后仍带 **0.09~0.13 单位（0.03~0.04mm ✓）** 的零头 ✓
+#   —— 实测 `v30_byHand` / `v31_rcgnd_byHand` 里 **4 处手画接头全是 0.09~0.13** ✓✓，
+#     而**真断**的那些差 **3.5~12 单位**（0.99~3.5mm ✓）⇒ 两边**差两个量级** ✓ ⇒ 阈值很好定 ✓。
+#   ✗ 原来这里写死 `0.05`（= 0.014mm ✗）⇒ 把**手画的**接头全判成“没画到” ✗✗ ⇒
+#     `(A)` 永远在报假警 ✓、而真正 3.5mm 那种错反而混在噪声里看不见 ✗。
+#   （线宽 0.25mm ✓ ⇒ 0.14mm 的容差远小于一根线宽 ✓，不会把“真断”吃进来 ✓。）
+PIN_HIT_TOL = 0.5
 geom_end, geom_body = [], []
 for ttl_w, a, b, _c, _w in wires:
-    pa = [(t, c) for (t, c, q) in PIN_SK if math.dist(q, a) <= 0.05]
-    pb = [(t, c) for (t, c, q) in PIN_SK if math.dist(q, b) <= 0.05]
+    pa = [(t, c) for (t, c, q) in PIN_SK if math.dist(q, a) <= PIN_HIT_TOL]
+    pb = [(t, c) for (t, c, q) in PIN_SK if math.dist(q, b) <= PIN_HIT_TOL]
     geom_end.append((ttl_w, a, b, pa, pb))
     if len(a) and len(b):                      # 线身：**中段**正好穿过某只脚（端点不算 ✓）
         for (t3, c3, q3) in PIN_SK:
-            if math.dist(q3, a) <= 0.05 or math.dist(q3, b) <= 0.05:
+            if (math.dist(q3, a) <= PIN_HIT_TOL or math.dist(q3, b) <= PIN_HIT_TOL):
                 continue
             d3 = _p2seg(q3, a, b)
             if d3 <= 0.05:
@@ -450,7 +463,7 @@ for ttl_w, a, b, pa, pb in geom_end:
         if (t5, c5) in tall:
             continue
         q5 = [q[2] for q in PIN_SK if q[0] == t5 and q[1] == c5]
-        ok_chain = any(math.dist(q5[0], e) <= 0.05
+        ok_chain = any(math.dist(q5[0], e) <= PIN_HIT_TOL
                        for tw in declared
                        for _own2, tg2 in declared[tw].items()
                        if (t5, c5) in tg2
