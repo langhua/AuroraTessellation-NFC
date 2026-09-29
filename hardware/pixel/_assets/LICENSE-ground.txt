@@ -1,0 +1,26 @@
+接地符号图形（Fritzing core 件）—— 来源与许可
+================================================
+
+来源
+----
+· 上游：Fritzing **core 元件** `GroundModuleID`
+    fzp：`resources/parts/core/ground.fzp`（本机安装里嵌在 `Fritzing.exe` 内）
+    svg：`resources/parts/core/schematic/ground.svg`（同上，运行时形态）
+    连接器：`<connector type="male" id="connector0" name="GND">` + `<bus id="groundbus">`
+· 取法（2026-09-30）：由**用户在自己的 Fritzing 1.0.3b 里导出**的
+    `hardware/pixel/pixel-schematic-v32_图示.svg` 中，逐字摘出 `GroundModuleID`
+    两个实例的绘制内容 —— 两者**完全一致**，故本目录只保存一份
+    （`ground_symbol.svg`，仅保留 `<g id="schematic">` 的图形，坐标口径见文件头注释）。
+
+许可
+----
+· Fritzing 本体：**GPL-3.0-or-later**（`Fritzing.exe` 头部版权声明即写 GPL v3）。
+· Fritzing 元件库 `fritzing/fritzing-parts`：**CC-BY-SA 3.0**。
+· 本目录这份图形属于上述上游产物 ⇒ **再分发请遵守上游许可**
+  （保留署名、以相同方式共享；GPL 场景下随本项目一并提供源码即可）。
+
+本仓库内的用途
+--------------
+仅供 `hardware/pixel/render_sch.py` **复现 Fritzing 的观感**（本项目的预览图 /
+几何检查用），不作为 Fritzing 元件再分发。若与你的许可策略冲突，删掉本目录并让
+渲染器跳过接地符号即可（其余判据不受影响；`sch_net.ground_pin` 的脚位是**独立标定**的）。

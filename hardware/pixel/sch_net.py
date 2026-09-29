@@ -313,6 +313,42 @@ def ground_pin(geom):
     return (geom[0] + GROUND_PIN_DX, geom[1] + GROUND_PIN_DY)
 
 
+# ★★ 接地符号的**图形** ✓（2026-09-30 ✓ 用户同意入库 ✓）—— 数据在 `_assets/ground_symbol.svg`
+#   （逐字取自 Fritzing 自己导出的 svg ✓ + `_assets/LICENSE-ground.txt` 记来源与许可 ✓）。
+#   ★ 内层 → sketch：**×1.25** ✓（内层 1 单位 = 1/72 in ✓）；**脚**在内层 `(7.201, 0.375)` ✓
+#     ⇒ 摆法 = `translate(几何 + (9.001, 0.596)) · scale(1.25) · translate(-7.201, -0.375)`
+#     ⇒ 脚正好落在 `ground_pin()` 上 ✓（两处口径**同一份** ✓）。
+GROUND_ART = ("_assets", "ground_symbol.svg")
+GROUND_ART_PIN = (7.201, 0.375)          # 内层脚位 ✓（见上 ✓）
+GROUND_ART_SCALE = 1.25                  # 内层 → sketch ✓
+_ground_cache = {}
+
+
+def ground_art(geom):
+    """接地符号的**图形**（已摆好位 ✓ 视图坐标 ✓）—— 直接塞进渲染器的 `body` ✓
+
+    ★ 图形从 `_assets/ground_symbol.svg` 读 ✓（只读一次、缓存 ✓）；
+      ✗ 缺文件时**返回空串**并让调用方如实报出 ✗（不许静默画个假的 ✗）。
+    """
+    import os
+    if not _ground_cache:
+        p = os.path.join(os.path.dirname(os.path.abspath(__file__)), *GROUND_ART)
+        try:
+            _txt = open(p, encoding="utf-8").read()
+        except OSError:
+            _ground_cache["inner"] = None
+        else:
+            _i = _txt.find("<g id=\"schematic\"")
+            _j = _txt.rfind("</g>")
+            _ground_cache["inner"] = _txt[_i:_j + 4] if (_i >= 0 and _j > _i) else None
+    inner = _ground_cache["inner"]
+    if not inner:
+        return ""
+    px, py = ground_pin(geom)
+    return ('<g transform="translate(%.4f %.4f) scale(%.6f) translate(%.3f %.3f)">%s</g>'
+            % (px, py, GROUND_ART_SCALE, -GROUND_ART_PIN[0], -GROUND_ART_PIN[1], inner))
+
+
 def grounded_connectors(inst_module, module_conn_names, inst_conn_ids=None):
     """按 Fritzing 规则**算作接地**的那些连接器 ✓ ⇒ `[(modelIndex, connectorId), …]`
 

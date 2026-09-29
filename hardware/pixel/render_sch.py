@@ -259,8 +259,23 @@ for el in root.iter("instance"):
         _gpx, _gpy = sch_net.ground_pin((enum(g, "x"), enum(g, "y")))
         PIN_SK.append((ttl, "connector0", (_gpx, _gpy)))
         ALL_PTS.append((_gpx, _gpy))
-        skipped.append((ttl, "**接地符号：图形在 Fritzing app 里** ✗（core 件 ✓）⇒ 暂不画 ✓；"
-                             "**脚位已知 ✓ 已登进 `PIN_SK` ✓**"))
+        # ★★ 2026-09-30 ✓ **图形入库了** ✓（用户导出 → 逐字摘出 ✓ 见 `_assets/` ✓）
+        #   ⇒ 照 `sch_net.ground_art` 摆好位、直接画 ✓（脚位与图形**同一份口径** ✓）。
+        _gart = sch_net.ground_art((enum(g, "x"), enum(g, "y")))
+        if _gart:
+            body_parts.append((ttl, "接地符号 ✓ 脚(%.1f,%.1f) ✓" % (_gpx, _gpy), _gart))
+            # 本体盒（三根横线 + 竖杆的包围盒 ✓，sketch 坐标 ✓）—— 给“穿体/可读性”判据用 ✓
+            _g0 = (enum(g, "x"), enum(g, "y"))
+            PART_BOX[ttl] = (_gpx - 7.201 * 1.25 + 0.5 * 1.25,
+                             _gpy - 0.375 * 1.25,
+                             _gpx - 7.201 * 1.25 + 13.9 * 1.25,
+                             _gpy - 0.375 * 1.25 + 13.175 * 1.25)
+            for _qc in ((PART_BOX[ttl][0], PART_BOX[ttl][1]),
+                        (PART_BOX[ttl][2], PART_BOX[ttl][3])):
+                ALL_PTS.append(_qc)
+        else:
+            skipped.append((ttl, "**接地符号：图形文件没读到** ✗（`_assets/ground_symbol.svg` ✓）"
+                                 "⇒ 只登脚位、不画 ✓（如实报出 ✓）"))
         continue
     fzp = (el.get("path") or "").replace("/", os.sep)
     if not os.path.isfile(fzp):
