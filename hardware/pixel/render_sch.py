@@ -753,20 +753,12 @@ def _hits_box(p, q, box, infl=1.0, need=4):
       ⇒ 导线**从元件旁边过**、离框 0.28mm 也会被算成"穿过" ✗（假警报 ✗，而且会让
       "改进了没有"这个对比失真 ✗）⇒ 现在要求**至少 4 个采样点**落在**内缩 0.5 单位**
       的框里 ✓（≈ 进到里面 0.14mm 以上 ✓）。
+    ★★ 2026-09-30 ✓ **实现搬到 `sch_geom.hits_box`** ✓（＝全仓唯一实现 ✗✓）——
+      理由 ✓：`snap_rails` 也要拿它当“摆完复验”的闸门 ✓，而它当时**自己偷偷写了一份**
+      （盒子缩 2 单位 ✗、认 ≥3 个采样点 ✗）⇒ **两把尺子** ✗ ⇒ 好候选被更严的那把误否决 ✗。
+      这里改成**转发** ✓ ⇒ 渲染器的行为**一字不变** ✓（同一份代码 ✓）。
     """
-    x0, y0, x1, y1 = box[0] + 0.5, box[1] + 0.5, box[2] - 0.5, box[3] - 0.5
-    if x0 >= x1 or y0 >= y1:
-        x0, y0, x1, y1 = box
-    n = max(2, int(max(abs(q[0] - p[0]), abs(q[1] - p[1]))) + 1)
-    hit = 0
-    for i in range(n + 1):
-        t = i / n
-        x, y = p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t
-        if x0 <= x <= x1 and y0 <= y <= y1:
-            hit += 1
-            if hit >= need:
-                return True
-    return False
+    return SG.hits_box(p, q, box, need=need)
 
 
 nb = 0

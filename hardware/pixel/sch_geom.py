@@ -85,6 +85,31 @@ def seg_hits_box(a, b, box, eps=0.0):
     return False
 
 
+def hits_box(p, q, box, need=4, inset=0.5):
+    r"""段 p→q 是否**真的**穿进 box ✓（★ **擦边不算** ✗）—— ★ **全仓唯一实现** ✓
+
+    ★ 口径**逐字搬自** `render_sch.py` 的 `_hits_box` ✓（2026-09-30 ✓ 抽成共用 ✓，
+      “一个判据一份实现” ✗✓）：以前 `snap_rails` **自己偷偷写了一份** ✗
+      （盒子缩 2 单位 ✗、认 ≥3 个采样点 ✗）⇒ **两把尺子** ✗ ⇒ 好候选被更严的那把误否决 ✗。
+    ★ 为什么要“擦边不算” ✓（2026-09-27 ✓）：原来**有一个采样点在框里**就算 ✗
+      ⇒ 导线**从元件旁边过**（离框 0.28mm ✓）也被算成“穿过” ✗（假警报 ✗）⇒
+      现在要求**至少 `need` 个采样点**落在**内缩 `inset`** 的框里 ✓（≈ 进到里面 0.14mm 以上 ✓）。
+    """
+    x0, y0, x1, y1 = box[0] + inset, box[1] + inset, box[2] - inset, box[3] - inset
+    if x0 >= x1 or y0 >= y1:
+        x0, y0, x1, y1 = box
+    n = max(2, int(max(abs(q[0] - p[0]), abs(q[1] - p[1]))) + 1)
+    hit = 0
+    for i in range(n + 1):
+        t = i / n
+        x, y = p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t
+        if x0 <= x <= x1 and y0 <= y <= y1:
+            hit += 1
+            if hit >= need:
+                return True
+    return False
+
+
 def p2seg(p, a, b):
     """点 p 到线段 a→b 的**最短距离** ✓（含两端 ✓）—— ★ **全仓唯一实现** ✓
     （2026-09-28 ✓ 从 `render_sch.py` 的 `_p2seg` **逐字搬来** ✓：可读性判据 ✓、

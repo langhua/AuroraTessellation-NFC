@@ -1548,6 +1548,27 @@ def main(argv):
              fit["y"][0], fit["y"][1], fit["y"][2]))
 
     chx, chy = set(), set()
+    # ★★★ 2026-09-30 ✓ `--snaprails=<网>`：**骑轨件在“布线之前”就先摆到轨上** ✓（结构性 ✓）
+    #   顺序是关键 ✗✓：**先用“其它件”的包围盒定轨 ✓ → 再把骑轨件摆上去 ✓** ——
+    #   ✗ 反过来的话（先摆件再算轨 ✓）**轨会跟着它跑** ✗ ⇒ 脚永远追不上轨 ✗
+    #     （实测总长 1971.3 ✗，比不摆还差 ✗）；
+    #   ✗ 而“收尾再挪”（`snap_rails` ✓）会撞上另一个毛病 ✓：**轨留着“为旧脚位延伸出来的”那一段** ✗
+    #     ⇒ 件一挪，那一段就从它的新身体里穿过去 ✗（实测当场复验不过 ✓）。
+    HUG_UBOX = None
+    if RAILS and SNAP_RAILS:
+        _hug = rail_huggers(insts, SNAP_RAILS)
+        if _hug:
+            _hugset = {q for q, _pl, _d in _hug}
+            _rest = [d["box"] for t, d in insts.items()
+                     if t not in _hugset and d.get("box")
+                     and "breadboard" not in t.lower()]
+            if _rest:
+                HUG_UBOX = (min(b[0] for b in _rest), min(b[1] for b in _rest),
+                            max(b[2] for b in _rest), max(b[3] for b in _rest))
+                print("   ★ 骑轨预摆位 ✓：轨按**其它件**的包围盒锚定（y %.1f…%.1f ✓；"
+                      "骑轨件 %s ✓ **不算进这个盒子** ✗ ⇒ 摆上去不会把轨带跑 ✓）"
+                      % (HUG_UBOX[1], HUG_UBOX[3], ", ".join(sorted(_hugset))))
+                rail_hug_place(insts, _hug, rail_y_map(HUG_UBOX))
     # ★★ **干净通道** ✓：只收“元件边 ± `CH_OFFS`” ✓ —— **不放任何引脚坐标** ✗
     #   ⇒ 出脚组合（`esc_cands` ✓）只准用干净通道 ✓；直连 / L 形 / 45° 仍用 `chx/chy` ✓
     #     （它们“进脚”那一段本来就必须落在引脚行列上 ✓ —— 那是连接点 ✓）。
@@ -1633,16 +1654,18 @@ def main(argv):
                                          for t, b in sorted(boxes.items())))
 
     # ★★ 电源轨的 y ✓（`--rails` ✓，2026-09-28 ✓ 用户提的架构 ✓）—— 全部在包围盒**之外** ✓
+    #   ★ 2026-09-30 ✓ 公式搬进 `rail_y_map()` ✓（**唯一实现** ✓）：骑轨预摆位要用**同一条** ✓
+    #     而且**锚在“其它件”的包围盒**上 ✓（`HUG_UBOX` ✓）—— 骑轨件不算进这个盒子 ✗，
+    #     否则它一往上摆、盒子就往上长、轨又跑远 ✗（实测否掉 ✓）。
     RAIL_Y = {}
     if RAILS and UBOX is not None:
-        _yt_in = UBOX[1] - RAIL_MARGIN          # 上侧**内**轨（5V ✓，支线短 ✓）
-        _yt_out = _yt_in - RAIL_GAP             # 上侧**外**轨（GND ✓）
-        _yb_in = UBOX[3] + RAIL_MARGIN          # 下侧内轨（5V ✓）
-        _yb_out = _yb_in + RAIL_GAP             # 下侧外轨（GND ✓）
-        RAIL_Y = {"5V": [_yt_in, _yb_in], "GND": [_yt_out, _yb_out]}
+        _ub = HUG_UBOX or UBOX
+        RAIL_Y = rail_y_map(_ub)
         print("电源轨 ✓：上 GND y=%.1f / 5V y=%.1f ｜ 下 5V y=%.1f / GND y=%.1f ✓"
-              "（零件包围盒 y %.1f…%.1f ✓）"
-              % (_yt_out, _yt_in, _yb_in, _yb_out, UBOX[1], UBOX[3]))
+              "（锚定盒 y %.1f…%.1f ✓%s）"
+              % (RAIL_Y["GND"][0], RAIL_Y["5V"][0], RAIL_Y["5V"][1], RAIL_Y["GND"][1],
+                 _ub[1], _ub[3],
+                 "；**锚在“其它件”上** ✓" if HUG_UBOX else ""))
 
     # ★★ 空地走廊 ✓（`--freecorr` ✓，2026-09-28 ✓ **换机制** ✓）—— 走廊位置由**空档中央**定 ✓
     #   ① 元件盒在各轴上的投影 ⇒ ② 空档（gap）✓ ⇒ ③ 每个空档里按 `(i+1)/(k+1)` 分位放走廊 ✓
@@ -2110,7 +2133,33 @@ def main(argv):
             _Lfall = None                    # ★ 2026-09-28 ✓：「自己竖一趟」的兜底候选 ✓
             if rail_ys and pr["rb"] is None:
                 _n = PIN_N_BY_XY.get((round(a[0], 3), round(a[1], 3)), (0.0, 0.0))
-                if abs(_n[0]) > 0.5 and abs(_n[1]) < 1e-6:      # 法线**水平** ⇒ 能"横向出脚" ✓
+                # ★★★ 2026-09-30 ✓ **竖直法线的脚也要允许“先横着出脚”** ✗✓（实测踩的 ✓）：
+                #   ✗ 原来只给**水平法线**开这条路 ✗ ⇒ 竖直法线的脚（电容 / 电阻 ✓）只能
+                #     “**直上到轨**” ✗ ⇒ 而两只脚之间**必然夹着一条轨** ✗（脚距 27.0 vs 轨距 14.4
+                #     ⇒ 躲不开 ✓）⇒ 轨就得**伸进身体的 x 范围**才能接上 ✗ ⇒ 实测
+                #     「轨从 `C2` 身上穿过去 **3.95mm**」✗✗（渲染器报的 ✓）。
+                #   ✓ 用户手改版正是**先横着出脚、再竖着到轨** ✓（`C2`：`(270,-45)→(251,-45.2)
+                #     →(237.4,-57.6)` ✓）⇒ 竖着下去那一段落在身体**外面** ✓ ⇒ 轨**不必进屋** ✓。
+                #   ⇒ 这里只放开**形状**（“出脚”那一段横着走 ✓），**合格条件一条不动** ✗：
+                #     不穿体 ✓ / 不压别人的脚 ✓ / 不与已布线重叠 ✓ / **贴脚 0** ✓；
+                #     全不合格 ⇒ 照旧**退回通用路由** ✓（绝不会比原来差 ✓）。
+                #   ★ 判据仍要求**法线已知**（≠(0,0) ✓）⇒ 不知道法线的脚**不新增候选** ✗。
+                # ★★★ 2026-09-30 ✓ **但只“按需”放开** ✗✓（先全局放开试过 ✓ ⇒ 实测**基线变差** ✗）：
+                #   全局放开 ⇒ 基线（不带 `--snaprails` ✓）的**十字交叉 8 → 10** ✗
+                #   （长度倒是省 9.2 ✓，可**交叉数是头号指标** ✓、用户的判据是“看着简单” ✓）
+                #   ⇒ 收回 ✓。**触发条件**（能说清为什么 ✓）：
+                #   **本网某条轨的 y 正好从“这只有脚的那个元件”的肚子中间穿过** ✓ ⇒ 这时
+                #   “直上到轨”会把**轨**拽进身体的 x 范围 ✗（实测 `C2` = 3.95mm ✗）⇒ 才需要
+                #   横着出脚、把竖着下去那一段甩到身子外面 ✓。别的情况下**一条候选都不加** ✗
+                #   ⇒ 基线**一字不动** ✓（可验证 ✓）。
+                _needjog = False
+                _mb = boxes.get(pr["ra"])
+                if _mb:
+                    for _ry in rail_ys:
+                        if _mb[1] + 0.5 < _ry < _mb[3] - 0.5:
+                            _needjog = True
+                            break
+                if (abs(_n[0]) > 0.5 and abs(_n[1]) < 1e-6) or (abs(_n[1]) > 0.5 and _needjog):
                     # ★ 档位 1…6 格 ✓、**两个方向**都试 ✓（2026-09-28 ✓ 用户选方案 1 ✓）：
                     #   ✗ 原来只试 4 格 + 只试"法线方向" ✗ ⇒ 实测 **14 条支线里只成功 3 条** ✗
                     #     （U1 左列那只 GND 脚的 4 档全不合格 ⇒ 退回 Z 字 ✗）。
@@ -3847,6 +3896,127 @@ def end_is_free(wires, w_self, pt, pin_all, eps=0.05):
     return True
 
 
+def rail_y_map(ubox):
+    r"""电源轨的 y ✓ —— ★ **唯一实现** ✓（主流程与“骑轨预摆位”**共用** ✓）
+
+    ★ 为什么必须共用 ✗（实测教训 ✓）：预摆位要**在布线之前**算出轨的 y ✓
+      ⇒ 若在那里**再抄一份公式** ✗ ⇒ 两处一旦不同步 ⇒ **两把尺子** ✗
+      ⇒ 摆的轨和画的轨不是同一条 ✗（本仓最贵的那一类错 ✗）。
+    口径 ✓：**内**轨（5V ✓，支线短 ✓）离包围盒 `RAIL_MARGIN`（= `CLEAR_PIN` + 1 格 ✓）、
+       **外**轨（GND ✓）再隔 `RAIL_GAP`（= 2 格 ✓）⇒ 上、下各两条 ✓（支线就近挑 ✓）。
+    """
+    _top = ubox[1] - RAIL_MARGIN
+    _bot = ubox[3] + RAIL_MARGIN
+    return {"5V": [_top, _bot], "GND": [_top - RAIL_GAP, _bot + RAIL_GAP]}
+
+
+def pin_net_map(insts):
+    """脚 → 网 ✓（口径同路由 ✓：`NETS` ✓）"""
+    out = {}
+    for _net, _ps in NETS.items():
+        for _ref, _nm in _ps:
+            _cid, _p = pin_of(insts, _ref, _nm)
+            if _cid:
+                out[(_ref, _cid)] = _net
+    return out
+
+
+def rail_huggers(insts, rail_nets):
+    r"""挑“**骑得了轨**”的件 ✓：**每一只脚都在轨网上** ✓（≥2 只脚 ✓）
+
+    ★ 为什么只挑这种 ✓：一只脚在轨网、另一只在信号网上（如 `C1` = RC + GND ✓）**骑不了** ✗ ——
+      另一只脚必须走信号路径 ✓ ⇒ 挪得再贴也只是把信号线拉长 ✗。
+    """
+    m = pin_net_map(insts)
+    out = []
+    for _t, d in sorted(insts.items()):
+        if "breadboard" in _t.lower() or "breadboard" in (d.get("mid") or "").lower():
+            continue
+        _pl = [(c, p) for c, p in sorted((d.get("pins") or {}).items())]
+        if len(_pl) < 2 or not d.get("box"):
+            continue
+        _nets = {m.get((_t, c)) for c, _p in _pl}
+        if None in _nets or any(n not in rail_nets for n in _nets):
+            continue
+        out.append((_t, _pl, d))
+    return out
+
+
+def rail_hug_place(insts, hug, ry):
+    r"""把骑轨件**就地**摆到轨上 ✓（改 `loc` / `pins` / `box` ＋ XML 几何 ✓）——★ **在布线之前** ✓
+
+    ★ 口径 ✓：候选 = **两个朝向**（保持 ✓ / 翻 180° ✓）× 平移（让**某一只脚**踩上**它那条**轨 ✓）
+      ⇒ 取「**脚到轨的 y 距离之和**」最小的 ✓；**只有严格更小才动** ✓（与 `--snaprails` 同一条 ✓）。
+    ★ 为什么必须在**布线之前** ✗（“收尾再挪”已被实测否掉 ✓）：轨是按**零件包围盒**算的 ✓
+      ⇒ 摆完再算轨、轨又跑远了 ✗（实测总长 1971.3 ✗）
+      ⇒ 正解 = **先用“其它件”的包围盒定轨 ✓ → 再把骑轨件摆上去 ✓**（轨就不再随它跑 ✓）。
+    ★ 比“收尾挪”干净在哪 ✗✓：**这一版没有任何补丁** ✗ —— 支线 / 轨的起止 / 通道 / keep-out
+      全是现有机制在新位置上**重新算出来**的 ✓。收尾那版（`snap_rails` ✓）得删旧支线 ✓、
+      复验 ✓、回滚 ✓，而且**轨会留着“为旧脚位延伸出来的那一段”** ✗ ⇒ 件一挪就穿身 ✗
+      —— 实测正是这么栽的 ✓（`⊘ 网 5V 的段 (237.38,-57.60)→(281.56,-57.60) 真的穿进 C2 的本体` ✗）。
+    """
+    m = pin_net_map(insts)
+    log = []
+    for _t, _pl, d in hug:
+        loc, box = d.get("loc"), d.get("box")
+        if loc is None or box is None:
+            continue
+
+        def _obj(pins):
+            return sum(min(abs(p[1] - v) for v in ry[m[(_t, c)]]) for (c, p) in pins)
+        cur = _obj(_pl)
+        best = None
+        for flip in (False, True):
+            base = [(_c, ((2 * loc[0] - p[0], 2 * loc[1] - p[1]) if flip else p))
+                    for (_c, p) in _pl]
+            for (_c0, _p0) in base:
+                dy = min(ry[m[(_t, _c0)]], key=lambda v: abs(v - _p0[1])) - _p0[1]
+                moved = [(_c, (p[0], p[1] + dy)) for (_c, p) in base]
+                o = _obj(moved)
+                if best is None or o < best[0] - 1e-9:
+                    best = (o, flip, dy, moved)
+        if best is None or best[0] >= cur - 1e-6:
+            continue                                   # 不严格更好 ⇒ 原样 ✓
+        o, flip, dy, moved = best
+        nbox = ((2 * loc[0] - box[2], 2 * loc[1] - box[3] + dy,
+                 2 * loc[0] - box[0], 2 * loc[1] - box[1] + dy) if flip
+                else (box[0], box[1] + dy, box[2], box[3] + dy))
+        _hit = []
+        for _t2, _d2 in insts.items():                 # 压到别的件 ⇒ 不动 ✓
+            _b2 = _d2.get("box")
+            if _t2 == _t or not _b2:
+                continue
+            if (nbox[0] < _b2[2] and _b2[0] < nbox[2]
+                    and nbox[1] < _b2[3] and _b2[1] < nbox[3]):
+                _hit.append(_t2)
+        if _hit:
+            print("   ⊘ 骑轨预摆位：%s 摆到轨上会压到 %s ✗ ⇒ 不动 ✓"
+                  % (_t, ", ".join(sorted(_hit))))
+            continue
+        g = pm.child(d["sub"], "geometry")
+        if g is None:
+            continue
+        g.set("y", fmt(loc[1] + dy))
+        tf = pm.child(g, "transform")
+        if tf is not None and flip:
+            # ★ 翻 180° 要**整个 2×3 一起翻** ✗✓（只翻 `m11/m12/m21/m22` 而留着 `m31/m32`
+            #   ⇒ 零件整体平移了 (m31,m32) ✗ ⇒ 脚不在我以为的地方 ✗ —— 与 `snap_rails` 同一条 ✓）
+            for _k2 in ("m11", "m12", "m21", "m22", "m31", "m32"):
+                if _k2 in tf.attrib:
+                    tf.set(_k2, fmt(-float(tf.get(_k2))))
+        d["loc"] = (loc[0], loc[1] + dy)
+        d["pins"] = {c: p for (c, p) in moved}
+        d["box"] = nbox
+        log.append("%s：预摆到轨上 ✓（%s、y 移 %.1f ✓）脚到轨之和 %.1f → %.1f 单位 ✓"
+                   % (_t, "翻 180°" if flip else "保持", dy, cur, o))
+    if log:
+        print("   ★ **骑轨预摆位** ✓（在**布线之前** ✓ ⇒ 支线 / 轨的起止都是**重新算出来的** ✓，"
+              "不带任何补丁 ✓）：")
+        for ln in log:
+            print("      · " + ln)
+    return log
+
+
 def snap_rails(insts, boxes, pin_all, nets_segs, rail_nets, eps=0.05, tol=0.6):
     r"""★★★ `--snaprails=<网>`：把「**所有脚都在这几个网上**」的件**摆到轨上** ✓（2026-09-30 ✓）
 
@@ -3949,53 +4119,102 @@ def snap_rails(insts, boxes, pin_all, nets_segs, rail_nets, eps=0.05, tol=0.6):
                and nbox[1] < b2[3] and b2[1] < nbox[3] for _t2, b2 in boxes.items()):
             print("   ⊘ `--snaprails`：%s 挪过去会压到别的件 ✗ ⇒ 原样不动 ✓" % _t)
             continue
-        # ★★ 2026-09-30 ✓ **还不许“导线穿进它的新身体”** ✗✗（实测踩的 ✓）：
-        #   第一次跑就把它摆到了 GND 轨上 ✓ —— 可 **5V 轨（y=−57.6）正好从它身体中间横穿** ✗
-        #   （渲染器当场报「`Wire90012738` 穿进 `C2` 的本体 **28.0 单位 ≈ 7.9mm**」✗）。
-        #   口径与渲染器**同一条** ✓：盒子**缩 2 单位** ✓，某段有 **≥3 个采样点**落在里面 ⇒ 算穿 ✗；
-        #   被测的段要**先按“端点搬过去”算** ✓（那正是这一遍马上要做的 ✓）。
-        _shr = (nbox[0] + 2, nbox[1] + 2, nbox[2] - 2, nbox[3] - 2)
-
-        def _deep_in(p, q):
-            n = max(2, int(max(abs(q[0] - p[0]), abs(q[1] - p[1]))) + 1)
-            hit = 0
-            for _k3 in range(n + 1):
-                _s3 = _k3 / n
-                _x3 = p[0] + (q[0] - p[0]) * _s3
-                _y3 = p[1] + (q[1] - p[1]) * _s3
-                if _shr[0] <= _x3 <= _shr[2] and _shr[1] <= _y3 <= _shr[3]:
-                    hit += 1
-                    if hit >= 3:
-                        return True
-            return False
-
-        def _eff_path(_s):
-            pp = list(_s.get("path") or [])
-            for _side6, _idx6 in (("from", 0), ("to", -1)):
-                q6 = _s.get(_side6)
-                if not q6 or q6.get("ref") != _t:
-                    continue
-                for (_c6, _p6) in moved:
-                    if _c6 == q6.get("cid"):
-                        pp[_idx6] = _p6
-            return pp
-        _bad = None
-        for _n2, _sg2 in nets_segs.items():
-            for s2 in _sg2:
-                pp2 = _eff_path(s2)
-                for _k4 in range(len(pp2) - 1):
-                    if _deep_in(pp2[_k4], pp2[_k4 + 1]):
-                        _bad = (_n2, s2.get("from"), s2.get("to"))
-                        break
-                if _bad:
-                    break
-            if _bad:
-                break
-        if _bad:
-            print("   ⊘ `--snaprails`：%s 挪过去 ⇒ **有导线穿进它的新身体** ✗"
-                  "（网 `%s` 的段 %s→%s ✓）⇒ 原样不动 ✓（**宁可少省 ✓，也不交带缺陷的图** ✗）"
-                  % (_t, _bad[0], _bad[1], _bad[2]))
+        # ★★★ 2026-09-30 ✓ **改成「摆了才算」** ✗✓ —— 老版是「**先预测、再搬**」✗：
+        #   它拿“把端点搬过去、其余点不动”预测出来的段去判“穿体” ✗ ⇒ 实测 **误否决** ✗：
+        #   落地时**本来就要把那条旧支线整条删掉** ✓（见 ④ ✓），可预测时还把它算在内 ✗
+        #   ⇒ 那条**马上要消失**的残根当然“穿过新身体” ✗ ⇒ **用户那种摆法被毙掉** ✗
+        #   （实测 ✓：`⊘ C2 … 网 GND 的段 C2.connector1→None` ✗ = 那正是要删掉的那一段 ✓）。
+        #   ✓ 现在：**先摆（含删旧支线 ✓）→ 用渲染器同一条判据复验 → 不过就整份回滚** ✓。
+        g = pm.child(d["sub"], "geometry")
+        if g is None:
             continue
+        tf = pm.child(g, "transform")
+        _old = dict(_pl)                       # 旧脚位 ✓（删旧支线要从这里出发 ✓）
+
+        def _on_trunk(p, _net):
+            _tr = trunk.get(_net)
+            return _tr is not None and _dist_seg(p, _tr["a"], _tr["b"]) <= tol
+
+        def _stub_chain(_net, _p0):
+            r"""从**旧脚位**出发沿“脚→轨”支线往外走 ✓，返回 `(要删的段 ✓, 停下的点 ✓)`
+
+            ★ 只走**简单链** ✗：某点挂着 **0 段**（到头 ✓）或 **≥2 段**（岔路 ✓）⇒ **停手** ✓
+              —— 岔路上可能挂着别人的线 ✗ ⇒ 宁可少删 ✓ 也不许误删 ✓。
+            ★ 走到**轨上**（≤ `tol` ✓）就停 ✓ —— 那之后的都是轨自己 ✓，不能删 ✗。
+            """
+            out, cur = [], _p0
+            for _ in range(40):
+                hit = []
+                for s in nets_segs.get(_net, []):
+                    if s in out:
+                        continue
+                    pp = list(s.get("path") or [])
+                    if len(pp) < 2:
+                        continue
+                    if abs(pp[0][0] - cur[0]) < 0.05 and abs(pp[0][1] - cur[1]) < 0.05:
+                        hit.append((s, pp[-1]))
+                    elif abs(pp[-1][0] - cur[0]) < 0.05 and abs(pp[-1][1] - cur[1]) < 0.05:
+                        hit.append((s, pp[0]))
+                if len(hit) != 1:
+                    break
+                s, far = hit[0]
+                out.append(s)
+                cur = far
+                if _on_trunk(cur, _net):
+                    break
+            return out, cur
+
+        def _own_pins(a, b):
+            """渲染器那一条豁免 ✓：**端点落在这只脚上**的段 ⇒ 对**这一件**免判穿体 ✓"""
+            out = set()
+            for _t6, _c6, _x6, _y6 in pin_all:
+                if (abs(_x6 - a[0]) < 0.05 and abs(_y6 - a[1]) < 0.05) or \
+                   (abs(_x6 - b[0]) < 0.05 and abs(_y6 - b[1]) < 0.05):
+                    out.add(_t6)
+            return out
+
+        def _thru():
+            """复验 ✓：**摆完之后**还有哪一段真的穿进谁的本体 ✓（判据 = `SG.hits_box` ✓）"""
+            for _n2, _sg2 in nets_segs.items():
+                for s2 in _sg2:
+                    pp2 = list(s2.get("path") or [])
+                    for _k4 in range(len(pp2) - 1):
+                        _a5, _b5 = pp2[_k4], pp2[_k4 + 1]
+                        _ow = _own_pins(_a5, _b5)
+                        for _t2, b2 in boxes.items():
+                            if not b2 or _t2 in _ow:
+                                continue
+                            if SG.hits_box(_a5, _b5, b2):
+                                return (_n2, _t2, _a5, _b5)
+            return None
+
+        def _snap2():
+            """回滚点 ✓：这一遍要动的东西**全部存下来** ✓"""
+            return (copy.deepcopy(nets_segs), dict(boxes), list(pin_all),
+                    dict(d["pins"]), d.get("loc"), copy.deepcopy(trunk),
+                    g.get("x"), g.get("y"),
+                    dict(tf.attrib) if tf is not None else None)
+
+        def _backup(sn):
+            nets_segs.clear()
+            nets_segs.update(sn[0])
+            boxes.clear()
+            boxes.update(sn[1])
+            pin_all[:] = sn[2]
+            d["pins"].clear()
+            d["pins"].update(sn[3])
+            d["loc"] = sn[4]
+            trunk.clear()
+            trunk.update(sn[5])
+            g.set("x", sn[6])
+            g.set("y", sn[7])
+            if tf is not None and sn[8] is not None:
+                for _k5 in list(tf.attrib):
+                    del tf.attrib[_k5]
+                tf.attrib.update(sn[8])
+
+        _sn = _snap2()
+        _lg0 = len(log)
 
         # ③ 落地：改实例几何 ✓、改脚/箱/脚表 ✓
         newloc = ((2 * loc[0] - loc[0] + dx) if flip else loc[0] + dx,
@@ -4049,6 +4268,18 @@ def snap_rails(insts, boxes, pin_all, nets_segs, rail_nets, eps=0.05, tol=0.6):
                 if s.get("b") is not None:
                     s["b"] = _p
             if _d <= tol:                              # 脚就在轨上 ⇒ 只要“切开 + 挂上”✓
+                # ★★★ 2026-09-30 ✓ **还要把整条旧支线删掉** ✗✓（实测踩的 ✓）：
+                #   ✗ 老版只删“贴着这只脚的那一段”（= 上面那个 `s` ✓）✗ ⇒ 支线的**其余部分**
+                #     （拐点之后到轨那一截 ✗）**吊在半空** ✗ —— 实测它正好从这件的**新身体里穿过** ✗
+                #     ⇒ 被复验当场抓住 ✗；就算不穿过 ✓ 也会留一个**悬空端点** ✗（判据红 ✗）。
+                #   ✓ 从**旧脚位**往外走到轨 ✓ ⇒ 这一整条都删 ✓（只走简单链 ✓，岔路停手 ✓）。
+                _kill, _endp = _stub_chain(_net, _old[_c])
+                for _s7 in _kill:
+                    if _s7 in nets_segs.get(_net, []):
+                        nets_segs[_net].remove(_s7)
+                if _kill:
+                    log.append("%s.%s：旧支线 **%d 段**删掉 ✓（走到轨 (%.2f,%.2f) ✓）"
+                               % (_t, _c, len(_kill), _endp[0], _endp[1]))
                 _pr = _near(_p, _tr["a"], _tr["b"])
                 _tseg = _tr["seg"]
                 _tp = list(_tseg.get("path") or [])
@@ -4080,6 +4311,18 @@ def snap_rails(insts, boxes, pin_all, nets_segs, rail_nets, eps=0.05, tol=0.6):
                     continue
             log.append("%s.%s：支线端点搬到 (%.2f,%.2f) ✓（离线 %.2f）"
                        % (_t, _c, _p[0], _p[1], _d))
+        # ★★ 2026-09-30 ✓ **复验**：摆完之后若仍有导线真的穿进谁的本体 ✗ ⇒ **整份回滚** ✓
+        #   （“一个判据一份实现” ✓：用的是渲染器那份 `SG.hits_box` ✓ 与同一条“端点在自己脚上就豁免” ✓）
+        _bad2 = _thru()
+        if _bad2:
+            _backup(_sn)
+            del log[_lg0:]
+            print("   ⊘ `--snaprails`：%s 摆完**复验不过** ✗（网 `%s` 的段 "
+                  "(%.2f,%.2f)→(%.2f,%.2f) 真的穿进 `%s` 的本体 ✗）⇒ **整份回滚** ✓"
+                  "（宁可少省 ✓，也不交带缺陷的图 ✗）"
+                  % (_t, _bad2[0], _bad2[2][0], _bad2[2][1], _bad2[3][0], _bad2[3][1],
+                     _bad2[1]))
+            continue
         log.append("%s：姿态%s、平移到 (%.2f,%.2f) ✓ ⇒ 支线总和 %.1f → %.1f 单位 ✓"
                    % (_t, "翻 180°" if flip else "保持", newloc[0], newloc[1], cur, o))
     if log:
