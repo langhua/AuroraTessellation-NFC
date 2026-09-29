@@ -2067,11 +2067,27 @@ def main(argv):
         #   ★★ `RAILS` 里的 = 每脚 → **就近的上/下电源轨** ✓（2026-09-28 ✓ 用户提的架构 ✓）
         pairs = []
         rail_ys = RAIL_Y.get(net, []) if RAILS else []
+        _sit = []                       # ★ 本网“**脚正好落在轨上**”的脚 ✓（`(x, ref, cid, y)` ✓）
         if rail_ys:
             print("网 %-9s **电源轨** ✓：轨 y = %s ✓（%d 只脚各打一条支线 ✓）"
                   % (net, ["%.1f" % v for v in rail_ys], len(pts)))
             _n_rail = len(pairs)        # ★ 本网轨支线的起点（见下：按 x 升序 ✓）
             for d in pts:
+                # ★★★ 2026-09-30 ✓ **脚正好落在轨上的**：**不建支线** ✗ —— 改成
+                #   “**把轨在这个 x 处断开**” ✓（记进 `_sit` ✓，下面建轨时并进断点 ✓）。
+                #   ✗ 旧做法会造出一条 **0 长度支线** ✗ ⇒ 被 `dedup_path` 折成 1 个点 ✗
+                #     ⇒ 收尾当“退化段”丢掉 ✗ ⇒ **脚一根线都没有** ✗✗ ——
+                #     而它**正压在轨线上** ✓ ⇒ 图上看着接上了 ✓、七道闸门全被骗过 ✗。
+                #     实测：`C2.connector0` 在 44 根线里**一次都没出现** ✗，是
+                #     **用户的眼睛**看出来的 ✓✓ —— 又一次“没量到 ≠ 对” ✗。
+                #   ✓ 正解：脚**自带**一个断点 ⇒ 轨在它那儿一分为二 ⇒ 脚与**两个端点重合** ✓
+                #     ⇒ 端点到端点**真连上** ✓，且**不出现退化导线** ✓。
+                if any(abs(d["p"][1] - _ry) < 0.6 for _ry in rail_ys):
+                    _sit.append((d["p"][0], d["ref"], d["cid"], d["p"][1]))
+                    print("   ★ 脚**正好落在轨上** ✓：%s.%s (%.2f,%.2f) ✓ ⇒ **不建支线** ✗，"
+                          "改成轨在该 x 处**断开** ✓（脚与两个断点重合 = 端点到端点真连上 ✓）"
+                          % (d["ref"], d["cid"], d["p"][0], d["p"][1]))
+                    continue
                 # ★★★ 选轨（2026-09-28 ✓ 实测修正 ✓）：**就近优先 ✓，但"走过去不许穿体"优先于"就近"** ✗
                 #   ✗ 病（实测 `Wire90012727` ✓）：`U1.VDD`（y=43.2）到**下轨**(143.4) 的距离
                 #     100.2，比到**上轨**(-57.6) 的 100.8 **略近 0.6** ✗ ⇒ 于是它**竖直向下 100 单位**
@@ -2535,7 +2551,8 @@ def main(argv):
         #     ③ 顺带把长度收回来 ✓。
         _allx = sorted({round(s["b"][0], 4) for s in segs
                         if not s.get("fixed") and s.get("to") is None
-                        and any(abs(s["b"][1] - _yy) < 1e-6 for _yy in rail_ys)})
+                        and any(abs(s["b"][1] - _yy) < 1e-6 for _yy in rail_ys)}
+                       | {round(_x7, 4) for (_x7, _r7, _c7, _y7) in _sit})
         _rx = {}
         if _allx:
             # ★ **左端再外伸一格**（= 7.2 = `CLEAR_PIN` ✓），**右端不外伸** ✓ —— 为什么 ✗：
@@ -2651,9 +2668,11 @@ def main(argv):
             for _y in rail_ys:
                 _xs = sorted({round(s["b"][0], 4) for s in segs
                               if not s.get("fixed") and s.get("to") is None
-                              and abs(s["b"][1] - _y) < 1e-6})
+                              and abs(s["b"][1] - _y) < 1e-6}
+                             | {round(_x7, 4) for (_x7, _r7, _c7, _y7) in _sit
+                                if abs(_y7 - _y) < 0.6})
                 if not _xs:
-                    continue                      # 这条轨上一条支线都没有 ⇒ 不必画 ✗
+                    continue                      # 这条轨上一条支线、一只坐脚都没有 ⇒ 不必画 ✗
                 # ★★ 2026-09-28 ✓ **轨的两端不许“看着接在别的网上”** ✗（= “跨网假接头” ✗✗，用户点名 ✓）
                 #   实测（v25 ✓）：5V 上轨的**外伸段端点** `(22.578,-57.6)` 正落在 GND 那根竖线
                 #     `(22.578,9)→(22.578,-72)` 的**中段**上 ✗ ⇒ 图上**看着 5V 接在 GND 上** ✗✗
@@ -2708,9 +2727,35 @@ def main(argv):
                 _path = ([(_x0r, _y)] + [(v, _y) for v in _xs] + [(_x1r, _y)])
                 for _k in range(len(_path) - 1):
                     used.append((_path[_k], _path[_k + 1], net))
-                segs.append({"a": _path[0], "b": _path[-1], "path": _path,
-                             "from": None, "to": None, "mine": set(), "own_pins": set(),
-                             "net": net, "key": None, "fixed": True})
+                # ★★★ 2026-09-30 ✓ **把轨在“坐脚点”处切成两段，并记上那只脚** ✓✗（实测踩的 ✓）：
+                #   ✗ 老版整条轨是**一段**、`from`/`to` 都是 `None` ✗ ⇒ `--trim` 的“终端分块”
+                #     里**看不见坐在轨上的那只脚** ✗（`_term_nodes` 只认 `("pin", 非 None)` ✓）
+                #     ⇒ 它把**载着断点的那截轨**当“多余”删掉 ✗ ⇒ 脚又孤零零了 ✗
+                #     （实测：`C2.connector0` 明明已经坐在 5V 轨上 ✓，收尾一剪 ⇒ **全表 44 根线里
+                #      一次都不出现** ✗✗；而图上它正压在轨线上 ✓ ⇒ 肉眼像接上了 ✓ ⇒ 七道闸门全过 ✗）。
+                #   ✓ 现在：轨在**每只坐脚**处断开 ✓，断点两侧的两段各把那只脚记成 `to`/`from` ✓
+                #     ⇒ ① 连接**显式** ✓ ② `--trim` 看得见这个终端 ✓ 不敢删 ✓
+                #     ③ `check_netlist` / 假连线判据也看得见 ✓。
+                _sits_here = {}
+                for (_x7, _r7, _c7, _y7) in _sit:
+                    if abs(_y7 - _y) < 0.6:
+                        _sits_here[round(_x7, 4)] = (_r7, _c7)
+                _idx = [0]
+                for _k8 in range(1, len(_path) - 1):
+                    if round(_path[_k8][0], 4) in _sits_here:
+                        _idx.append(_k8)
+                _idx.append(len(_path) - 1)
+                for _i8 in range(len(_idx) - 1):
+                    _p8 = _path[_idx[_i8]:_idx[_i8 + 1] + 1]
+                    if len(_p8) < 2:
+                        continue
+                    _s8 = _sits_here.get(round(_p8[0][0], 4))
+                    _e8 = _sits_here.get(round(_p8[-1][0], 4))
+                    segs.append({"a": _p8[0], "b": _p8[-1], "path": _p8,
+                                 "from": ({"ref": _s8[0], "cid": _s8[1]} if _s8 else None),
+                                 "to": ({"ref": _e8[0], "cid": _e8[1]} if _e8 else None),
+                                 "mine": set(), "own_pins": set(),
+                                 "net": net, "key": None, "fixed": True})
                 _drawn.append(_y)
                 _rx[_y] = _x0r
 
