@@ -297,6 +297,22 @@ def is_ground_symbol(module_id):
     return (module_id or "") in GROUND_SYMBOL_MODULES
 
 
+# ★★ 接地符号的**脚** = 它 `<geometry>` 原点 **+ (9.001, 0.596)** sketch ✓（实测反推 ✓）
+#   ★ 它也在**自己的 svg 里**（`schematic/ground.svg` 的 `connector0pin` ✓）✗ —— `.fzz` 不带那份
+#     SVG ✗ ⇒ 拿不到就**反推** ✓（和网标签同一招 ✓：用**用户手画**的线端 ✓ = Fritzing 吸附后的真脚位 ✓）。
+#   两个样本**完全一致** ✓✓：
+#     `Ground1` 原点 (206.999, 26.4044) ← 线端 (216.000, 27.000) ⇒ 偏 (+9.001, +0.596)
+#     `Ground2` 原点 (152.999, 152.404) ← 线端 (162.000, 153.000) ⇒ 偏 (+9.001, +0.596)
+#   （物理上是“原点在图形左缘、脚在顶上中间” ✓ —— 9.001 sketch = 2.54mm = 0.1in ✓。）
+GROUND_PIN_DX = 9.001
+GROUND_PIN_DY = 0.596
+
+
+def ground_pin(geom):
+    """接地符号**画出来的脚**（视图坐标 ✓）—— 原点 + (9.001, 0.596) ✓（见上 ✓）"""
+    return (geom[0] + GROUND_PIN_DX, geom[1] + GROUND_PIN_DY)
+
+
 def grounded_connectors(inst_module, module_conn_names, inst_conn_ids=None):
     """按 Fritzing 规则**算作接地**的那些连接器 ✓ ⇒ `[(modelIndex, connectorId), …]`
 

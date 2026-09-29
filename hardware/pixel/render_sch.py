@@ -212,14 +212,35 @@ for el in root.iter("instance"):
             #     ✗ 不减就**偏移两份** ✗）
         _flag = ('<polygon points="%s" fill="#ffffff" stroke="#000000" '
                  'stroke-width="0.300000"/>' % " ".join(_pv))
+        # ★★★ 2026-09-29 ✓ **文字朝向照 Fritzing 看** ✓（用户实测 ✓）：
+        #   ✗ 我原来无论什么朝向都把 `<text>` 跟着转 θ ✗ ⇒ **180° 时字是倒着的** ✗；
+        #   ✓ 用户指出：Fritzing 里那个 `RC`（`m11=-1 m22=-1` ✓）**字是正的** ✓
+        #     —— 与 `NetLabel::makeSvg` 里那套 `align/reversed` 逻辑一致 ✓
+        #     （源码原话：`bool reversed = (transform().m11() < -0.5);  // horizontal flip or 180°` ✓）。
+        #   ⇒ 口径：**`m11 < 0`（镜像/180°）⇒ 文字不转** ✓（按**画出来的旗标盒**排布 ✓：
+        #     左缘 + 一个字符边距 ✓、竖直居中 ✓）；其余朝向照旧跟着 θ 转 ✓（±90° 是竖排 ✓，
+        #     用户此前的截图里 `GND` 就是竖的 ✓）。
+        if float(_m[0]) < -0.5:
+            _fb = sch_net.label_flag(_geom, _lbl, _m)
+            _fx0 = min(p[0] for p in _fb)
+            _fx1 = max(p[0] for p in _fb)
+            _fy0 = min(p[1] for p in _fb)
+            _fy1 = max(p[1] for p in _fb)
+            #   ★ 靠**非尖端**那一侧 ✓（尖头在左 ⇒ 字靠右 ✓）—— 与源码 `alignForPolicy` /
+            #     `reversed` 那套一致 ✓（✗ 我第一版靠左 ✗ ⇒ 字有一半压在尖头上 ✗，实测截图可见 ✗）。
+            _txt = ('<text id="label" x="%.3f" y="%.3f" font-family="Droid Sans" '
+                    'font-size="%.3f" fill="#000000" text-anchor="end">%s</text>'
+                    % (_fx1 - _geom[0] - sch_net.LABEL_TEXT_X,
+                       (_fy0 + _fy1) / 2.0 - _geom[1] + sch_net.LABEL_PLATE_H / 2.0,
+                       sch_net.LABEL_FS, html.escape(_lbl)))
+        else:
+            _txt = ('<text id="label" x="%.3f" y="%.3f" font-family="Droid Sans" '
+                    'font-size="%.3f" fill="#000000" transform="rotate(%.4f %.4f %.4f)">%s</text>'
+                    % (sch_net.LABEL_TEXT_X, sch_net.LABEL_BASELINE_Y, sch_net.LABEL_FS,
+                       _deg, _cx, _cy, html.escape(_lbl)))
         _art = ('<g partID="%s1"><g id="schematic" transform="translate(%.4f %.4f)">'
-                '%s'
-                '<text id="label" x="%.3f" y="%.3f" font-family="Droid Sans" '
-                'font-size="%.3f" fill="#000000" transform="rotate(%.4f %.4f %.4f)">%s</text>'
-                "</g></g>"
-                % (_mi, _geom[0], _geom[1], _flag, sch_net.LABEL_TEXT_X,
-                   sch_net.LABEL_BASELINE_Y, sch_net.LABEL_FS, _deg, _cx, _cy,
-                   html.escape(_lbl)))
+                "%s%s</g></g>"
+                % (_mi, _geom[0], _geom[1], _flag, _txt))
         body_parts.append((ttl, "网标签 ✓ 脚(%.1f,%.1f) ✓ 朝向%d° ✓" % (_px, _py, round(_deg)),
                            _art))
         PIN_SK.append((ttl, "connector0", (_px, _py)))
@@ -227,6 +248,19 @@ for el in root.iter("instance"):
         PART_BOX[ttl] = _bx                     # ★ 与画图**同一个盒子** ✓（“标签是元件” ✓ B3.1.1 ✓）
         for _qc in ((_bx[0], _bx[1]), (_bx[2], _bx[3])):
             ALL_PTS.append(_qc)                 # ★ 画布要**圈住本体框** ✓（不是只圈脚 ✓）
+        continue
+    # ★★ **接地符号**（core `GroundModuleID` ✓，2026-09-29 ✓）：它的图形**也在 app 里** ✗
+    #   （`:/resources/parts/core/schematic/ground.svg` ✓，`.fzz` 不带 ✓）⇒ **画不出来** ✓（待补 ✓）。
+    #   ★ 但**脚位是知道的** ✓（`sch_net.ground_pin` ✓ —— 用**用户手画的两处线端**反推 ✓，
+    #     两个样本给的偏移**完全一样** ✓✓）⇒ **照样登进 `PIN_SK`** ✓
+    #   ⇒ 这样 ② 才量得出“线到底有没有接在接地符号上” ✓
+    #   （✗ 不登的话它掉进“图形缺失 ⇒ 不判”那一档 ✗ ⇒ 线飘到哪都查不出来 ✗）。
+    if sch_net.is_ground_symbol(mid):
+        _gpx, _gpy = sch_net.ground_pin((enum(g, "x"), enum(g, "y")))
+        PIN_SK.append((ttl, "connector0", (_gpx, _gpy)))
+        ALL_PTS.append((_gpx, _gpy))
+        skipped.append((ttl, "**接地符号：图形在 Fritzing app 里** ✗（core 件 ✓）⇒ 暂不画 ✓；"
+                             "**脚位已知 ✓ 已登进 `PIN_SK` ✓**"))
         continue
     fzp = (el.get("path") or "").replace("/", os.sep)
     if not os.path.isfile(fzp):
