@@ -1293,6 +1293,10 @@ LBL_ROTS = (0, 90, 270, 180)
 #     电气上仍靠 `LocalGrounds` 并成一张网 ✓，与“每个模块各一个符号”两全 ✓。
 #   · **默认空** ✓ ⇒ 不给开关**一字节不差** ✓（v29 可复现 ✓，实测 26/26 条目相同 ✓）。
 GROUND_NETS = set()
+# ★★ `--relabel` ✓（用户 2026-09-30 定 ✓）：**布完线之后再拿最终导线当障碍摆一遍位号** ✓
+#   —— 为什么、跑在哪、为什么用同一个 `relabel()`，全写在 `emit()` 末尾那段注释里 ✓。
+#   ★ **默认关** ✓ ⇒ 不给开关时输出仍与已入库 `v29` **逐字节相同** ✓（回归要守 ✓）。
+RELABEL_AFTER = False
 # ★ `GROUND_GAP`：接地符号的脚离线端多远 ✓（**一个 Fritzing 原理图网格步** = 0.1in = **9 单位** ✓）
 #   ★ 出处 = **从用户手改版量的** ✓（两个样本：`10.000` ✓ / `9.039` ✓ —— 都是≈一个网格步 ✓；
 #     而它们的**脚 y 分别落在 27 / 153**，都是 9 的整数倍 ✓ = 网格线 ✓）。
@@ -1364,6 +1368,18 @@ def main(argv):
         print("★ **`--trim`** ✓：剪 `%s` 网里**多余的线** ✓（删了不改终端分块、且不留悬空端 ✓），"
               "并把支线**改接到更省的点** ✓（判据 = 不违反任何规则 ✓ ＋ `长度 + %.1f×交集` 更省 ✓）"
               % (", ".join(sorted(TRIM_NETS)), K_TRIM))
+    # ★★★ 2026-09-30 ✓ `--relabel`：**布完线之后再把位号摆一遍** ✓（用户点名的一手 ✓）
+    #   · `relabel()` 本来就跑 ✓，但它在 **`emit()` 之前** ✗ —— 那时只有“**计划的**导线” ✗，
+    #     而 `emit()` 里导线**还会变**（标签引线 / 改接的新线 / 接地引线 / 共线合并 ✓）
+    #     ⇒ 实测 `U1` 的位号正好压在新拉出来的一根线上 ✗（渲染器每次都报 ✓）。
+    #   · ✓ 这个开关 = 拿**最终导线**当障碍**再跑一遍同一个 `relabel()`** ✓
+    #     （候选位 / 权重 / 判碰全是它那一套 ✓，**不另写一份** ✗）。
+    #   · ★ 默认关 ✓ ⇒ 不给开关时输出仍与已入库 `v29` **逐字节相同** ✓（回归要守 ✓）。
+    if "--relabel" in argv:
+        global RELABEL_AFTER
+        RELABEL_AFTER = True
+        print("★ **`--relabel`** ✓：布完线（含标签引线 / 改接 / 接地引线 / 共线合并 ✓）之后，"
+              "再拿**最终导线**当障碍把位号摆一遍 ✓")
     if "--choffs" in argv:                    # 走廊偏移可扫 ✓（逗号分隔 ✓，单位=sketch ✓）
         global CH_OFFS
         CH_OFFS = tuple(float(v) for v in argv[argv.index("--choffs") + 1].split(","))
@@ -3668,7 +3684,7 @@ def add_conn(view, owner_cid, other_cid, other_mi, other_layer, fallback_layer):
                                    "modelIndex": str(other_mi), "layer": other_layer})
 
 
-def relabel(insts, boxes, used):
+def relabel(insts, boxes, used, extra=False):
     r"""★ 布完线再把位号重摆一遍 ✓（2026-09-27 用户定 ✓）
 
     ★ 为什么要在**线布完之后**摆 ✗：摆位脚本那时候还不知道导线在哪 ✗（导线是后布的 ✓）
@@ -3679,6 +3695,11 @@ def relabel(insts, boxes, used):
     ★ 候选位与摆位脚本**同一套 7 个** ✓（上·左/右/中 ✓、下·左/右 ✓、左/右 ✓）；
       判碰只有 `sch_text.label_bbox` 一个实现 ✓（字宽表唯一 ✓）；
       权重：压**别的元件** 10 ✓、压**导线** 5 ✓、压**已放的位号** 5 ✓。
+    ★★ `extra=True` ✓（2026-09-30 用户定 ✓，**只有 `emit()` 里那遍用** ✓）：
+      再多一圈候选位（各边**往外再加一格** ✓）—— 实测 `U1` 的 7 个候选位**全被导线占着** ✗
+      （它上方正好横着 5V 长轨 ✗，而它的位号本来就在那一行 ✓ ⇒ 一圈之内**无处可去** ✗）
+      ⇒ 不给第二圈就只能原地不动 ✗。★ 默认 `False` ✓ ⇒ **摆位那一遍的候选集一字不改** ✓
+      （那是与已入库 v29 逐字节相同的回归 ✓，不能动 ✗）。
     """
     items = []
     for t, d in insts.items():
@@ -3721,6 +3742,13 @@ def relabel(insts, boxes, used):
                 ((bx[0] + bx[2] - w) / 2.0, bx[1] - gap - h),
                 (bx[0], bx[3] + gap), (bx[2] - w, bx[3] + gap),
                 (bx[0] - gap - w, bx[1]), (bx[2] + gap, bx[1])]
+        if extra:                       # ★ 再往外一圈 ✓（只有 `emit()` 那遍用 ✓，见文档串 ✓）
+            g2, g3 = gap + h + gap, gap + w + gap
+            cand += [(bx[0], bx[1] - g2 - h), (bx[2] - w, bx[1] - g2 - h),
+                     ((bx[0] + bx[2] - w) / 2.0, bx[1] - g2 - h),
+                     (bx[0], bx[3] + g2), (bx[2] - w, bx[3] + g2),
+                     ((bx[0] + bx[2] - w) / 2.0, bx[3] + g2),
+                     (bx[0] - g3 - w, bx[1]), (bx[2] + g3, bx[1])]
         old = ST.label_bbox(pm.num(tg.get("x")), pm.num(tg.get("y")), fs, ln)
         best, bk = None, None
         for x, y in cand:
@@ -4684,6 +4712,19 @@ def emit(sroot, insts, z, nets_segs, orig_path, out_path, PIN_ALL=(), boxes=None
             add_conn(wire_by_mi[b_mi]["view"], b_cid, a_cid, a_mi, a_layer, b_layer)
         else:
             add_conn(part_by_mi[b_mi]["sub"], b_cid, a_cid, a_mi, a_layer, b_layer)
+
+    # ★★★ 2026-09-30 ✓ **`--relabel`：布完线再摆一次位号** ✓（用户点名的一手 ✓）
+    #   · 为什么必须在这里 ✗：`relabel()` 在 `emit()` 之前跑过 ✓（line 2780 ✓），
+    #     那时它只知道“**计划的**导线” ✗；而 `emit()` 之后导线**还会变** ✓：
+    #     标签引线 ✓、改接出来的新线 ✓、接地引线 ✓、共线合并 ✓ ⇒ 实测 `U1` 的位号
+    #     正好压在新拉的一根线上 ✗（渲染器每次都如实报“位号 U1 压导线”✗）。
+    #   · ✓ 正解（用户 2026-09-30 定的思路 ✓）：**位号可以自由挪 ✓、导线挪一次要牵动全局 ✗**
+    #     ⇒ 拿**最终导线**当障碍，**再跑一遍同一个 `relabel()`** ✓（候选位 / 权重 /
+    #     判碰**都是它那一套** ✓ —— 不另写第二份 ✗）。
+    if RELABEL_AFTER:
+        relabel(insts, boxes, [(w["p"], w["q"]) for w in wires], extra=True)
+        print("   ★ `--relabel` ✓：已拿最终 %d 根导线当障碍重摆位号 ✓（候选位多一圈 ✓）"
+              % len(wires))
 
     body = b'<?xml version="1.0" encoding="utf-8"?>\n' + ET.tostring(sroot, encoding="utf-8")
     print("网络配色（原理图官方色 ✓）：" + " ｜ ".join(
