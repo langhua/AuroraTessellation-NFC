@@ -2128,6 +2128,44 @@ py -3.13 check_junctions.py   pixel-schematic-v35.fzz    # ⑦ 无共线切分 �
 （支线长的那 7.2 由 `--trim` 在别处找回来了 ✓）、交叉 **7** ✓、六道闸门 **exit 0** ✓、
 渲染器 **零 ⚠** ✓；**基线（不带 `--snaprails`）仍与 `v35` 逐字节相同** ✓（26/26 ✓）。
 
+### 第三十二手 ✅：**工具箱收进元件库仓**（2026-09-30 ✓ 用户定 ✓）
+
+★ 用户定的一条架构 ✓：「**通用工具只有一份，放在元件库仓 `fritzing-parts-langhua/tools/` ✓，
+本项目不留副本 ✗**」—— `toolpaths.py` 里其实**早就写着这条** ✓（2026-09-27 ✓），
+只是当时项目里还躺着副本 ✗（正是它自己警告的"两份实现"✗）。
+
+**搬走的**（通用 ✓，17 个）：`sch_geom/sch_box/sch_net/sch_text/sch_glyphs` ✓、
+`render_sch/render_bb/wire_dump/set_rot` ✓、`check_netlist/check_fake_wires/check_flags/check_grounds/check_label_touch/check_junctions/check_labels` ✓、
+`bb_route4` ✓、`_assets/ground_symbol.svg` ✓（+ 许可 ✓）。
+**留在项目里的**（本板专有 ✓）：`gen_schematic_wires` ✓、`gen_schematic_layout*` ✓、`pins_ref`/`pins_calibrated` ✓、
+`audit_layout`（它直接读本板网表/摆位 ✓）、`fix_*`/`run_v6` ✓、以及**新增的项目数据文件**：
+
+★ **`pixel_nets.py`（新 ✓，本板数据的三张表）**：`NETS`（网表 ✓ 生成器与面包板布线器共用 ✓）、
+`EXPECT`（网表核对的期望 ✓）、`COLOR`（每网导线颜色 ✓ = Fritzing 官方色值 ✓）。
+⇒ 通用工具改成 `--nets=<项目数据.py>` ✓，**缺省找当前目录的 `pixel_nets.py`** ✓ ⇒ 老命令照用 ✓；
+抽表**一字未改数值** ✓ ⇒ 实测 `v38` 生成结果**逐字节不变** ✓（26/26 ✓）。
+
+★ **`toolpaths.py` 留在项目仓** ✓ —— 它是**项目侧**的定位器（把库仓 `tools/` 接进 `sys.path` ✓），
+跨仓引用只此一处 ✓；库仓的工具**不再需要它** ✗（同目录直接 import ✓）。
+
+**搬家顺带修掉的三处**（都是"工具离开了项目目录"才暴露的 ✓）：
+1. **相对输入按「当前目录」解** ✗✓（原来按 `HERE` = 工具自己所在目录解 ⇒ 搬进库仓后一律
+   "文件不存在" ✗，实测踩到 ✓）；
+2. **中间产物不写真仓库** ✓：`check_fake_wires` / `check_flags` 的输出改到**系统临时目录** ✓
+   （`FZ_WORK` 可覆盖 ✓）；`check_fake_wires` 跑渲染器前把输入**转绝对路径** ✓（子进程 cwd 变了 ✗）；
+3. **接地符号图形跟着工具走** ✓（`tools/_assets/ground_symbol.svg` ✓ + 许可 ✓）——
+   渲染器按"自己旁边"找它 ✓ ⇒ 不跟着搬就会**静默少画 2 个接地符号** ✗（实测：零件 13→**11** ✗）。
+
+**验证**（搬家后重跑一遍 ✓）：`v38` 生成 **逐字节可复现** ✓（26/26 ✓）；六道闸门（现从库仓跑 ✓）
+**全 exit 0** ✓；渲染器 **零警告** ✓、画布 100.0 × 98.0 ✓、零件 13 ✓；负例自检：`--nets=` 指向
+不存在的文件 ⇒ **exit 1 + 明确报错** ✓（不许静默 ✓）。
+
+**新用法**（在项目目录里跑 ✓；工具在库仓 ✓）：
+```
+py -3.13 f:\git\fritzing-parts-langhua\tools\render_sch.py    pixel-schematic-vNN.fzz out.png
+py -3.13 f:\git\fritzing-parts-langhua\tools\check_netlist.py pixel-schematic-vNN.fzz
+```
+
 ## 1. 定位
 
 - **单卖**：一片小方板 + 5 V 输入，线圈朝向被测物体 → 板载 LED 的亮度/颜色表示 13.56 MHz 近场场强。
