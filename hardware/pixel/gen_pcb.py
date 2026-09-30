@@ -19,6 +19,7 @@ import math
 import os
 import re
 import sys
+import xml.etree.ElementTree as ET
 import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -87,6 +88,32 @@ def set_attr(attrs, key, val):
 
 
 # ── 读基准 + 量每个件的"相对几何" ──────────────────────────────────────────
+def cu_box(part, svg_root, k, ox, oy, vbw, flip):
+    """件自己的**铜箔包围盒**（局部 sketch 单位 ✓，相对实例 loc ✓）
+
+    ★★ 为什么要它 ✗（2026-09-30 用户一眼看出「元件偏离了 pcb 板」✗）：线圈这种件，
+      **环心 ≠ 焊盘中心** ✗ —— 实测：环画在局部 (0,0) 附近，而两个焊盘在 (3.3,0)/(10.7,0) ✓
+      ⇒ 拿**焊盘**包围盒去对板心 ✗，环就整整偏了 **~7 mm** ✗（Fritzing 导出的图上，
+      环直接挂到板上边外面 ✗）。
+      ⇒ 环心要按**铜箔**算 ✓：取**无 id** 的铜层图元（= 绕组线条 ✓；焊盘都带
+      `connectorN*` 的 id ✓）的包围盒 ✓；一个无 id 的都没有 ⇒ 退回全部铜 ✓。
+    """
+    shapes, _bad = PP.copper_shapes(svg_root)
+    cu = [s for s in shapes if s["layer"] in ("copper0", "copper1")]
+    pick = [s for s in cu if not s["id"]] or cu
+    if not pick:
+        return None
+    xs, ys = [], []
+    for s in pick:
+        for u in (s["box"][0], s["box"][2]):
+            for v in (s["box"][1], s["box"][3]):
+                x = (2.0 * ox + vbw - u) if flip else u
+                p = PB.apply(part["M"], (x - ox) * k, (v - oy) * k)
+                xs.append(p[0])
+                ys.append(p[1])
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
 def load(base):
     parts, board = PP.read_fzz(base)
     out = []
@@ -99,6 +126,18 @@ def load(base):
         got, extra, bad, ntrack = PP.part_pads(p)
         if not got:
             continue
+        # 件自己的**铜箔**包围盒 ✓（环心要它 ✓，见 `cu_box` 注释 ✓）
+        try:
+            root = ET.fromstring(p["svg_text"])
+            k, (ox, oy) = PB.svg_k(root)
+            vb = PB._nums(root.get("viewBox"))
+            vbw = vb[2] if len(vb) == 4 and vb[2] else None
+            flip = ((p.get("pv") or {}).get("bottom") or "").lower() == "true"
+            if not (flip and vbw):
+                flip = False
+            cb = cu_box(p, root, k, ox, oy, vbw, flip) if k else None
+        except Exception:                                     # noqa: BLE001
+            cb = None
         loc = p["loc"]
         pads = {}
         for cid, q in got.items():
@@ -110,7 +149,7 @@ def load(base):
                         cids=set(pads), geo=p["geo"], side=(p.get("pv") or {}).get("layer"),
                         bottom=((p.get("pv") or {}).get("bottom") or "").lower() == "true",
                         box=union([q["box"] for q in pads.values()]),
-                        ntrack=ntrack))
+                        cubox=cb, ntrack=ntrack))
     return out, board
 
 
@@ -148,10 +187,15 @@ def place(parts, r, nets_map, verbose=True):
         net_flat[net] = ks
     new = {}
 
-    # ① 线圈：把它的**铜箔包围盒**中心对到板心 ✓（不是画布中心 ✗ —— 画布带留白 ✓）
+    # ① 线圈：把它的**铜箔（绕组）包围盒**中心对到板心 ✓（★ 不是焊盘包围盒 ✗ ——
+    #   环心比焊盘中心偏 ~7 mm ✓，用焊盘定心会把环顶出板外 ✗，用户就是这样看出来的 ✗）
     coil = by.get("L1")
     if coil:
-        new["L1"] = (c[0] - ctr(coil["box"])[0], c[1] - ctr(coil["box"])[1])
+        cb = coil.get("cubox") or coil["box"]
+        new["L1"] = (c[0] - ctr(cb)[0], c[1] - ctr(cb)[1])
+        print("   线圈定心：用**铜箔**包围盒 ✓（环心）；焊盘包围盒中心相对它差 (%.2f, %.2f) mm ✓"
+              % (((ctr(coil["box"])[0] - ctr(cb)[0]) / SK),
+                 ((ctr(coil["box"])[1] - ctr(cb)[1]) / SK)))
     # ② 两个总线口：左右各一个 ✓、**对称** ✓、焊盘贴着板边内侧 ✓（线从板外进来 ✓）
     for ttl, side in (("J1", "L"), ("J2", "R")):
         p = by.get(ttl)
