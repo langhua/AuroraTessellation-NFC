@@ -1,7 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="9376" height="8746" viewBox="0 0 9376.2 8746.2">
+<svg xmlns="http://www.w3.org/2000/svg" width="10479" height="8746" viewBox="0 0 10478.8 8746.2">
 <rect width="100%" height="100%" fill="#ffffff"/>
-<rect x="276.38" y="276.38" width="8823.41" height="8193.41" fill="#d9d9d9" stroke="#333333" stroke-width="1.2"/>
-<g transform="translate(668.098,276.378) matrix(0,326.43,-326.43,0,-5886.87,2766.48)">
+<rect x="276.38" y="276.38" width="9926.00" height="8193.41" fill="#d9d9d9" stroke="#333333" stroke-width="1.2"/>
+<g transform="translate(1240.634,276.378) matrix(1.99881e-14,326.43,-326.43,1.99881e-14,-5314.35,2766.48)">
       <circle cx="3.300" cy="0.000" r="0.55" id="connector0pin" fill="none" stroke="#f7bf13" stroke-width="0.5"/>
       <circle cx="10.700" cy="0.000" r="0.55" id="connector1pin" fill="none" stroke="#f7bf13" stroke-width="0.5"/>
     
@@ -732,7 +732,7 @@
       <circle cx="10.700" cy="0.000" r="0.55" id="connector1pin" fill="none" stroke="#f7bf13" stroke-width="0.5"/>
     </g>
   </g>
-<g transform="translate(2822.556,4144.573) matrix(3.2643,0,0,3.2643,-9804.05,-1150.68)">
+<g transform="translate(3884.742,3899.748) matrix(-3.2643,0,0,3.2643,-8154.29,-1150.68)">
       <rect
          width="120"
          height="110"
@@ -748,7 +748,7 @@
          id="connector1pad"
          style="fill:#f7bf13;fill-opacity:1;stroke:none;stroke-width:0" />
     </g>
-<g transform="translate(3148.958,3491.713) matrix(3.2643,0,0,3.2643,-9804.05,-1150.68)">
+<g transform="translate(4292.768,3328.493) matrix(-3.2643,0,0,3.2643,-8154.29,-1150.68)">
       <rect
          width="120"
          height="110"
@@ -764,7 +764,7 @@
          id="connector1pad"
          style="fill:#f7bf13;fill-opacity:1;stroke:none;stroke-width:0" />
     </g>
-<g transform="translate(3720.231,2920.458) matrix(3.2643,0,0,3.2643,-9804.05,-1150.68)">
+<g transform="translate(4455.923,5613.503) matrix(3.2643,-3.99762e-16,-3.99762e-16,-3.2643,-9231.51,-661.036)">
       <rect
          width="120"
          height="110"
@@ -780,15 +780,15 @@
          id="connector1pad"
          style="fill:#f7bf13;fill-opacity:1;stroke:none;stroke-width:0" />
     </g>
-<g transform="translate(5385.040,4046.643) matrix(326.43,0,0,326.43,-9461.3,-807.93)">
+<g transform="translate(6202.355,3475.388) matrix(1.99881e-14,326.43,-326.43,1.99881e-14,-8888.76,-807.93)">
   <rect x="-0.650" y="-0.650" width="0.45" height="0.45" id="connector0pin" style="fill:#f7bf13;fill-opacity:1;stroke:none"/>
   <rect x="0.200" y="-0.650" width="0.45" height="0.45" id="connector3pin" style="fill:#f7bf13;fill-opacity:1;stroke:none"/>
   <rect x="-0.650" y="0.200" width="0.45" height="0.45" id="connector1pin" style="fill:#f7bf13;fill-opacity:1;stroke:none"/>
   <rect x="0.200" y="0.200" width="0.45" height="0.45" id="connector2pin" style="fill:#f7bf13;fill-opacity:1;stroke:none"/>
  </g>
-<g transform="translate(3818.161,3540.678) matrix(326.43,0,0,326.43,-8955.33,-301.963)">
+<g transform="translate(4113.214,3703.888) matrix(326.43,-3.99762e-14,-3.99762e-14,-326.43,-8382.79,-301.959)">
   </g>
-<g transform="translate(3426.442,4976.968) matrix(326.43,0,0,326.43,-9379.69,-677.358)">
+<g transform="translate(3656.177,4487.319) matrix(326.43,-3.99762e-14,-3.99762e-14,-326.43,-8807.15,-677.355)">
   <rect x="-0.860" y="0.650" width="0.42" height="0.60" id="connector0pin" style="fill:#f7bf13;fill-opacity:1;stroke:none"/>
   <rect x="-0.210" y="0.650" width="0.42" height="0.60" id="connector1pin" style="fill:#f7bf13;fill-opacity:1;stroke:none"/>
   <rect x="0.440" y="0.650" width="0.42" height="0.60" id="connector2pin" style="fill:#f7bf13;fill-opacity:1;stroke:none"/>
@@ -796,7 +796,7 @@
   <rect x="-0.210" y="-1.250" width="0.42" height="0.60" id="connector4pin" style="fill:#f7bf13;fill-opacity:1;stroke:none"/>
   <rect x="-0.860" y="-1.250" width="0.42" height="0.60" id="connector5pin" style="fill:#f7bf13;fill-opacity:1;stroke:none"/>
  </g>
-<g transform="translate(276.378,3049.720) matrix(326.43,0,0,326.43,-8824.76,-785.08)">
+<g transform="translate(168.656,2538.531) matrix(5.99642e-14,326.43,326.43,-5.99642e-14,-8758.19,-279.117)">
   <rect x="-2.600" y="-0.766" width="0.80" height="1.50" fill="#f7bf13" stroke="none"/>
   <rect x="1.800" y="-0.766" width="0.80" height="1.50" fill="#f7bf13" stroke="none"/>
   <rect id="connector0pad" connectorname="1" x="-1.250" y="2.384" width="0.50" height="1.20" fill="#f7bf13" stroke="none"/>
@@ -812,7 +812,7 @@
    <line x1="2.667" y1="0.964" x2="2.667" y2="2.600" stroke="#f0f0f0" stroke-width="0.12" stroke-linecap="round"/>
   </g>
  </g>
-<g transform="translate(7098.768,3049.720) matrix(326.43,0,0,326.43,-8824.76,-785.08)">
+<g transform="translate(8309.092,4454.678) matrix(-1.99881e-14,-326.43,-326.43,1.99881e-14,-7703.82,-236.677)">
   <rect x="-2.600" y="-0.766" width="0.80" height="1.50" fill="#f7bf13" stroke="none"/>
   <rect x="1.800" y="-0.766" width="0.80" height="1.50" fill="#f7bf13" stroke="none"/>
   <rect id="connector0pad" connectorname="1" x="-1.250" y="2.384" width="0.50" height="1.20" fill="#f7bf13" stroke="none"/>
@@ -828,58 +828,58 @@
    <line x1="2.667" y1="0.964" x2="2.667" y2="2.600" stroke="#f0f0f0" stroke-width="0.12" stroke-linecap="round"/>
   </g>
  </g>
-<rect x="4405.74" y="5091.22" width="359.07" height="359.07" fill="#2040d0" fill-opacity="0.85" stroke="#2040d0" stroke-width="0.4"/>
-<rect x="4405.74" y="7506.80" width="359.07" height="359.07" fill="#2040d0" fill-opacity="0.85" stroke="#2040d0" stroke-width="0.4"/>
-<rect x="2887.84" y="4209.86" width="391.72" height="359.07" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
-<rect x="3442.77" y="4209.86" width="391.72" height="359.07" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
-<rect x="3214.24" y="3557.00" width="391.72" height="359.07" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
-<rect x="3769.18" y="3557.00" width="391.72" height="359.07" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
-<rect x="3785.52" y="2985.74" width="391.72" height="359.07" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
-<rect x="4340.45" y="2985.74" width="391.72" height="359.07" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
-<rect x="5515.61" y="4177.22" width="146.89" height="146.89" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
-<rect x="5515.61" y="4454.68" width="146.89" height="146.89" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
-<rect x="5793.08" y="4454.68" width="146.89" height="146.89" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
-<rect x="5793.08" y="4177.22" width="146.89" height="146.89" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
-<rect x="3997.70" y="4095.61" width="195.86" height="65.29" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
-<rect x="3997.70" y="4226.18" width="195.86" height="65.29" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
-<rect x="3997.70" y="4356.75" width="195.86" height="65.29" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
-<rect x="3997.70" y="4487.32" width="195.86" height="65.29" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
-<rect x="3997.70" y="4617.90" width="195.86" height="65.29" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
-<rect x="4373.09" y="4862.72" width="65.29" height="195.86" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
-<rect x="4503.66" y="4862.72" width="65.29" height="195.86" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
-<rect x="4634.24" y="4862.72" width="65.29" height="195.86" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
-<rect x="4764.81" y="4862.72" width="65.29" height="195.86" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
-<rect x="4895.38" y="4862.72" width="65.29" height="195.86" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
-<rect x="5140.20" y="4617.90" width="195.86" height="65.29" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
-<rect x="5140.20" y="4487.32" width="195.86" height="65.29" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
-<rect x="5140.20" y="4356.75" width="195.86" height="65.29" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
-<rect x="5140.20" y="4226.18" width="195.86" height="65.29" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
-<rect x="5140.20" y="4095.61" width="195.86" height="65.29" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
-<rect x="4895.38" y="3720.21" width="65.29" height="195.86" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
-<rect x="4764.81" y="3720.21" width="65.29" height="195.86" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
-<rect x="4634.24" y="3720.21" width="65.29" height="195.86" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
-<rect x="4503.66" y="3720.21" width="65.29" height="195.86" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
-<rect x="4373.09" y="3720.21" width="65.29" height="195.86" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
-<rect x="4397.57" y="4120.09" width="538.61" height="538.61" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
-<rect x="3570.07" y="5662.47" width="137.10" height="195.86" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
-<rect x="3782.25" y="5662.47" width="137.10" height="195.86" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
-<rect x="3994.43" y="5662.47" width="137.10" height="195.86" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
-<rect x="3994.43" y="5042.25" width="137.10" height="195.86" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
-<rect x="3782.25" y="5042.25" width="137.10" height="195.86" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
-<rect x="3570.07" y="5042.25" width="137.10" height="195.86" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
-<rect x="847.63" y="4193.53" width="163.21" height="391.72" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
-<rect x="1174.06" y="4193.53" width="163.22" height="391.72" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
-<rect x="1500.49" y="4193.53" width="163.22" height="391.72" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
-<rect x="7670.02" y="4193.53" width="163.21" height="391.72" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
-<rect x="7996.45" y="4193.53" width="163.21" height="391.72" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
-<rect x="8322.88" y="4193.53" width="163.21" height="391.72" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
-<text x="3687.57" y="3739.74" font-family="DroidSans, sans-serif" font-size="119.8" font-weight="bold" fill="#333333" text-anchor="middle">C1</text>
-<text x="3361.17" y="4392.60" font-family="DroidSans, sans-serif" font-size="119.8" font-weight="bold" fill="#333333" text-anchor="middle">C2</text>
-<text x="3850.80" y="5453.49" font-family="DroidSans, sans-serif" font-size="119.8" font-weight="bold" fill="#333333" text-anchor="middle">D3</text>
-<text x="1255.67" y="4392.59" font-family="DroidSans, sans-serif" font-size="119.8" font-weight="bold" fill="#333333" text-anchor="middle">J1</text>
-<text x="8078.06" y="4392.59" font-family="DroidSans, sans-serif" font-size="119.8" font-weight="bold" fill="#333333" text-anchor="middle">J2</text>
-<text x="4585.28" y="6481.75" font-family="DroidSans, sans-serif" font-size="119.8" font-weight="bold" fill="#333333" text-anchor="middle">L1</text>
-<text x="5727.79" y="4392.59" font-family="DroidSans, sans-serif" font-size="119.8" font-weight="bold" fill="#333333" text-anchor="middle">LED2</text>
-<text x="4258.84" y="3168.48" font-family="DroidSans, sans-serif" font-size="119.8" font-weight="bold" fill="#333333" text-anchor="middle">R1</text>
-<text x="4666.88" y="4392.60" font-family="DroidSans, sans-serif" font-size="119.8" font-weight="bold" fill="#333333" text-anchor="middle">U1</text>
+<rect x="4978.26" y="5091.22" width="359.07" height="359.07" fill="#2040d0" fill-opacity="0.85" stroke="#2040d0" stroke-width="0.4"/>
+<rect x="4978.26" y="7506.80" width="359.07" height="359.07" fill="#2040d0" fill-opacity="0.85" stroke="#2040d0" stroke-width="0.4"/>
+<rect x="4504.96" y="3965.03" width="391.72" height="359.07" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
+<rect x="3950.03" y="3965.03" width="391.72" height="359.07" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
+<rect x="4912.98" y="3393.78" width="391.72" height="359.07" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
+<rect x="4358.05" y="3393.78" width="391.72" height="359.07" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
+<rect x="4521.21" y="5678.79" width="391.72" height="359.07" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
+<rect x="5076.14" y="5678.79" width="391.72" height="359.07" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
+<rect x="6610.39" y="3605.96" width="146.89" height="146.89" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
+<rect x="6332.93" y="3605.96" width="146.89" height="146.89" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
+<rect x="6332.93" y="3883.43" width="146.89" height="146.89" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
+<rect x="6610.39" y="3883.43" width="146.89" height="146.89" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
+<rect x="5141.47" y="4781.11" width="195.86" height="65.29" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
+<rect x="5141.47" y="4650.54" width="195.86" height="65.29" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
+<rect x="5141.47" y="4519.97" width="195.86" height="65.29" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
+<rect x="5141.47" y="4389.40" width="195.86" height="65.29" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
+<rect x="5141.47" y="4258.82" width="195.86" height="65.29" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
+<rect x="5516.87" y="3883.43" width="65.29" height="195.86" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
+<rect x="5647.44" y="3883.43" width="65.29" height="195.86" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
+<rect x="5778.01" y="3883.43" width="65.29" height="195.86" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
+<rect x="5908.58" y="3883.43" width="65.29" height="195.86" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
+<rect x="6039.15" y="3883.43" width="65.29" height="195.86" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
+<rect x="6283.98" y="4258.82" width="195.86" height="65.29" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
+<rect x="6283.98" y="4389.40" width="195.86" height="65.29" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
+<rect x="6283.98" y="4519.97" width="195.86" height="65.29" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
+<rect x="6283.98" y="4650.54" width="195.86" height="65.29" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
+<rect x="6283.98" y="4781.11" width="195.86" height="65.29" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
+<rect x="6039.15" y="5025.93" width="65.29" height="195.86" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
+<rect x="5908.58" y="5025.93" width="65.29" height="195.86" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
+<rect x="5778.01" y="5025.93" width="65.29" height="195.86" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
+<rect x="5647.44" y="5025.93" width="65.29" height="195.86" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
+<rect x="5516.87" y="5025.93" width="65.29" height="195.86" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
+<rect x="5541.35" y="4283.31" width="538.61" height="538.61" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
+<rect x="4224.17" y="4552.61" width="137.10" height="195.86" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
+<rect x="4436.34" y="4552.61" width="137.10" height="195.86" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
+<rect x="4648.52" y="4552.61" width="137.10" height="195.86" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
+<rect x="4648.52" y="5172.82" width="137.10" height="195.86" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
+<rect x="4436.34" y="5172.82" width="137.10" height="195.86" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
+<rect x="4224.17" y="5172.82" width="137.10" height="195.86" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
+<rect x="1420.19" y="3981.35" width="391.72" height="163.22" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
+<rect x="1420.19" y="4307.78" width="391.72" height="163.22" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
+<rect x="1420.19" y="4634.21" width="391.72" height="163.22" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
+<rect x="8666.86" y="4634.21" width="391.72" height="163.22" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
+<rect x="8666.86" y="4307.78" width="391.72" height="163.21" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
+<rect x="8666.86" y="3981.35" width="391.72" height="163.22" fill="#d02020" fill-opacity="0.85" stroke="#d02020" stroke-width="0.4"/>
+<text x="4831.38" y="3576.52" font-family="DroidSans, sans-serif" font-size="119.8" font-weight="bold" fill="#333333" text-anchor="middle">C1</text>
+<text x="4423.35" y="4147.77" font-family="DroidSans, sans-serif" font-size="119.8" font-weight="bold" fill="#333333" text-anchor="middle">C2</text>
+<text x="4504.90" y="4963.84" font-family="DroidSans, sans-serif" font-size="119.8" font-weight="bold" fill="#333333" text-anchor="middle">D3</text>
+<text x="1616.05" y="4392.59" font-family="DroidSans, sans-serif" font-size="119.8" font-weight="bold" fill="#333333" text-anchor="middle">J1</text>
+<text x="8862.71" y="4392.59" font-family="DroidSans, sans-serif" font-size="119.8" font-weight="bold" fill="#333333" text-anchor="middle">J2</text>
+<text x="5157.79" y="6481.75" font-family="DroidSans, sans-serif" font-size="119.8" font-weight="bold" fill="#333333" text-anchor="middle">L1</text>
+<text x="6545.11" y="3821.34" font-family="DroidSans, sans-serif" font-size="119.8" font-weight="bold" fill="#333333" text-anchor="middle">LED2</text>
+<text x="4994.53" y="5861.53" font-family="DroidSans, sans-serif" font-size="119.8" font-weight="bold" fill="#333333" text-anchor="middle">R1</text>
+<text x="5810.65" y="4555.81" font-family="DroidSans, sans-serif" font-size="119.8" font-weight="bold" fill="#333333" text-anchor="middle">U1</text>
 </svg>
