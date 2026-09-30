@@ -2165,6 +2165,44 @@ py -3.13 f:\git\fritzing-parts-langhua\tools\render_sch.py    pixel-schematic-vN
 py -3.13 f:\git\fritzing-parts-langhua\tools\check_netlist.py pixel-schematic-vNN.fzz
 ```
 
+### 第三十三手 ✅：**PCB 自动布线交付** ⇒ **`pixel-pcb-v47.fzz`**（2026-10-01 ✓ 用户定稿 ✓）
+
+**交付物** ✓：`hardware/pixel/pixel-pcb-v47.fzz`（＋预览 `pixel-pcb-v47_preview.svg/.png` ✓）。
+线路：`pixel-pcb-v25.fzz`（用户摆位底图 ✓）⇒ 自动布线 + 写回 ⇒ v47 ✓。
+
+| 指标 ✓ | 值 |
+|---|---|
+| 连通 | **9/9 网** ✓ |
+| 走线对象 | **131 条** ✓（12 mil = 0.3048 mm ✓ 统一线宽 ✓）|
+| 过孔 | **18 个** ✓（孔 0.3 mm / 环 0.15 mm ⇒ 盘 **Ø0.6 mm** ✓）|
+| 线长 | 198.4 mm ✓ |
+| 悬空端点 | **0** ✓（硬闸门 ✓，非 0 就**不写文件** ✓）|
+| 多线共用一端 | **0** ✓ |
+| 板框 | 25.00 × 25.00 mm ✓ |
+
+- ![PCB v47 预览（蓝 = 底层 copper0 ✓、红 = 顶层 copper1 ✓、绿点 = 过孔 ✓）](pixel-pcb-v47_preview.png)
+- 复现 ✓（在项目目录里跑 ✓）：
+  ```
+  py -3.13 gen_routes.py pixel-pcb-v25.fzz pixel-pcb-v47.fzz --nets=pixel_nets.py \
+      --mil-power=12 --mil-signal=12 --passes=8 --turn=0
+  py -3.13 f:\git\fritzing-parts-langhua\tools\render_pcb.py pixel-pcb-v47.fzz pixel-pcb-v47_preview.svg --png
+  ```
+
+**★ 为什么是 v47（不是 v41）** ✓：v41 与 v47 **电气等价** ✓（同 9/9 ✓、同 18 孔 ✓、线长差 0.1 mm ✓），
+但 v41 里有一根 `Wire90013154` 的两端**正落在 `U1` 的空脚 `PC0` 盘心** ✗ ⇒
+写回器按**端点坐标**认盘 ⇒ 给它写了 `<connect>` ✗ ⇒ **Fritzing 里 PC0 会被算进 5V** ✗；
+v47 同一条线**停在结点上、离 PC0 盘心 0.18 mm** ✓ ⇒ 不写 ✓。
+
+**★ 两条已量清、但不在本手范围内** ✗（记账 ✓，详见库仓
+`docs/fritzing-sketch-format-notes.md` 的 F12–F16 / §4-Q5 ✓）：
+1. **Fritzing 载入时会改写走线几何** ✗：拿用户导出的 `pixel-pcb-v41_图示.svg` 逐条对 ✓ ——
+   130/130 线、18/18 过孔都在 ✓、线宽颜色全对 ✓、元件几何零残差 ✓；
+   但 **81/260 个端点被挪** ✗（0.07～0.66 mm ✓，挪完仍在盘内 ✓）⇒ 合计线长 **198.5 → 182.1 mm** ✗。
+   ⇒ **报线长/坐标必须以导出为准** ✗（我方渲染是自证 ✗）。
+2. **"不许线压焊盘（含空脚）"这条规矩还没落地** ✗：判据已入库 ✓（`pcb_route.pads_covered` ✓），
+   但试过两版都先坏在别处 ✓（端点差半格 ⇒ 报 6 个悬空 ✗；加硬禁位 ⇒ 报 2 个悬空 ✗ ⇒ 文件都写不出 ✗）。
+   ⇒ 真难点是**写回器"端必须正中"** vs **布线器端点在栅格上** 这对矛盾 ✗。
+
 ## 1. 定位
 
 - **单卖**：一片小方板 + 5 V 输入，线圈朝向被测物体 → 板载 LED 的亮度/颜色表示 13.56 MHz 近场场强。
