@@ -2136,7 +2136,7 @@ py -3.13 check_junctions.py   pixel-schematic-v35.fzz    # ⑦ 无共线切分 �
 
 **搬走的**（通用 ✓，17 个）：`sch_geom/sch_box/sch_net/sch_text/sch_glyphs` ✓、
 `render_sch/render_bb/wire_dump/set_rot` ✓、`check_netlist/check_fake_wires/check_flags/check_grounds/check_label_touch/check_junctions/check_labels` ✓、
-`bb_route4` ✓、`_assets/ground_symbol.svg` ✓（+ 许可 ✓）。
+`bb_route4` ✓、`ground_symbol.svg` ✓（+ 许可 ✓ —— ★ 用户 2026-09-30 定：**全部外部素材统一放库仓 `svg/_assets/`** ✓，不在 `tools/` 下另开一份 ✗）。
 **留在项目里的**（本板专有 ✓）：`gen_schematic_wires` ✓、`gen_schematic_layout*` ✓、`pins_ref`/`pins_calibrated` ✓、
 `audit_layout`（它直接读本板网表/摆位 ✓）、`fix_*`/`run_v6` ✓、以及**新增的项目数据文件**：
 
@@ -2153,8 +2153,7 @@ py -3.13 check_junctions.py   pixel-schematic-v35.fzz    # ⑦ 无共线切分 �
    "文件不存在" ✗，实测踩到 ✓）；
 2. **中间产物不写真仓库** ✓：`check_fake_wires` / `check_flags` 的输出改到**系统临时目录** ✓
    （`FZ_WORK` 可覆盖 ✓）；`check_fake_wires` 跑渲染器前把输入**转绝对路径** ✓（子进程 cwd 变了 ✗）；
-3. **接地符号图形跟着工具走** ✓（`tools/_assets/ground_symbol.svg` ✓ + 许可 ✓）——
-   渲染器按"自己旁边"找它 ✓ ⇒ 不跟着搬就会**静默少画 2 个接地符号** ✗（实测：零件 13→**11** ✗）。
+3. **接地符号图形入库** ✓（**库仓 `svg/_assets/ground_symbol.svg`** ✓ + 许可 ✓）—— 渲染器/生成器都按**库仓根**找它 ✓（`FZ_ASSETS` 可覆盖 ✓）；✗ 一度放在 `tools/_assets/` ✗，按用户 2026-09-30 的规矩**统一到 `svg/_assets/`** ✓（实测：不跟着走会**静默少画 2 个接地符号** ✓，零件 13→**11** ✗）。
 
 **验证**（搬家后重跑一遍 ✓）：`v38` 生成 **逐字节可复现** ✓（26/26 ✓）；六道闸门（现从库仓跑 ✓）
 **全 exit 0** ✓；渲染器 **零警告** ✓、画布 100.0 × 98.0 ✓、零件 13 ✓；负例自检：`--nets=` 指向
