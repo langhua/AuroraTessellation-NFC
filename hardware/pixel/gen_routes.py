@@ -302,8 +302,13 @@ def _why_miss(res, net, lay, p):
 NO_MERGE = []
 
 
-def build_xml(text, res, model, pads, *, color_map=None, mil_of=None):
+def build_xml(text, res, model, pads, *, color_map=None, mil_of=None, net_pads=None):
     """把布线结果变成 XML 实例片段 ✓ ⇒ `(xml, stats)`"""
+    # ★★ 焊盘 → 网名 ✓（2026-10-01 加 ✓，给下面那道硬闸门用 ✓）
+    pad2net = {}
+    for _n, _lst in (net_pads or {}).items():
+        for _k in _lst:
+            pad2net[_k] = _n
     mil_of = mil_of or (lambda n: RT.TRACE_MIL)     # ★ 按网分宽 ✓（没给 ⇒ 全局那档 ✓）
     # ── 1. 端点 → 接什么 ✓ ─────────────────────────────────────────────
     # ★ 焊盘要读 `model["pads"]` ✓（`pcb_check.collect` 那份 ✓：有 `thr`/`layer`/`cid`/`mi` ✓）
@@ -347,27 +352,69 @@ def build_xml(text, res, model, pads, *, color_map=None, mil_of=None):
     #     `key()`（round 到 1e-3 ✓）取整的**两侧** ✗ ⇒ 表里对不上 ✗。
     #   ✓ 做法：把**焊盘心 / 过孔心**当种子 ✓（它们是权威坐标 ✓），其余端点吸附到
     #     容差内已存在的点上 ✓ ⇒ 两侧拿到**同一个值** ✓。
-    #   ★ 容差为什么是 0.18 内部单位（= 0.051 mm ✓）：布线格 = 0.15 mm ✓（0.53 单位 ✓）
+    #   ★★ 容差为什么是 0.18 内部单位（= 0.051 mm ✓）：布线格 = 0.15 mm ✓（0.53 单位 ✓）
     #     ⇒ 容差 < 半格就**不可能**把两个相邻格点并掉 ✓（并错了会把线拉歪 ✗）。
+    #   ★★★ 吸附点必须**按网**筛 ✗✓（2026-10-01 定案 ✓，**就是那 4 处短路的根因** ✓）：
+    #     ✗ 原来把**所有焊盘中心**都当吸附点 ✗ ⇒ 一个离它 0.03∼0.05 mm 的端点
+    #       （= A* **格心** ✓，最大偏半格 0.075 mm ✓）会被硬吸到**隔壁那张网**的盘心上 ✗✗
+    #       ⇒ 实测：`U1.connector2`(PA2/DATA_IN) 与 `connector3`(VSS/GND) **只差 0.400 mm** ✓
+    #       ⇒ 一步就换来「`DATA_IN` 的线结到 `GND` 的盘」4 处 ✗（独立复核 ④×4 + ⑤×4 ✓）。
+    #     ✓ 现在：盘心只有当它**属于本网**时才允许吸附 ✓；过孔心与别的一般端点照旧 ✓。
+    pad_net = {}
+    for _n, _lst in (net_pads or {}).items():
+        for _k in _lst:
+            pad_net[_k] = _n
+    pad_rep = {}
     reps = []
     for q in model["pads"]:
-        reps.append((q["c"][0], q["c"][1]))
+        r = (q["c"][0], q["c"][1])
+        reps.append(r)
+        pad_rep[(round(r[0], 6), round(r[1], 6))] = (q["title"], q["cid"])
     for net in sorted(res):
         for v in res[net]["vias"]:
             reps.append((v[0], v[1]))
 
-    def _snap(p):
+    def _snap(p, net=None):
         for r in reps:
-            if abs(p[0] - r[0]) <= SNAP_U and abs(p[1] - r[1]) <= SNAP_U:
-                return r
+            if abs(p[0] - r[0]) > SNAP_U or abs(p[1] - r[1]) > SNAP_U:
+                continue
+            k2 = pad_rep.get((round(r[0], 6), round(r[1], 6)))
+            if k2 is not None and net is not None and pad_net.get(k2) != net:
+                continue                   # ✗ 别的网的盘心 ⇒ **不许吸** ✓（不然就是短路 ✗）
+            return r
         reps.append(p)
         return p
 
     snapped = []                                   # (net, lay, a, b) ✓（已归并 ✓）
     for (net, lay, a, b) in pre:
-        a2, b2 = _snap(a), _snap(b)
+        a2, b2 = _snap(a, net), _snap(b, net)
         if a2 != b2:                               # 归并后可能变零长 ⇒ 丢掉 ✗
             snapped.append((net, lay, a2, b2))
+    # ★★ 逐阶段追踪 ✓（2026-10-01 ✓，`--why` 打开 ✓）：盯住 `U1` 那两颗**相邻**脚
+    #   （`connector2` = PA2 / DATA_IN ✓、`connector3` = VSS / GND ✓，相距 0.400 mm ✓）
+    #   ⇒ 看**哪一步**把端点放到了“隔壁那颗脚”的盘心上 ✗（实测写回后 4 处结错网 ✓）。
+    def _watch_pts():
+        out = []
+        for q in model["pads"]:
+            if q["title"] == "U1" and q["cid"] in ("connector2", "connector3"):
+                out.append((q["cid"], q["c"]))
+        return out
+
+    def _stage(tag, seq):
+        if not RT.DIAG["on"]:
+            return
+        for (cid, c) in _watch_pts():
+            hits = []
+            for it in seq:
+                n2, l2, a2, b2 = it[0], it[1], it[2], it[3]
+                if ((abs(a2[0] - c[0]) < 1e-6 and abs(a2[1] - c[1]) < 1e-6)
+                        or (abs(b2[0] - c[0]) < 1e-6 and abs(b2[1] - c[1]) < 1e-6)):
+                    hits.append("%s/%s" % (n2, l2))
+            if hits:
+                print("      [%s] `U1.%s` 的盘心上有端点：%s"
+                      % (tag, cid, " , ".join("%s" % h for h in hits)))
+    _stage("①缩宽切段", [(n2, l2, a2, b2) for (n2, l2, a2, b2) in pre])
+    _stage("②端点归并", snapped)
     # ③ 拓扑整理 ✓（**按网**做 ✓ —— 不同网相碰是**短路** ✗，绝不能“顺手接上” ✗）
     for net in sorted(res):
         cut = [(l2, p2, q2) for (n2, l2, p2, q2) in snapped if n2 == net]
@@ -376,6 +423,7 @@ def build_xml(text, res, model, pads, *, color_map=None, mil_of=None):
             mx, my = (p2[0] + q2[0]) / 2.0, (p2[1] + q2[1]) / 2.0
             m2 = RT.NECK_MIL if RT.in_neck(mx, my, zones) else wide
             raw.append((net, l2, p2, q2, m2))
+    _stage("③拓扑整理", raw)
     # ★★ 端点集合对账 ✓（2026-10-01 立 ✓，`--why` 打开 ✓）：
     #   路由器产物 `res` **自检是干净的** ✓（孤立端点 0 ✓，实测 ✓）—— 所以「悬空端点」一定是
     #   **写回这一段**（缩宽切段 / 拓扑整理 / 端点归并 / `key()` … ✗）弄出来的 ✗。
@@ -405,6 +453,7 @@ def build_xml(text, res, model, pads, *, color_map=None, mil_of=None):
         for k in gone[:8]:
             print("       ✗ 消失：(%.3f, %.3f) 层 %s" % k)
     wires = raw if NO_MERGE else merge_collinear(raw, keep)
+    _stage("④合并后", wires)
     stats_raw = len(raw)
     stats_neck = sum(1 for w in wires if w[4] == RT.NECK_MIL)
     vias = [(net, v) for net in sorted(res) for v in res[net]["vias"]]
@@ -426,7 +475,7 @@ def build_xml(text, res, model, pads, *, color_map=None, mil_of=None):
     # ── 3. 生成 ✓ ──────────────────────────────────────────────────────
     color_map = color_map or {}
     stats = dict(wires=len(wires), vias=len(vias), open_ends=0, multi=0, misses=[],
-                 raw=stats_raw, necks=stats_neck)
+                 raw=stats_raw, necks=stats_neck, cross=[])
     edits = []            # ★ 目标侧的回指 ✓（写回时补进原文件 ✓ ⇒ 两侧都写 ✓，照 Fritzing ✓）
     blocks, vblocks = [], []
     for i, (net, lay, a, b, mil) in enumerate(wires):
@@ -491,6 +540,16 @@ def build_xml(text, res, model, pads, *, color_map=None, mil_of=None):
                            _why_miss(res, net, lay, p) if RT.DIAG["on"] else ""))
                 continue
             conns.append((k, tgt))
+            # ★★ 硬闸门 ③ ✓（2026-10-01 ✓）：这条线的一端结的盘 **不许属于别的网** ✗。
+            #   起因（实测 ✓）：文件里出现一根 10 mil 的线，两端正好是 `U1.connector2`（DATA_IN）
+            #   与 `U1.connector3`（GND）✗ ⇒ 直接短路 ✗；而**路由器**三条自检全 0 ✓
+            #   （含在**最终解**上跑的那条 ✓）⇒ 说明是**写回**把它接错的 ✓。
+            if q is not None:
+                _pk = (q["title"], q["cid"])
+                _pn = pad2net.get(_pk)
+                if _pn is not None and _pn != net:
+                    stats["cross"].append("%s 线#%d 端%d 结到 `%s.%s`（属 `%s`）✗"
+                                          % (net, i, k, _pk[0], _pk[1], _pn))
         color = color_map.get(net) or NET_COLOR.get(net) \
             or PALETTE[sum(ord(c) for c in net) % len(PALETTE)]
         blocks.append(wire_block(net, i, wn + i, wmi[i], lay, a, b, conns, color,
@@ -917,27 +976,9 @@ def main(argv):
             print("       ✗ %s %s (%.3f,%.3f)→(%.3f,%.3f) ⇒ 斜了 (%.3f,%.3f) mm ✗"
                   % (net, lay, MM(a[0]), MM(a[1]), MM(b[0]), MM(b[1]),
                      MM(b[0] - a[0]), MM(b[1] - a[1])))
-        # ★★ 跨网自检 ✓（2026-10-01 ✓）：段的**某一端正好落在「别的网」的焊盘中心**上吗 ✗？
-        #   起因：实体文件里有一根 10 mil 的线，两端正好是 `PA2`(DATA_IN) 与 `VSS`(GND) ✗，
-        #   而路由器眼里的映射是**对的** ✓（`GND`={connector3,connector20} ✓）⇒ 查产物 ✓。
-        _owner = {}
-        for _n, _lst in net_pads.items():
-            for _k in _lst:
-                _owner[_k] = _n
-        _centre = {}
-        for _k, _q in pads.items():
-            _centre[(round(_q["c"][0], 6), round(_q["c"][1], 6))] = _k
-        cross = []
-        for net in sorted(res):
-            for (_lay, a, b) in res[net]["segs"]:
-                for (q2, w2) in ((a, "起"), (b, "终")):
-                    k2 = _centre.get((round(q2[0], 6), round(q2[1], 6)))
-                    if k2 is not None and _owner.get(k2) not in (None, net):
-                        cross.append((net, k2, _owner.get(k2), w2))
-        print("   ⇒ **跨网自检** ✓：段端点落在**别的网**的盘心上 %d 处 ✗（必须 0 ✓）" % len(cross))
-        for (net, k, own, w2) in cross[:8]:
-            print("       ✗ 网 `%s` 的段%s端落在 `%s.%s`（属 `%s`）✗" % (net, w2, k[0], k[1], own))
-        _ = unb
+        # ★★ 跨网自检已挪到**最终解**上跑 ✓（写回之前 ✓）—— ✗ 排在这里（`[去白钻对]` 之前 ✓）
+        #   会漏掉那几轮**改出来**的问题 ✓（实测就是：文件里那根「`DATA_IN` 盘 ↔ `GND` 盘」
+        #   的 10 mil 线 ✓，在中途检查里根本看不到 ✗）。
     # ★★ 2026-10-01 定点修 ✗（用户原话：「我对 `Via5` 和 `Via6` 的必要性存疑，为什么要有它们？」✓）：
     #   实测那两颗 **相距 0.30 mm**、属 `BR+` 网，而它们之间那段在 **copper0 上完全畅通**
     #   （`via_pair_why.py` 逐格查过 ✓）⇒ 就是**白钻两颗孔** ✗。
@@ -1140,7 +1181,38 @@ def main(argv):
             return 1
 
     text, _nm = PW.read(base)
-    xml, stats, edits = build_xml(text, res, model, pads, mil_of=mil_of)
+    # ★★★ 写回前的**最终自检** ✓（2026-10-01 ✓）：必须在**所有 `res` 改动之后**跑 ✗
+    #   （`route_ripup` ✓ → `[拆线重布]` ✓ → `[去白钻对]` ✓ → `[确定性合并]` ✓）——
+    #   ✗ 排在中途会漏掉后面那几轮改出来的问题 ✓（实测踩过 ✓：文件里那根
+    #   「`DATA_IN` 盘 ↔ `GND` 盘」的 **10 mil** 线 ✓，中途检查完全看不到 ✗）。
+    if RT.DIAG["on"]:
+        _owner = {}
+        for _n, _lst in net_pads.items():
+            for _k in _lst:
+                _owner[_k] = _n
+        _centre = {}
+        for _k, _q in pads.items():
+            _centre[(round(_q["c"][0], 6), round(_q["c"][1], 6))] = _k
+        cross = []
+        for net in sorted(res):
+            for (_lay, a, b) in res[net]["segs"]:
+                for (q2, w2) in ((a, "起"), (b, "终")):
+                    k2 = _centre.get((round(q2[0], 6), round(q2[1], 6)))
+                    if k2 is not None and _owner.get(k2) not in (None, net):
+                        cross.append((net, k2, _owner.get(k2), w2))
+        print("   ⇒ **跨网自检（最终解）** ✓：段端点落在**别的网**的盘心上 %d 处 ✗（必须 0 ✓）"
+              % len(cross))
+        for (net, k, own, w2) in cross[:8]:
+            print("       ✗ 网 `%s` 的段%s端落在 `%s.%s`（属 `%s`）✗" % (net, w2, k[0], k[1], own))
+    xml, stats, edits = build_xml(text, res, model, pads, mil_of=mil_of, net_pads=net_pads)
+    if stats.get("cross"):
+        print("   %s **写回把它接错了**（线的一端结到别的网的盘 ✓）：%d 处 ✗"
+              % ("✗✗" if not partial else "⚠️", len(stats["cross"])))
+        for _s in stats["cross"][:8]:
+            print("      ✗ %s" % _s)
+        if not partial:
+            print("   ✗ 硬闸门 ③ 不过 ⇒ **不写文件** ✗（想先看图加 `--partial` ✓）")
+            return 1
     print("   走线 %d 条 ✓（**合并前 %d 条** ✓）｜过孔 %d 个 ✓｜**悬空端点 %d**（必须 0 ✗）｜多线共用一端 %d"
           "｜**缩宽段 %d 条**（细间距区 10 mil ✓）"
           % (stats["wires"], stats.get("raw", stats["wires"]), stats["vias"],
