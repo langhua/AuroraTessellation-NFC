@@ -44,6 +44,14 @@ import projdata                                                   # noqa: E402
 #   口径 = `「钻孔 , 环宽」` ✓（源码判定 ✓ `mazerouter.cpp:2430` ✓）⇒ 盘径 = 孔 + 2×环 ✓。
 _VIA_HOLE_VAL = "0.3mm,0.15mm"                                  # 盘 Ø0.6 mm ✓
 _VIA_HOLE_TXT = "0.3/0.15 mm 孔环（盘 Ø0.6 ✓）"
+# ★★ 2026-10-02 补 ✓：**画图偏移随尺寸变** ✗（= **铜半径 + 画布留白 0.56444 mm** ✓，
+#   见 `part_box.ring_off_mm` ✓ —— 三个独立实测点 ✓）⇒ **从同一份 `_VIA_HOLE_VAL` 解析** ✓，
+#   ✗ 别再“写死常数 / 缺省就沿用” ✗ —— 「连 `_VIA_HOLE_VAL` 改了、偏移却没改」
+#   正是 2026-10-02 那次误报的病根 ✓：用户手加的 `0.4mm,0.3mm` 过孔被按 0.3/0.15 的偏移量算
+#   ⇒ 铜心偏 0.2 mm/轴 ✗ ⇒ 校验器把**接好了的**过孔报成“孤立/悬空” ✗
+#   （而 Fritzing 里明明是通的 ✓ —— 文件里 `Wire90014056` 写着
+#    `<connect … modelIndex="90014051" layer="copper0"/>` ✓）。
+_VIA_SIZE_MM = tuple(float(x) for x in re.findall(r"([\d.]+)\s*mm", _VIA_HOLE_VAL))
 
 MM = RT.MM
 
@@ -686,12 +694,13 @@ def via_block(title_n, mi, p, j, conns=()):
     """
     # ★★ 2026-10-01 定案 ✗：过孔的 `<geometry>` **不是铜的心** —— Fritzing 把 `<geometry>` 当
     #   **svg 画布原点** ✓，铜画在局部 `(2.45039, 2.45039)`（画布单位 = 1/72 in）上 ✓
-    #   ⇒ **真铜心 = geometry + 0.86444 mm** ✓（出处见 `part_box.VIA_DRAW_OFF_MM` ✓，
-    #     实测于用户导出的 `hardware/pixel/pixel-pcb-v48_图示.svg` ✓）。
+    #   ⇒ **真铜心 = geometry + (铜半径 + 画布留白 0.56444mm)** ✓ —— ★★ 2026-10-02 修 ✗：
+    #     **偏移随尺寸变** ✗（`part_box.ring_off_mm` ✓，三个实测点 ✓）⇒ 一律传
+    #     `_VIA_SIZE_MM`（从 `_VIA_HOLE_VAL` 解析 ✓），✗ 不再是死的 0.86444 ✗。
     #   ⇒ 路由算出来的是**铜心** ✓ ⇒ 写文件时**要减掉这个偏移** ✓，否则 Fritzing 里
     #     （以及制造出来的板上 ✗）每个过孔都偏 0.8644 mm ✗ —— 实测：加偏移前的 v48
     #     16 个孔**全部**离开它所连的走线 ✗（19 个悬空端 ✓ + 9 个孤立孔 ✓）。
-    off = PB.draw_off_units("via")
+    off = PB.draw_off_units("via", _VIA_SIZE_MM)
     geo_pcb = '<geometry z="%s" x="%s" y="%s" wireFlags="32"/>' \
               % (PW.fmt(5.5 + j * 1e-4), PW.fmt(p[0] - off), PW.fmt(p[1] - off))
     geo_flat = '<geometry z="%s" x="0" y="0" wireFlags="32"/>' % PW.fmt(4.0 + j * 1e-4)
