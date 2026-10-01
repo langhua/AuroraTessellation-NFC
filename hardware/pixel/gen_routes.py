@@ -944,8 +944,10 @@ def main(argv):
     #        ⇒ 谁都不许占它的通道 ✓（这就是“留走廊” ✓）；
     #     ③ 代价（说清 ✗）：别的网可能绕远 ✓、个别网可能因此布不通 ✗ ⇒ 用同一套
     #        “**只有总分更好才接受**”的规矩压着 ✓（不行就退回 ✓）。想对比旧行为：`--no-lock` ✓。
-    # ★★ 试过：`("5V", "RC")`（给 `RC` 也留走廊 ✓）⇒ **不加连通数** ✓ 但把过孔
-    #   从 8 抬到 16 ✗（`RC` 被钉住后别的网要绕 ✗）⇒ **退回只钉 `5V`** ✓（2026-10-01 实测对比 ✓）。
+    # ★★ 试过：`("5V", "RC")` 两张都钉 ✓ ⇒ **实测两次都不好** ✗（2026-10-01 ✓）：
+    #     · `R1` 在原位时：连通不变（8/9 ✓）但过孔 8 → 16 ✗；
+    #     · `R1` 挪出线圈后：反而掉到 **7/9** ✗（`BR+` 与 `DATA_IN` 都没通 ✓）。
+    #   ⇒ 回到**只钉 `5V`** ✓（用户选 A 时定的那一条 ✓）。
     prio_list = [p for p in ("5V",) if p in net_pads]
     locked = {}
     for prio in (() if "--no-lock" in argv else prio_list):
@@ -1166,7 +1168,7 @@ def main(argv):
         trial = RT.route_ripup(items, r, net_pads, pads, cell, via_cost, tries=tries,
                                passes=passes, width_of=width_of, first=power,
                                mid_keep=mid_keep_nets, ban_via=cand, pre=locked,
-                               verbose=False)
+                               copper_keep=[b for _l, b in copper_keep], verbose=False)
         s2 = _score(trial)
         print("   [去白钻对] 第 %d 轮：网 `%s` 的一对相隔 %.2f mm ✓（中间畅通 ✓）"
               "｜禁 %d 格 ⇒ 连通 %d/%d ✓｜过孔 %d ⇒ %d ✓"
