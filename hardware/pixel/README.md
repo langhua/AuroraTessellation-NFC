@@ -2294,6 +2294,53 @@ py -3.13 f:\git\fritzing-parts-langhua\tools\render_pcb.py pixel-pcb-v51.fzz pix
 `J1`/`J2` 没跑 ✓：摆位规范要求**焊盘朝内** ✓ ⇒ 各只剩 2 个合法朝向 ✓（45° 本来就违规 ✗）。
 `J1`/`J2` 没跑 ✓：摆位规范要求**焊盘朝内** ✓ ⇒ 各只剩 2 个合法朝向 ✓（45° 本来就违规 ✗）。
 
+### 第三十五手 ✅：**byHand 版第一次布线**（2026-10-01 ✓ 用户手画底图 ＋ 自动布信号 ✓）
+
+用户原话 ✓：「我把之前的过孔和布线都删除了，把 `J1/J2` 等固定了位置，禁止手工编辑时移动位置，
+拉了 5V 和 GND 长线，以便大电流供电能在 `J1/J2` 传递。我还旋转了 `C2` 到一个我认为合适的角度。
+我想你能不能以此版本为基础，做布线尝试」✓。
+
+底图 ✓：`pixel-pcb-v51_byHand.fzz`（用户手画 ✓，**24 mil** 粗线 ✓）⇒ 产物 ✓：**`pixel-pcb-v52_byHand.fzz`** ✓
+
+[![v52 byHand 预览](pixel-pcb-v52_byHand_preview.png)](pixel-pcb-v52_byHand_preview.png)
+
+★ **先修了一个工具 bug** ✗（是这个文件暴露出来的 ✓）：`pcb_wire.parse_trace()` 的正则写死成
+`<pcbView layer="copper0trace">` ✗，而**手画的线**被 Fritzing 写成
+`<pcbView layer="copper0trace" bottom="true">` ✓ ⇒ **18 条只认出 1 条** ✗
+（布线器与校验器**共用**这个函数 ✗ ⇒ 会把线压上去布线、而校验器**看不见**短路 ✗✗）。
+已修 ✓（库仓 `a78a4d1` ✓），回归 ✓：`pixel-pcb-v51.fzz` 仍「走线 **115** / 过孔 **8**」**逐项相同** ✓。
+
+| 试的（同一套开关 ✓） | 结果 |
+|---|---|
+| **只布 7 张信号网**（用户的 5V/GND **原样不动** ✓） | ★★ **7/7 全通 ✓✓** ｜线长 **97.5 mm** ✓｜过孔 **7** ✓｜悬空 **0** ✓｜叠（短路）**0** ✓ |
+| 9 张一起布（对照 ✓） | **6/9** ✗（布线器会把 5V/GND **再布一遍** ✗ ⇒ 挤掉信号线 ✓） |
+
+⇒ 结论 ✓：**用户的摆位（含 `C2` 转 341° ✓）能布通 ✓**；**手工拉的电力线必须"保持不动"** ✓。
+
+**★ 交给用户收尾的清单** ✓（独立复核 `pcb_check` ✓：65 处问题 → 只剩 **8 处** ✗，**全在 `J2` 那一角** ✓）：
+
+| # | 还差什么 | 位置（板坐标 mm ✓） |
+|---|---|---|
+| ①×2 | 走线 #15 的**终**端、#16 的**终**端悬空 ✗ | (52.70, 24.00)、(51.00, 27.49) |
+| ①×2 | 走线 #17 **两端**都悬空 ✗ | (52.70, 24.00) ↔ (51.00, 27.49) |
+| ③×2 | 2 颗过孔没挨到任何铜 ✗ | (52.50, 23.80)、(50.80, 27.29) |
+| ⑤ | `5V`：5 个脚还在 **5 块铜**里 ✗ | 接到 `J1`/`J2` 的 1 脚即可 ✓ |
+| ⑤ | `GND`：9 个脚还在 **7 块铜**里 ✗ | 同上 ✓ |
+| ✅ | **7 张信号网全通 ✓**（`COIL_A/COIL_B/BR+/RC/DATA_IN/DATA_OUT/LED_DIN` ✓） | **不用动** ✓ |
+
+复现 ✓（都在本目录里跑 ✓）：
+
+```bash
+py -3.13 _work\run_gen.py pixel-pcb-v51_byHand.fzz _work\bh-7net.fzz --nets=_work\bh_nets.py \
+    --via=10 --tries=6 --partial --check
+py -3.13 f:\git\fritzing-parts-langhua\tools\render_pcb.py pixel-pcb-v52_byHand.fzz \
+    pixel-pcb-v52_byHand_preview.svg --png
+py -3.13 f:\git\fritzing-parts-langhua\tools\pcb_check.py pixel-pcb-v52_byHand.fzz \
+    --nets=pixel_nets.py
+```
+
+（`_work\bh_nets.py` ✓ = 从 `pixel_nets.py` **派生**、去掉 `5V`/`GND` ✓ —— 手抄一份就等于"两套实现"✗。）
+
 ## 1. 定位
 
 - **单卖**：一片小方板 + 5 V 输入，线圈朝向被测物体 → 板载 LED 的亮度/颜色表示 13.56 MHz 近场场强。
