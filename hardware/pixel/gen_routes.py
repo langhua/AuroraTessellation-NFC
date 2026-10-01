@@ -862,7 +862,11 @@ def main(argv):
     via_cost = RT.opt(argv, "--via", RT.K_VIA, float)
     tries = RT.opt(argv, "--tries", 6, int)
     mil_sig = RT.opt(argv, "--mil-signal", RT.opt(argv, "--mil", 12, int), int)
-    mil_pow = RT.opt(argv, "--mil-power", 24, int)
+    # ★★ 2026-10-01 用户定 ✗：**5V/GND 也走 12 mil**（原来是 24 ✓）——
+    #   原话：24 mil 的 5V/GND 线**可以单独画** ✓，保证 `J1`/`J2` 直连用 24 mil 即可 ✓
+    #   ⇒ 本工具统一按 12 mil 出图 ✓；那根 24 mil 的直连由用户**另外画** ✓。
+    #   ★ 想回到 24：`--mil-power=24` ✓（一行开关 ✓）。
+    mil_pow = RT.opt(argv, "--mil-power", 12, int)
     for _m in (mil_sig, mil_pow):
         if _m not in RT.MIL_TIERS:
             raise SystemExit("✗ 线宽只能是这几档 ✓（Fritzing 的宽度下拉 ✓）：%s（mil ✓）"
@@ -1214,9 +1218,9 @@ def main(argv):
             print("   ✗ 硬闸门 ③ 不过 ⇒ **不写文件** ✗（想先看图加 `--partial` ✓）")
             return 1
     print("   走线 %d 条 ✓（**合并前 %d 条** ✓）｜过孔 %d 个 ✓｜**悬空端点 %d**（必须 0 ✗）｜多线共用一端 %d"
-          "｜**缩宽段 %d 条**（细间距区 10 mil ✓）"
+          "｜**缩宽段 %d 条**（细间距区 %d mil ✓）"
           % (stats["wires"], stats.get("raw", stats["wires"]), stats["vias"],
-             stats["open_ends"], stats["multi"], stats.get("necks", 0)))
+             stats["open_ends"], stats["multi"], stats.get("necks", 0), RT.NECK_MIL))
     if stats["open_ends"]:
         print("   ✗ 有端点谁也没接上 ⇒ %s" % ("**照写** ✗（--partial ✓）"
                                           if partial else "**不写文件** ✗"))
