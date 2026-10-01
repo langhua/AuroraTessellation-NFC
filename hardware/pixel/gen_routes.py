@@ -468,6 +468,33 @@ def build_xml(text, res, model, pads, *, color_map=None, mil_of=None, net_pads=N
     for i, (net, lay, a, b, _mil) in enumerate(wires):
         for k, p in ((0, a), (1, b)):
             wire_at.setdefault(key(p[0], p[1], lay), []).append((i, k))
+    # ── 1b. ★★ **文件里已有的线 / 过孔**也要当"能接的对象" ✓（2026-10-02 补 ✗）──────
+    #   起因（用户 2026-10-02 ✓）：要把**剩下的孤脚接到他手画的总线**上 ✓ ⇒ 新线的另一头
+    #     落在**已有线**上 ✗ —— ✗ 旧版只认"本次新写的线" ✗ ⇒ 那端**写不出 `<connect>`** ✗
+    #     ⇒ 铜是通的 ✓、但 Fritzing 里显示"没接上" ✗（用户会以为白布了 ✓）。
+    #   ★ 查表**带容差** ✓（端点可能被下面的 vertex-snap 挪 ≤ 0.05 mm ✓）。
+    #   ★ 同时要给**已有线那一侧**补回指 ✓（`edits` ✓，与焊盘同一套 ✓）。
+    ex_wire, ex_via = [], []
+    for _t in (model.get("traces") or ()):
+        if not _t.get("inst"):
+            continue
+        for _k2, _p2 in ((0, _t["a"]), (1, _t["b"])):
+            ex_wire.append((_p2[0], _p2[1], _t["layer"], _k2, _t["inst"]))
+    for _v in (model.get("vias") or ()):
+        if _v.get("inst"):            # 过孔贯通两层 ✓ ⇒ 查表不看层 ✓
+            ex_via.append((_v["p"][0], _v["p"][1], _v["inst"]))
+    EX_SNAP_U = 0.25                  # 草图单位 ✓ ≈ 0.07 mm ✓
+
+    def _near(lst, p, lay=None):
+        best = None
+        for it in lst:
+            if lay is not None and it[2] != lay:
+                continue
+            d = math.hypot(it[0] - p[0], it[1] - p[1])
+            if d <= EX_SNAP_U and (best is None or d < best[0]):
+                best = (d, it)
+        return None if best is None else best[1]
+
     # ── 2. 排号 ✓ ──────────────────────────────────────────────────────
     used = [int(x) for x in re.findall(r'modelIndex="(\d+)"', text)]
     nxt = max(used) + 1 if used else 90000001
@@ -479,6 +506,8 @@ def build_xml(text, res, model, pads, *, color_map=None, mil_of=None, net_pads=N
         via_at[key(v[1][0], v[1][1])] = dict(mi="%d" % (nxt + i), i=i)
     base_mi = nxt + len(vias)
     wmi = ["%d" % (base_mi + i) for i in range(len(wires))]
+    new_mis = set(wmi) | {d["mi"] for d in via_at.values()}   # ★ 本次新写的实例号 ✓
+    #   ✗ 别写 `{v["mi"] for v in vias}` ✗ —— 这里的 `vias` 是 `(net, p)` **元组** ✗（踩过 ✓）
 
     # ── 3. 生成 ✓ ──────────────────────────────────────────────────────
     color_map = color_map or {}
@@ -521,6 +550,16 @@ def build_xml(text, res, model, pads, *, color_map=None, mil_of=None, net_pads=N
                     stats["multi"] += 1
                 if cand:
                     tgt = ("connector%d" % cand[0][1], wmi[cand[0][0]], lay + "trace")
+            # ★★ 2026-10-02 补 ✗：再退一步 —— 接在**文件里已有的线 / 过孔**上也行 ✓
+            ex_tgt = False
+            if tgt is None:
+                _v2 = _near(ex_via, p)
+                if _v2 is not None:
+                    tgt, ex_tgt = ("connector0", _v2[2], "copper0"), True
+            if tgt is None:
+                _w2 = _near(ex_wire, p, lay)
+                if _w2 is not None:
+                    tgt, ex_tgt = ("connector%d" % _w2[3], _w2[4], lay + "trace"), True
             if tgt is None:
                 stats["open_ends"] += 1
                 if len(stats["misses"]) < 6:
@@ -548,6 +587,10 @@ def build_xml(text, res, model, pads, *, color_map=None, mil_of=None, net_pads=N
                            _why_miss(res, net, lay, p) if RT.DIAG["on"] else ""))
                 continue
             conns.append((k, tgt))
+            # ★ 目标若是**已有线 / 过孔**（不是本次新写的 ✓）⇒ 那侧也要补回指 ✓
+            #   （照 Fritzing 自己"两侧都写"的口径 ✓，见 `add_backrefs` 的注释 ✓）
+            if ex_tgt and tgt[1] and tgt[1] not in new_mis:
+                edits.append((tgt[1], tgt[0], tgt[2], "connector%d" % k, wmi[i], lay + "trace"))
             # ★★ 硬闸门 ③ ✓（2026-10-01 ✓）：这条线的一端结的盘 **不许属于别的网** ✗。
             #   起因（实测 ✓）：文件里出现一根 10 mil 的线，两端正好是 `U1.connector2`（DATA_IN）
             #   与 `U1.connector3`（GND）✗ ⇒ 直接短路 ✗；而**路由器**三条自检全 0 ✓
