@@ -2341,6 +2341,41 @@ py -3.13 f:\git\fritzing-parts-langhua\tools\pcb_check.py pixel-pcb-v52_byHand.f
 
 （`_work\bh_nets.py` ✓ = 从 `pixel_nets.py` **派生**、去掉 `5V`/`GND` ✓ —— 手抄一份就等于"两套实现"✗。）
 
+### 第三十六手 ✅：**byHand 版第二版** ⇒ `pixel-pcb-v57.fzz`（2026-10-02 ✓ **保留用户的粗电力线** ✓）
+
+用户 2026-10-02 手改（`C2` 挪到右上、转 315°；`C1` 归 0°）后授权 ✓：
+「**你直接做个新版本出来吧**」✓ ＋ 「`C2` 可以挪 ✓ / 那条线也可以绕 ✓」✓。
+
+**做法** ✓（三步 ✓，每一步都能独立复核 ✓）：
+1. 只删**我们自动布的 8 mil 线** ＋ **我们加的过孔** ✓（他的 **24 mil** 粗线**原样保留** ✓
+   —— 判据用**线宽** ✗ 不用 `bottom="true"` ✗：实测 Fritzing 与我们**都会**给底层线写那个属性 ✗）；
+2. **`C2` 微挪 `(−0.25, +0.25)` mm** ✓（自动搜"位移最小、且不再压到别人铜"的点 ✓）⇒ 那处 ④ 短路清零 ✓；
+3. **只布 7 张信号网** ✓（他的 5V/GND 长线自己不重画 ✓ —— 实测重画会挤掉信号线 ✓：9 张一起布只有 6/9 ✗）。
+
+[![v57 预览](pixel-pcb-v57_preview.png)](pixel-pcb-v57_preview.png)
+
+| 独立复核（`pcb_check` ✓ **重读文件** ✓） | 结果 |
+|---|---|
+| 走线 / 过孔 | **86 条** ✓ / **9 颗** ✓ |
+| **④ 短路** | **0 ✓** |
+| **③ 孤立过孔** | **0 ✓**（他原来那 2 颗够不着铜的孔 ✓ 顺手清掉 ✓） |
+| ① 悬空端点 | **4** ✗（他自己那两条没收尾的线 ✓，全在 `J2` 角 ✓） |
+| ⑤ 没连通的网 | **2 张** ✗：`5V`、`GND` —— **7 张信号网全通 ✓✓** |
+
+★ 本轮修掉两个**工具 bug** ✗（都是被这个文件逼出来的 ✓）：
+1. `_work/strip_pcb_wires.py` **"说删了其实没删"** ✗ —— 循环里只在"保留"分支推进 `pos` ✗
+   ⇒ 被删的块**又被装回**产物 ✗（我一度信了它自己打的字 ✗ = 又一次"**自证**"教训 ✗）
+   ⇒ 现在**写文件之前先独立数一遍产物** ✓，数字不符就**报错且不写文件** ✗。
+2. 删自己的线时**必须连过孔一起删** ✗（否则 9 颗孔全变成"孤立过孔"✗）。
+
+复现 ✓：
+```bash
+py -3.13 _work\strip_pcb_wires.py pixel-pcb-v52_byHand.fzz _work\bus2.fzz --drop-mils 8 --drop-vias
+py -3.13 _work\fix_c2.py _work\bus2.fzz _work\bus3.fzz C2 4
+py -3.13 _work\run_gen.py _work\bus3.fzz _work\v57.fzz --nets=_work\bh_nets.py --via=10 --tries=6 --partial --check
+py -3.13 f:\git\fritzing-parts-langhua\tools\pcb_check.py pixel-pcb-v57.fzz --nets=pixel_nets.py
+```
+
 ## 1. 定位
 
 - **单卖**：一片小方板 + 5 V 输入，线圈朝向被测物体 → 板载 LED 的亮度/颜色表示 13.56 MHz 近场场强。
