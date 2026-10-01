@@ -879,6 +879,15 @@ def main(argv):
     #   ⇒ 电源网取 **24 mil（标准 ✓ 0.61 mm ✓ ≈2 A ✓）** ✓、信号网 12 mil ✓。
     #   ⚠️ 全局那个 `TRACE_MM`（= 障碍/板边的膨胀量 ✓）取**两者最宽** ✓ ⇒ 对细线偏保守 ✓、安全 ✓。
     power = tuple(getattr(data, "POWER", ("5V", "GND")))
+    # ★★ 2026-10-01 实测后定 ✗（用户选 ② ✓）：**`5V` 不再“避开中间走廊”** ✓
+    #   依据（**量出来的** ✓，不是猜 ✗）：`_work/probe_5v_bisect.py` ——
+    #     干净栅格（无别人的线 ✓）里，`5V` 四对脚 `astar` **全部有路** ✓
+    #     （步骤 1 = 挖开自己的盘 ✓、步骤 2 = 再挡住别人的盘框 ✓ —— 都还是有路 ✓）
+    #     ⇒ 它失败**不是板子堵死** ✗，而是**别的网已占位**之后的事 ✓。
+    #   而 `5V` 的脚就在**板中间**（`U1` 中心 ✓，实测心 =(47.13, 18.72) mm ✓）
+    #     ⇒ 对它罚“不要进中间”是**反作用** ✗ ⇒ `mid_keep` **只留 `GND`** ✓。
+    #   ⚠️ “留路”那条规律（仓规 §5b ⑩ ✓）并未废 ✗ —— 只是对**必须进中间**的那个网不适用 ✓。
+    mid_keep_nets = tuple(n for n in power if n != "5V")
     RT.TRACE_MM = max(mil_sig, mil_pow) * RT.MIL_MM
     # ★ 两项代价旋钮（2026-09-30 用户要"图能看懂能改" ✓）—— **可以分别调** ✓，
     #   因为实测它们各管一头 ✓：
@@ -926,7 +935,7 @@ def main(argv):
           "｜**安装孔 %d 颗**（距内壁 ≥ %.2f mm ✓）"
           % (len(copper_keep), len(model.get("holes") or ()), RT.HOLE_CLEAR_MM))
     res = RT.route_ripup(items, r, net_pads, pads, cell, via_cost, tries=tries, passes=passes,
-                         width_of=width_of, first=power, mid_keep=power,
+                         width_of=width_of, first=power, mid_keep=mid_keep_nets,
                          copper_keep=[b for _l, b in copper_keep])
 
     # ★★ 成对过孔回收 ✓（2026-09-30 用户选 1 ✓，起因：用户点名 `Via11`/`Via12` 硌眼 ✗）：
@@ -1130,7 +1139,7 @@ def main(argv):
                     cand.append((px + dx * RT.U(cell), py + dy * RT.U(cell)))
         trial = RT.route_ripup(items, r, net_pads, pads, cell, via_cost, tries=tries,
                                passes=passes, width_of=width_of, first=power,
-                               mid_keep=power, ban_via=cand, verbose=False)
+                               mid_keep=mid_keep_nets, ban_via=cand, verbose=False)
         s2 = _score(trial)
         print("   [去白钻对] 第 %d 轮：网 `%s` 的一对相隔 %.2f mm ✓（中间畅通 ✓）"
               "｜禁 %d 格 ⇒ 连通 %d/%d ✓｜过孔 %d ⇒ %d ✓"
