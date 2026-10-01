@@ -43,13 +43,10 @@ HOLE_EDGE_MM = 3.0            # 孔心离板边 ✓（IPC-2221C 综述 ✓）
 HOLE_KEEP_MM = 4.0            # 孔周免铜免件环 Ø ✓（螺钉头 + 免铜 ✓）
 COPPER_EDGE_MM = 0.3          # 免铜到板边 ✓（≥0.25 ✓）
 COIL_CLR_MM = 0.3             # 件离绕组铜箔 ✓
-# ★ 孔件的**环心偏移** = `drawn − geometry` ✓（实测出来的 ✓；**按板校准** ✓）
-#   来源：用户 `holes_pads.fzz` + 导出 `holes_pads_图示.svg`（量法 `_work/svg_probe.py` ✓）
-#   ⚠️ **大板上量到的是 (−46.50, −21.11) mm ✗ 不能用到 25 mm 板** ✗（v6 实测反推＝板外 ✗）
-#      ⇒ 默认 **(0, 0)** ＝ "把 `<geometry>` 当孔心" ✓；
-#        校准：拿**这块板**的一张导出 svg ✓ 量出环心 ⇒ 传 `--hole-off-mm "dx,dy"` ✓。
-#   ★ 与 `gen_pcb.py` 用**同一个定义** ✓：`drawn = geometry + off` ✓
-HOLE_OFF_MM = (0.0, 0.0)
+# ★ 孔件的**环心偏移** = `drawn − geometry` ✓（**同 `gen_pcb.HOLE_OFF_MM`** ✓，两处同值 ✗ 改一要改二 ✓）
+#   ★★ **值收拢到库里一份** ✓（`pcb_pads.HOLE_DRAW_OFF_MM` ✓）；本文件只引用 ✓
+#      （✗ 不再写第二份字面量 ✗ —— 之前三份，改一处就漂 ✗）。
+HOLE_OFF_MM = PP.HOLE_DRAW_OFF_MM
 HOLE_OFF_BIG_BOARD_MM = (-46.50, -21.11)    # 仅存档 ✓（大板上量的 ✓，别用 ✗）
 
 RE_INST = r"(?ms)^([ \t]*)<instance\b.*?\n\1</instance>"

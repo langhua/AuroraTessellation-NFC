@@ -32,10 +32,18 @@ import zipfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import toolpaths                                                  # noqa: E402,F401
+import part_box as PB                                             # noqa: E402
 import pcb_check as PC                                            # noqa: E402
 import pcb_route as RT                                            # noqa: E402
 import pcb_wire as PW                                             # noqa: E402
 import projdata                                                   # noqa: E402
+
+# ★★ 过孔尺寸 ✓（**唯一来源** ✓）：写进文件的 `hole size` 与开头打印的说明都取它 ✓
+#   —— ✗ 以前打印那句是**写死的字符串** ✗ ⇒ 我把尺寸改小了、它还在报"0.3/0.15 mm" ✗
+#     （自己报的和写的不一样 ✗ —— 2026-10-01 实测撞到 ✓）。
+#   口径 = `「钻孔 , 环宽」` ✓（源码判定 ✓ `mazerouter.cpp:2430` ✓）⇒ 盘径 = 孔 + 2×环 ✓。
+_VIA_HOLE_VAL = "0.3mm,0.15mm"                                  # 盘 Ø0.6 mm ✓
+_VIA_HOLE_TXT = "0.3/0.15 mm 孔环（盘 Ø0.6 ✓）"
 
 MM = RT.MM
 
@@ -54,6 +62,11 @@ PALETTE = ["#418dd9", "#25cc35", "#fff800", "#ef6100", "#33ffc5", "#ab58a2",
 def key(x, y, lay=None):
     k = (round(x, 3), round(y, 3))
     return k if lay is None else (k[0], k[1], lay)
+
+
+# ★★ 端点归并容差 ✓（2026-10-01 ✓）：0.18 内部单位 ≈ **0.051 mm** ✓ ——
+#   布线格是 0.15 mm（0.53 单位 ✓）⇒ 容差保持在**半格以内**就不可能把相邻格点并掉 ✓。
+SNAP_U = 0.18
 
 
 def split_touchings(segs, tol=1e-6):
@@ -98,6 +111,54 @@ def split_touchings(segs, tol=1e-6):
     return out
 
 
+def split_neck(seg, zones, narrow_mil, wide_mil):
+    r"""把一段线在**缩宽区边界**切开 ✓ ⇒ `[(lay, a, b, mil), …]` ✓（2026-10-01 ✓）
+
+    ★★ 为什么必须切 ✗（2026-10-01 定 ✓）：缩宽只是**局部**的 ✓（进细间距件前 1.5 mm ✓）
+      —— ✗ 若按“一端落在区里就把**整根**变细”✗ ⇒ 一条跑了 5 mm 的 GND 会变成 10 mil ✗
+      （载流能力白丢 ✗）；✗ 反之若整根保持 24 mil ✗ ⇒ 区里那截仍然盖到邻盘 ✗（就是那个短路 ✓）。
+    ★ 线都是**横平竖直** ✓（4 邻域 A* ✓）⇒ 只需在直线方向上取区间 ✓。
+    """
+    lay, a, b = seg
+    hor = abs(a[1] - b[1]) < 1e-6
+    if hor:
+        lo, hi = min(a[0], b[0]), max(a[0], b[0])
+    else:
+        lo, hi = min(a[1], b[1]), max(a[1], b[1])
+    cuts = set()
+    for (zb, _w) in zones:
+        if hor:
+            if not (zb[1] <= a[1] <= zb[3]):
+                continue
+            lo2, hi2 = max(lo, zb[0]), min(hi, zb[2])
+        else:
+            if not (zb[0] <= a[0] <= zb[2]):
+                continue
+            lo2, hi2 = max(lo, zb[1]), min(hi, zb[3])
+        if lo2 < hi2:
+            cuts.add(lo2)
+            cuts.add(hi2)
+    if not cuts:
+        return [(lay, a, b, wide_mil)]
+    xs = sorted({lo, hi} | cuts)
+    out = []
+    for i in range(len(xs) - 1):
+        p, q = xs[i], xs[i + 1]
+        mid = (p + q) / 2.0
+        px, py = (mid, a[1]) if hor else (a[0], mid)
+        mil = narrow_mil if RT.in_neck(px, py, zones) else wide_mil
+        pa = (p, a[1]) if hor else (a[0], p)
+        pb = (q, a[1]) if hor else (a[0], q)
+        out.append((lay, pa, pb, mil))
+    # ★ 保持与输入**同向** ✓（a→b ✓）：调用方按端点建表 ✓，方向本身不影响连通 ✓，但保持一致便核对 ✓
+    if not hor and b[1] < a[1]:
+        out = [(l2, p2, q2, m2) for (l2, p2, q2, m2) in reversed(out)
+               for (p2, q2) in ((q2, p2),)]
+    elif hor and b[0] < a[0]:
+        out = [(l2, q2, p2, m2) for (l2, p2, q2, m2) in reversed(out)]
+    return out
+
+
 def merge_collinear(wires, keep):
     r"""把**同网同层、首尾相接、方向相同**的碎段并成一条 ✓（图更干净 ✓）
 
@@ -105,6 +166,8 @@ def merge_collinear(wires, keep):
     ★★ 规矩 ✗：**不许跨过连接点** ✓ —— 焊盘心 ✓、过孔 ✓、**两条以上线汇聚的点** ✓
       （Fritzing 的 `<connect>` 只认**端↔端** ✓ ⇒ 跨过连接点合并会把那条连接弄丢 ✗）。
       ⇒ `keep` 就是这些点 ✓；只合并"该点上恰好只有这两个端"的相邻段 ✓。
+    ★★ `mils` 也必须相同才能并 ✗（2026-10-01 ✓）：缩宽段的 `10 mil` 与粗段的 `24 mil`
+      不是同一种铜 ✓ ⇒ 并了就把缩宽作废了 ✗（短路会回来 ✓）。
     """
     out = list(wires)
     changed = True
@@ -112,9 +175,9 @@ def merge_collinear(wires, keep):
         changed = False
         for i in range(len(out)):
             for j in range(i + 1, len(out)):
-                ni, li, ai, bi = out[i]
-                nj, lj, aj, bj = out[j]
-                if ni != nj or li != lj:
+                ni, li, ai, bi, mi = out[i]
+                nj, lj, aj, bj, mj = out[j]
+                if ni != nj or li != lj or mi != mj:
                     continue
                 hit = None
                 # ★ 规范成 (起点1, 终点1, 起点2, 终点2) ✓；要求 **终点1 == 起点2** ✓
@@ -123,7 +186,7 @@ def merge_collinear(wires, keep):
                                        (bi, ai, aj, bj), (bi, ai, bj, aj)):
                     if e1 != s2 or e1 in keep:      # 接不上或撞连接点 ⇒ 不并 ✓
                         continue
-                    if sum(1 for (n2, l2, a2, b2) in out
+                    if sum(1 for (n2, l2, a2, b2, _m2) in out
                            if l2 == li and (a2 == e1 or b2 == e1)) != 2:
                         continue                     # 该点还有别的端 ⇒ 是汇聚点 ✗
                     v1 = (e1[0] - s1[0], e1[1] - s1[1])
@@ -132,7 +195,7 @@ def merge_collinear(wires, keep):
                         continue                     # 不同向（有拐角 ✓）⇒ 保留拐点 ✓
                     if v1[0] * v2[0] + v1[1] * v2[1] <= 0:
                         continue                     # 反方向（折回去 ✓）⇒ 不并 ✓
-                    hit = (ni, li, s1, e2)
+                    hit = (ni, li, s1, e2, mi)
                     break
                 if hit:
                     out[i] = hit
@@ -196,12 +259,26 @@ def build_xml(text, res, model, pads, *, color_map=None, mil_of=None):
         for lay in PC.pad_layers(q):
             pad_at[key(q["c"][0], q["c"][1], lay)] = q
     decl = declared_layers(text)      # ★ 目标 connector 在文件里声明的层 ✓（见函数注释 ✓）
+    # ★★ 细间距**缩宽区** ✓（2026-10-01 用户定 ✓）：zones = 每个细间距盘框外扩 1.5 mm ✓
+    zones = RT.neck_zones(pads)
     wire_at = {}
-    raw = []                                      # (net, lay, a, b) 碎段 ✓
+    raw = []                                      # (net, lay, a, b, mil) 碎段 ✓
     for net in sorted(res):
         d = res[net]
-        for seg in split_touchings(d["segs"]):
-            raw.append((net,) + seg)
+        wide = mil_of(net)
+        # ★★ 顺序必须是：**先按缩宽区切** ✓ → **再跑一遍拓扑整理** ✓ → 最后按位置标 mil ✓
+        #   ✗ 旧写法只切不整理 ✗ ⇒ 新切出来的 T 型接点没人管 ✗ ⇒ 端点对不上
+        #     ⇒ 实测报 **13 处“悬空端点”** ✗（v50pC/D ✓）；
+        #   ✗ 只把切点取整也治不了 ✗（另一侧的点不是切点 ✗，相差 <1e-3 却落在 `key()` 取整两侧 ✗）。
+        #   → 整理后两侧共用**同一个精确浮点值** ✓ ⇒ `key()` 自然一致 ✓。
+        cut = []
+        for seg in d["segs"]:
+            for (l2, p2, q2, _m2) in split_neck(seg, zones, RT.NECK_MIL, wide):
+                cut.append((l2, p2, q2))
+        for (l2, p2, q2) in split_touchings(cut):
+            mx, my = (p2[0] + q2[0]) / 2.0, (p2[1] + q2[1]) / 2.0
+            m2 = RT.NECK_MIL if RT.in_neck(mx, my, zones) else wide
+            raw.append((net, l2, p2, q2, m2))
     # ★ 先合并同向碎段 ✓（用户点名 ✓）—— ✗ 必须放在 `wire_at` **之前** ✓：
     #   合并后端点变了 ✓，`wire_at` 要按**合并后**的端点建表 ✓，否则连接对不上 ✗。
     keep = set()
@@ -210,13 +287,41 @@ def build_xml(text, res, model, pads, *, color_map=None, mil_of=None):
     for net in sorted(res):
         for v in res[net]["vias"]:
             keep.add(key(v[0], v[1]))
+    # ★★ 端点归并（vertex snap）✓（2026-10-01 实测定案 ✓，容差 `SNAP_U` = 0.051 mm ✓）：
+    #   ✗ 症状：写回器报一堆「端点谁也没接上，最近差 0.025 / 0.050 mm」✗ ——
+    #     它们其实是**同一个节点** ✓，只是浮点值相差 < 容差、又正好落在
+    #     `key()`（round 到 1e-3 ✓）取整的**两侧** ✗ ⇒ 表里对不上 ✗。
+    #   ✓ 做法：把**焊盘心 / 过孔心**当种子 ✓（它们是权威坐标 ✓），其余端点吸附到
+    #     容差内已存在的点上 ✓ ⇒ 两侧拿到**同一个值** ✓。
+    #   ★ 容差为什么是 0.18 内部单位（= 0.051 mm ✓）：布线格 = 0.15 mm ✓（0.53 单位 ✓）
+    #     ⇒ 容差 < 半格就**不可能**把两个相邻格点并掉 ✓（并错了会把线拉歪 ✗）。
+    reps = []
+    for q in model["pads"]:
+        reps.append((q["c"][0], q["c"][1]))
+    for net in sorted(res):
+        for v in res[net]["vias"]:
+            reps.append((v[0], v[1]))
+
+    def _snap(p):
+        for r in reps:
+            if abs(p[0] - r[0]) <= SNAP_U and abs(p[1] - r[1]) <= SNAP_U:
+                return r
+        reps.append(p)
+        return p
+
+    _r2 = []
+    for (net, lay, a, b, mil) in raw:
+        a2, b2 = _snap(a), _snap(b)
+        if a2 != b2:                       # 吸附后可能变零长 ⇒ 丢掉 ✗
+            _r2.append((net, lay, a2, b2, mil))
+    raw = _r2
     wires = merge_collinear(raw, keep)
     stats_raw = len(raw)
+    stats_neck = sum(1 for w in wires if w[4] == RT.NECK_MIL)
     vias = [(net, v) for net in sorted(res) for v in res[net]["vias"]]
-    for i, (net, lay, a, b) in enumerate(wires):
+    for i, (net, lay, a, b, _mil) in enumerate(wires):
         for k, p in ((0, a), (1, b)):
             wire_at.setdefault(key(p[0], p[1], lay), []).append((i, k))
-
     # ── 2. 排号 ✓ ──────────────────────────────────────────────────────
     used = [int(x) for x in re.findall(r'modelIndex="(\d+)"', text)]
     nxt = max(used) + 1 if used else 90000001
@@ -232,10 +337,10 @@ def build_xml(text, res, model, pads, *, color_map=None, mil_of=None):
     # ── 3. 生成 ✓ ──────────────────────────────────────────────────────
     color_map = color_map or {}
     stats = dict(wires=len(wires), vias=len(vias), open_ends=0, multi=0, misses=[],
-                 raw=stats_raw)
+                 raw=stats_raw, necks=stats_neck)
     edits = []            # ★ 目标侧的回指 ✓（写回时补进原文件 ✓ ⇒ 两侧都写 ✓，照 Fritzing ✓）
     blocks, vblocks = [], []
-    for i, (net, lay, a, b) in enumerate(wires):
+    for i, (net, lay, a, b, mil) in enumerate(wires):
         conns = []
         for k, p in ((0, a), (1, b)):
             tgt = None
@@ -299,7 +404,7 @@ def build_xml(text, res, model, pads, *, color_map=None, mil_of=None):
         color = color_map.get(net) or NET_COLOR.get(net) \
             or PALETTE[sum(ord(c) for c in net) % len(PALETTE)]
         blocks.append(wire_block(net, i, wn + i, wmi[i], lay, a, b, conns, color,
-                                 mil_of(net), decl))
+                                 mil, decl))
     for j, (net, v) in enumerate(vias):
         # ★ 过孔那侧也要写"它接的线" ✓（= 回指 ✓）—— 拿 Fritzing 自己的 `ViaModuleID`
         #   原文对出来的 ✓：它的 `connector0` 里列着两条走线 ✓（`_work/via.txt` ✓）。
@@ -417,7 +522,12 @@ def via_block(title_n, mi, p, j, conns=()):
       ⇒ 现在用 **`0.3mm,0.15mm`** ⇒ 盘 **Ø0.6 mm** ✓（小 40% ✓）。
       �工艺依据 ✓（PCBWay 标准能力 ✓）：**最小钻孔 0.15／<0.2 加价** ✓、**最小环宽 0.15mm** ✓
       ⇒ 0.3/0.15 是"常规、便宜、安全"那一档 ✓（常规三档 = 0.2/0.5、0.3/0.6、0.4/0.8 ✓）。
-      ★ 改这里必须**同步**改 `pcb_route.VIA_CLEAR_MM` ✓（过孔净空 = 盘半径 = 0.30 ✓）。
+      ★★ 2026-10-01 试验后又改回 ✗：曾试过 `0.2mm,0.15mm`（盘 0.5 ✓）与 `0.2mm,0.1mm`（盘 0.4 ✓，
+        嘉立创最小 ✓）—— 目的是让"过孔不许压盘"的禁落区小一点、好布通 ✓。
+        **实测无效** ✗（连通 8/9 → 7/9 ✓，没变好 ✗）⇒ 按本仓规矩"量完变差就回退" ✓
+        改回 **`0.3mm,0.15mm`**（盘 Ø0.6 ✓，常规且便宜那一档 ✓）。
+      ★ 改这里必须**同步**改 `pcb_route.VIA_CLEAR_MM`（= 盘半径 ✓）；
+        尺寸只此一处 ✓（打印与写文件共用 `_VIA_HOLE_VAL` ✓，免得报的和写的不一样 ✗）。
 
     ★★ 2026-09-30 补 ✗：`conns` = **它接的走线** ✓（照 Fritzing 自己的过孔原文 ✓ `_work/via.txt` ✓：
       `connector0` 里列着它接的线 ✓）；连接的 `layer` 用**那条线自己**的层 ✓（`q[2]` ✓）
@@ -425,8 +535,16 @@ def via_block(title_n, mi, p, j, conns=()):
     ★★ 并跟走线一样**写三视图** ✓（Fritzing 自己的 `ViaModuleID` 也是三视图 ✓）——
       非 PCB 两个视图只写几何 ✓、不写 connectors ✓（理由同 `wire_block` ✓：不编 ✗）。
     """
+    # ★★ 2026-10-01 定案 ✗：过孔的 `<geometry>` **不是铜的心** —— Fritzing 把 `<geometry>` 当
+    #   **svg 画布原点** ✓，铜画在局部 `(2.45039, 2.45039)`（画布单位 = 1/72 in）上 ✓
+    #   ⇒ **真铜心 = geometry + 0.86444 mm** ✓（出处见 `part_box.VIA_DRAW_OFF_MM` ✓，
+    #     实测于用户导出的 `hardware/pixel/pixel-pcb-v48_图示.svg` ✓）。
+    #   ⇒ 路由算出来的是**铜心** ✓ ⇒ 写文件时**要减掉这个偏移** ✓，否则 Fritzing 里
+    #     （以及制造出来的板上 ✗）每个过孔都偏 0.8644 mm ✗ —— 实测：加偏移前的 v48
+    #     16 个孔**全部**离开它所连的走线 ✗（19 个悬空端 ✓ + 9 个孤立孔 ✓）。
+    off = PB.draw_off_units("via")
     geo_pcb = '<geometry z="%s" x="%s" y="%s" wireFlags="32"/>' \
-              % (PW.fmt(5.5 + j * 1e-4), PW.fmt(p[0]), PW.fmt(p[1]))
+              % (PW.fmt(5.5 + j * 1e-4), PW.fmt(p[0] - off), PW.fmt(p[1] - off))
     geo_flat = '<geometry z="%s" x="0" y="0" wireFlags="32"/>' % PW.fmt(4.0 + j * 1e-4)
     c = ""
     if conns:
@@ -441,7 +559,7 @@ def via_block(title_n, mi, p, j, conns=()):
              '                    </connectors>\n')
     return ('        <instance moduleIdRef="ViaModuleID" modelIndex="%s" '
             'path=":/resources/parts/core/via.fzp">\n'
-            '            <property name="hole size" value="0.3mm,0.15mm"/>\n'
+            '            <property name="hole size" value="%s"/>\n'
             '            <title>Via%d</title>\n'
             '            <views>\n'
             '                <pcbView layer="copper0">\n'
@@ -456,7 +574,7 @@ def via_block(title_n, mi, p, j, conns=()):
             '                </schematicView>\n'
             '            </views>\n'
             '        </instance>\n'
-            % (mi, title_n, geo_pcb, c, geo_flat, geo_flat))
+            % (mi, _VIA_HOLE_VAL, title_n, geo_pcb, c, geo_flat, geo_flat))
 
 
 def add_backrefs(text, edits):
@@ -626,11 +744,20 @@ def main(argv):
     print("   线宽：电源 %s（%s %d mil ✓）／信号 %s（%s %d mil ✓）｜电源网：%s｜过孔 %s ✓"
           % ("%.4f mm" % (mil_pow * RT.MIL_MM), RT.MIL_TIERS[mil_pow], mil_pow,
              "%.4f mm" % (mil_sig * RT.MIL_MM), RT.MIL_TIERS[mil_sig], mil_sig,
-             "/".join(power), "0.3/0.15 mm 孔环（盘 Ø0.6 ✓）"))
+             "/".join(power), _VIA_HOLE_TXT))
     items, _st = RT.obstacles(model)
     passes = RT.opt(argv, "--passes", 4, int)
+    # ★★ 元件**画出来的铜**（含 NFC 线圈的螺旋 ✓）⇒ 过孔禁落区 ✓
+    #   2026-10-01 用户定 ✗：「通孔不能在元件内，并与有安全距离」✓
+    #   （校验器第 ⑦ 条 = 独立实现 ✓；这边是布线时**躲开** ✓）
+    copper_keep = [(lay, b) for q in (model.get("bodies") or ())
+                   for lay, b, _i in (q.get("shapes") or ())
+                   if lay in ("copper0", "copper1")]
+    print("   过孔禁落：元件铜 %d 块 ✓（含线圈 ✓）｜同网焊盘也禁 ✓（0.25 mm ✓）"
+          % len(copper_keep))
     res = RT.route_ripup(items, r, net_pads, pads, cell, via_cost, tries=tries, passes=passes,
-                         width_of=width_of, first=power, mid_keep=power)
+                         width_of=width_of, first=power, mid_keep=power,
+                         copper_keep=[b for _l, b in copper_keep])
 
     # ★★ 成对过孔回收 ✓（2026-09-30 用户选 1 ✓，起因：用户点名 `Via11`/`Via12` 硌眼 ✗）：
     #   实测那两颗是**一对** ✓ —— "从 `copper1` 钻下去 ✓、走约 2 mm ✓、再钻回来" ✓
@@ -647,41 +774,133 @@ def main(argv):
                      for d in r.values() for s in d["segs"]))
 
     res_s = _score(res)
-    for rnd in range(1, 3):
-        # ★ 只挑**最近的一对** ✓ —— ✗ 第一版把"每网每对"全收进来 ⇒ 一口气禁了 18 个孔位 ✗
-        #   ⇒ 布线器换个地方照样摆 ✓、结果逐字相同 ✗（实测 ✓）⇒ 小步走才有意义 ✓。
+    # ★★ 2026-10-01 定点修 ✗（用户原话：「我对 `Via5` 和 `Via6` 的必要性存疑，为什么要有它们？」✓）：
+    #   实测那两颗 **相距 0.30 mm**、属 `BR+` 网，而它们之间那段在 **copper0 上完全畅通**
+    #   （`via_pair_why.py` 逐格查过 ✓）⇒ 就是**白钻两颗孔** ✗。
+    #   ✗ 旧实现的两处弱点（就是它没能拦住的根因 ✓）：
+    #     ① 只挑**全局最近的一对** ✗ ⇒ 挑到"其实必需"的那对 ⇒ 重布失败 ⇒ 退回 ⇒ **白钻那对永远轮不到** ✗；
+    #     ② 禁 **半径 0.6 mm = 98 个格点** ✗ ⇒ 过度封禁 ⇒ 重布必然变差 ⇒ 又退回 ✗。
+    #   ✓ 现在：**只挑"中间那段在外层本来就畅通"的同网对** ✓（= 可证明多余 ✓），
+    #     并且**只禁它俩 + 紧邻一格**（9 个格点 ✓）；轮数放宽到 6 ✓；
+    #     接受条件**不变** ✓（`(连通数, −过孔数, −线长)` 更好才采纳 ✓）⇒ 风险不变 ✓。
+    grid0 = RT.make_grid(r, cell, items)
+
+    # ★★ ② 确定性合并 ✓（2026-10-01 用户选「做」✓，起因：用户点名「我对 `Via5` 和 `Via6` 的
+    #   必要性存疑」✓）：
+    #   对一对**已证明多余**的孔（同网 ✓、相距 ≤1.5 mm ✓、**中间那段在外层本来就畅通** ✓）：
+    #     · 把中间段**换到外层** ✓（**几何一点不动** ✗，只换层 ✓）
+    #     · 删掉那两颗孔 ✓
+    #   ⇒ 不走搜索 ✓、结果可验证 ✓（外层那段本来就畅通 ✓；两端外层段同层 ⇒ 接得上 ✓）。
+    #   ★ 与「去白钻对」（**重布**一遍 ✓）不同 ✗：这个是**确定性**的 ⇒ 这类对**一定**消失 ✓。
+    #   ★ 要在**最终结果**上跑 ✓（✗ 我第一次把它放在「去白钻对」之前 ⇒ 那时 `BR+` 还没长出那对 ✗
+    #     ⇒ 一个也没合到 ✓）。
+    def _touches(s, p, eps=0.6):
+        return (math.hypot(s[1][0] - p[0], s[1][1] - p[1]) <= eps
+                or math.hypot(s[2][0] - p[0], s[2][1] - p[1]) <= eps)
+
+    def _free(lay, p, q):
+        for t in (0.2, 0.4, 0.6, 0.8):
+            x = p[0] + (q[0] - p[0]) * t
+            y = p[1] + (q[1] - p[1]) * t
+            ii, jj = grid0.rc(x, y)
+            if not grid0.g[lay][jj * grid0.nx + ii]:
+                return False
+        return True
+
+    def _strip_pointless(res_):
+        n = 0
+        _skip = []
+        for _net, d in res_.items():
+            again = True
+            while again:
+                again = False
+                for i in range(len(d["vias"])):
+                    for j in range(i + 1, len(d["vias"])):
+                        va, vb = d["vias"][i], d["vias"][j]
+                        if math.hypot(va[0] - vb[0], va[1] - vb[1]) > RT.U(1.5):
+                            continue
+                        mids = [s for s in d["segs"] if _touches(s, va) and _touches(s, vb)]
+                        if len(mids) != 1:
+                            _skip.append("%s: 接两孔的段数 %d ✗" % (_net, len(mids)))
+                            continue
+                        m = mids[0]
+                        out = [s for s in d["segs"] if s is not m
+                               and (_touches(s, va) or _touches(s, vb))]
+                        if len(out) != 2 or out[0][0] != out[1][0] or out[0][0] == m[0]:
+                            _skip.append("%s: 外层段 %s（层 %s vs %s）✗"
+                                         % (_net, len(out), out[0][0] if out else "-",
+                                            out[1][0] if len(out) > 1 else "-"))
+                            continue
+                        if not _free(out[0][0], m[1], m[2]):
+                            _skip.append("%s: 外层那段不畅通 ✗" % _net)
+                            continue                  # 外层不畅通 ⇒ 这对**有用** ✓ ⇒ 不动 ✗
+                        d["segs"][d["segs"].index(m)] = (out[0][0], m[1], m[2])
+                        d["vias"].remove(va)
+                        d["vias"].remove(vb)
+                        n += 1
+                        again = True
+                        break
+                    if again:
+                        break
+        if _skip:
+            for s in sorted(set(_skip))[:8]:
+                print("   [确定性合并·跳过] %s" % s)
+        return n
+
+    for rnd in range(1, 7):
         best = None
-        for _net, d in res.items():
+        for net, d in res.items():
             vs = d["vias"]
+            mem = [(t, c) for t, c in net_pads.get(net, []) if (t, c) in pads]
+            if len(vs) < 2 or not mem:
+                continue
+            g = grid0.clone()                      # ★ 本网焊盘挖回可走 ✓（与布线器同口径 ✓）
+            RT.carve_pads(g, pads, mem, RT.U(RT.TRACE_MM / 2 + RT.CLEAR_MM))
             for i in range(len(vs)):
                 for j in range(i + 1, len(vs)):
                     dd = math.hypot(vs[i][0] - vs[j][0], vs[i][1] - vs[j][1])
-                    if best is None or dd < best[0]:
-                        best = (dd, vs[i], vs[j])
-        if best is None or best[0] > RT.U(6.0):
-            print("   [成对过孔回收] 没有 ≤6 mm 的过孔对 ⇒ 不用 ✓")
+                    if dd > RT.U(1.5):
+                        continue
+                    # 中间那段在**某一层**上是否畅通 ✓（有任一层畅通 ⇒ 白钻 ✗）
+                    free = False
+                    for lay in g.g:
+                        ok = True
+                        for t in (0.25, 0.5, 0.75):
+                            x = vs[i][0] + (vs[j][0] - vs[i][0]) * t
+                            y = vs[i][1] + (vs[j][1] - vs[i][1]) * t
+                            ii, jj = g.rc(x, y)
+                            if not g.g[lay][jj * g.nx + ii]:
+                                ok = False
+                                break
+                        free = free or ok
+                    if free and (best is None or dd < best[0]):
+                        best = (dd, vs[i], vs[j], net)
+        if best is None:
+            print("   [去白钻对] 没有「中间畅通的同网对」⇒ 不用 ✓")
             break
-        # ★ 禁**一小圈**（半径 0.6 mm ✓）—— 只禁一个格点没用 ✗：布线器挪一格照样成对 ✓
-        cand, R = [], RT.U(0.6)
+        cand, n = [], 1
         for (px, py) in (best[1], best[2]):
-            n = int(R / RT.U(cell)) + 1
             for dx in range(-n, n + 1):
                 for dy in range(-n, n + 1):
-                    if math.hypot(dx, dy) * RT.U(cell) <= R:
-                        cand.append((px + dx * RT.U(cell), py + dy * RT.U(cell)))
+                    cand.append((px + dx * RT.U(cell), py + dy * RT.U(cell)))
         trial = RT.route_ripup(items, r, net_pads, pads, cell, via_cost, tries=tries,
                                passes=passes, width_of=width_of, first=power,
                                mid_keep=power, ban_via=cand, verbose=False)
         s2 = _score(trial)
-        print("   [成对过孔回收] 第 %d 轮：最近一对相隔 %.2f mm ✓｜禁 %d 个格点 ✓"
-              " ⇒ 连通 %d/%d ✓｜过孔 %d ⇒ %d ✓"
-              % (rnd, best[0] * (1 / RT.U(1.0)) if False else
-                 (best[0] / RT.U(1.0)), len(cand), s2[0], len(trial), -res_s[1], -s2[1]))
+        print("   [去白钻对] 第 %d 轮：网 `%s` 的一对相隔 %.2f mm ✓（中间畅通 ✓）"
+              "｜禁 %d 格 ⇒ 连通 %d/%d ✓｜过孔 %d ⇒ %d ✓"
+              % (rnd, best[3], best[0] / RT.U(1.0), len(cand), s2[0], len(trial),
+                 -res_s[1], -s2[1]))
         if s2 > res_s:
             res, res_s = trial, s2
         else:
-            print("   [成对过孔回收] 这轮没更好 ⇒ **原样退回** ✓、停 ✓")
+            print("   [去白钻对] 这轮没更好 ⇒ **原样退回** ✓、停 ✓")
             break
+
+    # ★ ② 在**最终结果**上做确定性合并 ✓（顺序很关键 ✗：放前面时 `BR+` 还没长出那对 ✓）
+    n_merged = _strip_pointless(res)
+    print("   [确定性合并] 合掉 %d 对「白钻孔」（中间段换到外层 ✓、删 %d 颗孔 ✓）"
+          % (n_merged, 2 * n_merged))
 
     n_ok = sum(1 for d in res.values() if d["ok"])
     ln = sum(math.hypot(s[1][0] - s[2][0], s[1][1] - s[2][1])
@@ -714,30 +933,68 @@ def main(argv):
             for j, p in enumerate(d["vias"]):
                 print("     过孔#%-3d (%.3f, %.3f) mm" % (j, MM(p[0]), MM(p[1])))
         return 0
+    # ★★ `--partial` ✓（2026-10-01 加 ✓）：布不通 / 有残留违规时**也写文件** ✓ ——
+    #   用途**只有一个** ✓：让用户“看到长什么样” ✓（用户原话「2 吧，我看看啥样」✓）。
+    #   ✗ 绝不当成交付 ✗：文件里的问题会在下面**逐条打印** ✓，渲染时也会写明“未完成” ✓。
+    partial = "--partial" in argv
+    if partial:
+        print("   ⚠️⚠️ `--partial` 模式：**不是交付** ✗ —— 下面报的问题原样留在文件里 ✓，"
+              "仅供看效果 ✓")
     if n_ok != len(res):
         bad = [(n, d.get("note") or "") for n, d in sorted(res.items()) if not d["ok"]]
         print("   ✗ 没布通的网（%d 张）：%s" % (len(bad), "；".join(
             "%s%s" % (n, ("（%s）" % t) if t else "") for n, t in bad)))
-        print("   ✗ 有网没布通 ⇒ **不写文件** ✗（先把摆位/参数调好 ✓）")
-        return 1
+        if not partial:
+            print("   ✗ 有网没布通 ⇒ **不写文件** ✗（先把摆位/参数调好 ✓；想先看图加 `--partial` ✓）")
+            return 1
+        print("   ⚠️ `--partial` ⇒ **照写** ✗（这份图里有 %d 张网没通 ✓）" % len(bad))
+
+    # ★★ 硬闸门 ②：过孔**铜盘不许压盘** ✓（2026-10-01 补 ✗ —— 用户点名的"通孔严重错误" ✓）
+    #   起因（实测 v47 ✗）：18 个过孔里 7 个的铜盘压进邻盘，其中 `Via18`（RC）把
+    #   `U1.connector2`（PA2 / DATA_IN）压了 0.20 mm ⇒ **RC 与 DATA_IN 短路** ✗✗。
+    #   判据：孔心到盘边的距离 ≥ 盘半径 0.30（同网 ✓）/ ≥ 0.50（异网或空脚 ✓）。
+    #   ✗ 非空就**不写文件** ✗ —— 与"悬空端点必须 0"同级 ✓（宁可多几颗孔 ✗，不能短路 ✓）。
+    pad_net = {}
+    for _n, _lst in (net_pads or {}).items():
+        for _k in _lst:
+            pad_net[_k] = _n
+    vps = [(n, p) for n, d in sorted(res.items()) for p in d["vias"]]
+    badv = RT.via_pad_conflicts(vps, pads, pad_net)
+    if badv:
+        print("   ✗ 过孔铜盘压盘 %d 处 ⇒ %s" % (len(badv), "**照写** ✗（--partial ✓）"
+                                              if partial else "**不写文件** ✗："))
+        for n, p, ttl, cid, d, need in badv[:12]:
+            print("      网 %-9s 过孔(%.2f, %.2f) mm ↔ %s.%s：距边 %.3f mm < 需要 %.3f mm ✗"
+                  % (n, MM(p[0]), MM(p[1]), ttl, cid, d, need))
+        if len(badv) > 12:
+            print("      …（共 %d 处 ✓）" % len(badv))
+        if not partial:
+            return 1
 
     text, _nm = PW.read(base)
     xml, stats, edits = build_xml(text, res, model, pads, mil_of=mil_of)
     print("   走线 %d 条 ✓（**合并前 %d 条** ✓）｜过孔 %d 个 ✓｜**悬空端点 %d**（必须 0 ✗）｜多线共用一端 %d"
+          "｜**缩宽段 %d 条**（细间距区 10 mil ✓）"
           % (stats["wires"], stats.get("raw", stats["wires"]), stats["vias"],
-             stats["open_ends"], stats["multi"]))
+             stats["open_ends"], stats["multi"], stats.get("necks", 0)))
     if stats["open_ends"]:
-        print("   ✗ 有端点谁也没接上 ⇒ **不写文件** ✗")
+        print("   ✗ 有端点谁也没接上 ⇒ %s" % ("**照写** ✗（--partial ✓）"
+                                          if partial else "**不写文件** ✗"))
         for s in stats.get("misses", []):
             print("      %s" % s)
-        return 1
+        if not partial:
+            return 1
     n = write(base, out, xml, edits)
     print("   ✓ 已写出 %s（插入 %d 字符 ✓）" % (os.path.basename(out), n))
 
     if "--check" in argv:
         print("\n== 独立复核（**重新读刚写的文件** ✓）==")
         m2 = PC.collect(out)
-        probs, notes = PC.check(m2, expect=net_pads)
+        # ★ 复核器的 `expect` 要 **dict：网名 → [`"位号.connectorN"`, …] 字符串** ✓
+        #   （✗ 我先前直接把 `net_pads` 的元组喂进去 ⇒ 33 条假报把真问题淹了 ✗ —— 2026-10-01 实测 ✓）
+        expect = {n: ["%s.%s" % (t, c) for (t, c) in lst]
+                  for n, lst in (net_pads or {}).items()}
+        probs, notes, _g = PC.check(m2, expect=expect or None)
         for s in notes:
             print("   · %s" % s)
         for s in probs:
