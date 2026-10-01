@@ -934,9 +934,32 @@ def main(argv):
     print("   过孔禁落：元件铜 %d 块 ✓（含线圈 ✓）｜同网焊盘也禁 ✓（0.25 mm ✓）"
           "｜**安装孔 %d 颗**（距内壁 ≥ %.2f mm ✓）"
           % (len(copper_keep), len(model.get("holes") or ()), RT.HOLE_CLEAR_MM))
+    # ★★ A 案：「**留走廊**」✓（2026-10-01 用户选 A ✓）
+    #   依据（量出来的 ✓，不是猜 ✗）：统一 `flood`/`astar` 口径后，`5V` 在**真实规则**下
+    #     确实**没路** ✗（`_work/probe_5v_bisect.py`：干净栅格里四对脚全有路 ✓
+    #      ⇒ 堵它的是**别的网已占的线** ✓）。
+    #   做法（用引擎已有的 `pre` 机制 ✓ —— “已布好、不重布、仍旧当障碍” ✓）：
+    #     ① 先把 `5V` **单独**布好 ✓（此刻没任何别的线 ✓，它拿到的就是最短通道 ✓）；
+    #     ② 把它**钉住** ✓ ⇒ 后面每一个网的栅格里，它的铜都是**硬障碍** ✓
+    #        ⇒ 谁都不许占它的通道 ✓（这就是“留走廊” ✓）；
+    #     ③ 代价（说清 ✗）：别的网可能绕远 ✓、个别网可能因此布不通 ✗ ⇒ 用同一套
+    #        “**只有总分更好才接受**”的规矩压着 ✓（不行就退回 ✓）。想对比旧行为：`--no-lock` ✓。
+    prio = "5V"
+    locked = {}
+    if "--no-lock" not in argv and prio in net_pads:
+        _one = RT.route(items, r, {prio: net_pads[prio]}, pads, cell, via_cost,
+                        verbose=False, tries=tries, width_of=width_of,
+                        copper_keep=[b for _l, b in copper_keep])
+        if _one.get(prio, {}).get("ok"):
+            locked = {prio: _one[prio]}
+            print("   [留走廊] 先把 `%s` 单独布好并**钉住** ✓（段 %d ｜过孔 %d ✓）"
+                  "⇒ 其余网的栅格里它是硬障碍 ✓"
+                  % (prio, len(locked[prio]["segs"]), len(locked[prio]["vias"])))
+        else:
+            print("   [留走廊] `%s` 单独布都**没通** ✗ ⇒ 不钉 ✓（说明问题不在别人挡它 ✓）" % prio)
     res = RT.route_ripup(items, r, net_pads, pads, cell, via_cost, tries=tries, passes=passes,
                          width_of=width_of, first=power, mid_keep=mid_keep_nets,
-                         copper_keep=[b for _l, b in copper_keep])
+                         copper_keep=[b for _l, b in copper_keep], pre=locked)
 
     # ★★ 成对过孔回收 ✓（2026-09-30 用户选 1 ✓，起因：用户点名 `Via11`/`Via12` 硌眼 ✗）：
     #   实测那两颗是**一对** ✓ —— "从 `copper1` 钻下去 ✓、走约 2 mm ✓、再钻回来" ✓
@@ -1139,7 +1162,8 @@ def main(argv):
                     cand.append((px + dx * RT.U(cell), py + dy * RT.U(cell)))
         trial = RT.route_ripup(items, r, net_pads, pads, cell, via_cost, tries=tries,
                                passes=passes, width_of=width_of, first=power,
-                               mid_keep=mid_keep_nets, ban_via=cand, verbose=False)
+                               mid_keep=mid_keep_nets, ban_via=cand, pre=locked,
+                               verbose=False)
         s2 = _score(trial)
         print("   [去白钻对] 第 %d 轮：网 `%s` 的一对相隔 %.2f mm ✓（中间畅通 ✓）"
               "｜禁 %d 格 ⇒ 连通 %d/%d ✓｜过孔 %d ⇒ %d ✓"
