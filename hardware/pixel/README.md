@@ -2528,6 +2528,7 @@ SPI 栏都是 **1** ✓，引脚就是 **`PC5/PC6/PC7` = SCK/MOSI/MISO**（pin 1
 
 | 文档 | 内容 | 在 P1 下的状态 |
 |---|---|---|
+| `coil-spec.md` | **L1 线圈**：现在的规格（含实测匝距/匝间缝 ✓）、可换档位表、**每档的感应电压/电感代价**、方案 B 的布线实测 ✓ | **支撑 §3 的元件清单** ✓；换线圈规格前先看它 ✓ |
 | `docs/phase-1-4x4-validation.md` | 集中式方案 M0~M5、TS3A/MUX 拓扑 | 历史记录，**不改**；M1 模拟前端验证仍有效 |
 | `hardware/subboard_4x4/schematic-spec.md` | 16 路 + 4×TS3A + MUX 连接表 | 同上（P2 方案依据） |
 | `hardware/subboard_4x4/single-channel/` | 已送厂的单通道板（Gerber v0.1.3） | **照原计划打板**，用于验证模拟前端量级 |
