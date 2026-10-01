@@ -1045,6 +1045,37 @@ def main(argv):
                         if not _free(out[0][0], m[1], m[2]):
                             _skip.append("%s: 外层那段不畅通 ✗" % _net)
                             continue                  # 外层不畅通 ⇒ 这对**有用** ✓ ⇒ 不动 ✗
+                        # ★★ 2026-10-01 补 ✗：`_free` 只看**静态障碍**（焊盘 / 件铜 / 安装孔 ✓
+                        #   = 初始 `grid0` ✓）—— ✗ 看不见**别的网的走线/过孔** ✗
+                        #   ⇒ 实测真凶 ✓：v62 `[短路计数]` 拆线重布后 **0** 对 ✓、
+                        #     确定性合并后 **1** 对 ✗（`DATA_OUT` 换到 copper0 ⇒ 横跨 `BR+` 的竖段 ✓）
+                        #   ⇒ 这里加一道**动态闸门** ✓：新段（ + 两个孔位 ✓）与**别的网**的
+                        #     线/过孔只要**铜叠**就**不换** ✓（宁可留着那两颗孔 ✗，不许短路 ✓）。
+                        #   ★ 只**跳过**、不改几何 ✗ ⇒ 连通性不会因此变差 ✓（最多少合一对孔 ✓）。
+                        _ln, _p, _q = out[0][0], m[1], m[2]
+                        _hw = RT.U(width_of(_net) / 2.0)
+                        _hit = None
+                        for _n2, _d2 in res_.items():
+                            if _n2 == _net:
+                                continue
+                            _hw2 = RT.U(width_of(_n2) / 2.0)
+                            for _s2 in _d2["segs"]:
+                                if RT.copper_overlap((_ln, _p, _q), _hw, _s2, _hw2):
+                                    _hit = "线"
+                                    break
+                            if not _hit:
+                                for _v2 in _d2["vias"]:      # 别人家的过孔 ✓（写成退化段 ✓）
+                                    if RT.copper_overlap((_ln, _p, _q), _hw,
+                                                         (_ln, _v2, _v2),
+                                                         RT.U(0.30)):
+                                        _hit = "过孔"
+                                        break
+                            if _hit:
+                                _skip.append("%s: 换到外层会与 `%s` 的%s**铜叠** ✗"
+                                             % (_net, _n2, _hit))
+                                break
+                        if _hit:
+                            continue
                         d["segs"][d["segs"].index(m)] = (out[0][0], m[1], m[2])
                         d["vias"].remove(va)
                         d["vias"].remove(vb)
@@ -1058,6 +1089,9 @@ def main(argv):
                 print("   [确定性合并·跳过] %s" % s)
         return n
 
+    # ★ 短路计数 ①：**拆线重布之后**（`--why` 的自检只查"端落在别的网盘心" ✗，
+    #   查不到"两根线铜叠上" ✗ ⇒ 先量一下 ✓；口径 = `RT.copper_clashes` ✓ 唯一实现 ✓）
+    print("   [短路计数] 拆线重布之后：叠 %d 对 ✓" % len(RT.copper_clashes(res, width_of)))
     for rnd in range(1, 7):
         best = None
         for net, d in res.items():
@@ -1112,6 +1146,15 @@ def main(argv):
     n_merged = _strip_pointless(res)
     print("   [确定性合并] 合掉 %d 对「白钻孔」（中间段换到外层 ✓、删 %d 颗孔 ✓）"
           % (n_merged, 2 * n_merged))
+
+    # ★ 短路计数 ②：**确定性合并之后** ✓ ⇒ 与 ① 一比就知道是哪一步叠上的 ✓（先量后修 ✓）
+    _bad = RT.copper_clashes(res, width_of)
+    print("   [短路计数] 确定性合并之后：叠 %d 对 ✓" % len(_bad))
+    for (_na, _nb, _sa, _sb, _gp) in _bad[:4]:
+        print("      ✗ `%s`×`%s` 叠 %.3f mm ✓：%s (%.3f,%.3f)→(%.3f,%.3f) ／ %s (%.3f,%.3f)→(%.3f,%.3f)"
+              % (_na, _nb, -_gp / RT.U(1.0), _sa[0],
+                 MM(_sa[1][0]), MM(_sa[1][1]), MM(_sa[2][0]), MM(_sa[2][1]),
+                 _sb[0], MM(_sb[1][0]), MM(_sb[1][1]), MM(_sb[2][0]), MM(_sb[2][1])))
 
     n_ok = sum(1 for d in res.values() if d["ok"])
     ln = sum(math.hypot(s[1][0] - s[2][0], s[1][1] - s[2][1])
