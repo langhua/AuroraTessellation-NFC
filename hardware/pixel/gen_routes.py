@@ -1226,8 +1226,14 @@ def main(argv):
     # ★★ `--partial` ✓（2026-10-01 加 ✓）：布不通 / 有残留违规时**也写文件** ✓ ——
     #   用途**只有一个** ✓：让用户“看到长什么样” ✓（用户原话「2 吧，我看看啥样」✓）。
     #   ✗ 绝不当成交付 ✗：文件里的问题会在下面**逐条打印** ✓，渲染时也会写明“未完成” ✓。
-    partial = "--partial" in argv
-    if partial:
+    # ★★ 交付开关 ✓（2026-10-01 用户定 ✓）：
+    #   `--partial` = 草稿（只为看效果 ✓）；`--deliver` = **交付** ✓ —— 用户 **明确点头**
+    #     接受"已知还剩 N 处问题"时用它 ✓ ⇒ 同样照写 ✓，但日志里**不许**再写"不是交付" ✗。
+    partial = "--partial" in argv or "--deliver" in argv
+    deliver = "--deliver" in argv
+    if deliver:
+        print("   ✓ `--deliver`（交付 ✓）：已知问题**原样留在文件里** ✓ —— 用户 2026-10-01 点头 ✓")
+    elif partial:
         print("   ⚠️⚠️ `--partial` 模式：**不是交付** ✗ —— 下面报的问题原样留在文件里 ✓，"
               "仅供看效果 ✓")
     if n_ok != len(res):
@@ -1237,7 +1243,9 @@ def main(argv):
         if not partial:
             print("   ✗ 有网没布通 ⇒ **不写文件** ✗（先把摆位/参数调好 ✓；想先看图加 `--partial` ✓）")
             return 1
-        print("   ⚠️ `--partial` ⇒ **照写** ✗（这份图里有 %d 张网没通 ✓）" % len(bad))
+        print("   ⚠️ 照写 ✓（%s ✓）：这份图里有 %d 张网没通 ✓"
+              % ("交付" if deliver else "--partial", len(bad)))
+    # ★ 交付时把"没通哪几张"**原样写进日志** ✓（不许只写在人脑里 ✗）
     if RT.DIAG["on"] and RT.DIAG["fails"]:
         print("\n   == 为什么布不通（`--why` 诊断 ✓，`flood` 与 A* 同口径 ✓）==")
         for s in RT.DIAG["fails"]:
