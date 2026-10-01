@@ -121,6 +121,13 @@ def split_neck(seg, zones, narrow_mil, wide_mil):
     """
     lay, a, b = seg
     hor = abs(a[1] - b[1]) < 1e-6
+    ver = abs(a[0] - b[0]) < 1e-6
+    if not (hor or ver):
+        # ★★ 斜段 ⇒ **不切** ✗（2026-10-01 补 ✓）：切法（下面的 `xs`）只对**横平竖直**成立 ✓
+        #   ⇒ ✗ 拿斜段当竖段切 ⇒ 会把端点**搬走** ✗（实测：这就是 17 处悬空端点的**放大器** ✓，
+        #     真正的源头是布线器的“吸附端点”造出 33 条斜段 ✓，已在 `pcb_route._snap_ends` 修掉 ✓）。
+        #   ⇒ 这里原样放行 ✓（宁可不缩宽，也绝不改几何 ✗）。
+        return [(lay, a, b, wide_mil)]
     if hor:
         lo, hi = min(a[0], b[0]), max(a[0], b[0])
     else:
@@ -248,6 +255,53 @@ def decl_layer(decl, mi, cid):
     return lays.pop() if len(lays) == 1 else None
 
 
+def _why_miss(res, net, lay, p):
+    r"""✗ 报「悬空端点」时顺手查**源头** ✓（2026-10-01 立 ✓，`--why` 打开 ✓）
+
+    `res` = **布线器产物** ✓（它的自检是干净的 ✓：孤立端点 0 ✓，实测 ✓）
+    ⇒ 所以只要看：`res` 里离这个悬空端点**最近的端点**在哪、多远 ✓：
+      · 差 ≈ 0（≤ 3×`SNAP_U` ✓）⇒ 这个点**本来是端点** ✓、被写回**搬走**了 ✗（元凶 ✓）；
+      · 差很大 ⇒ 这个点**本来不是**端点 ✓（是**切段**切出来的新点 ✓）
+        ⇒ 那就说明它的**对家那一截丢了** ✗ 或 **mil 不同没并上** ✗。
+    """
+    segs = (res.get(net) or {}).get("segs") or ()
+    best = None
+    for (l2, a2, b2) in segs:
+        for q2 in (a2, b2):
+            dd = math.hypot(q2[0] - p[0], q2[1] - p[1])
+            if best is None or dd < best[0]:
+                best = (dd, l2, q2)
+    for v in (res.get(net) or {}).get("vias") or ():
+        dd = math.hypot(v[0] - p[0], v[1] - p[1])
+        if best is None or dd < best[0]:
+            best = (dd, "过孔", v)
+    if best is None:
+        return "｜✗ `res` 里这张网没有任何端点"
+    same = "同层" if best[1] == lay else ("另层 %s" % best[1])
+    # ★ 把**这个点上的搭子**列出来 ✓（`res` 里以该点为端点的**其它**段 ✓ ⇒ 它就是被弄丢的那一截 ✓）：
+    near = []
+    for (l2, a2, b2) in segs:
+        for q2, q3 in ((a2, b2), (b2, a2)):
+            if math.hypot(q2[0] - p[0], q2[1] - p[1]) <= SNAP_U:
+                near.append("%s 段(%.3f,%.3f)→(%.3f,%.3f)"
+                            % (l2, MM(q3[0]), MM(q3[1]), MM(q2[0]), MM(q2[1])))
+    for v in (res.get(net) or {}).get("vias") or ():
+        if math.hypot(v[0] - p[0], v[1] - p[1]) <= SNAP_U:
+            near.append("过孔")
+    tail = ("｜该点上的搭子：%s" % "︱".join(near[:3])) if near else "｜该点上**没有搭子** ✗"
+    if best[0] <= SNAP_U * 3:
+        return ("｜✗ `res` 端点**就在原位**（%s ✓，差 %.3f mm）⇒ 是**写回搬走**的 ✗%s"
+                % (same, MM(best[0]), tail))
+    return ("｜✓ `res` 最近端点 %s 差 %.3f mm ⇒ 这个点**本是切出来的** ✓"
+            "（说明对家那截丢了 ✗ 或 mil 不同没并上 ✗）%s"
+            % (same, MM(best[0]), tail))
+
+
+# ★★ 临时诊断开关 ✓（2026-10-01 ✓）：`--nomerge` ⇒ 跳过最后的「合并同向同 mil 段」✓
+#   用途：一次实验就能分辨「断头是**合并**弄的 ✗ 还是**切段/归并**弄的 ✗」。
+NO_MERGE = []
+
+
 def build_xml(text, res, model, pads, *, color_map=None, mil_of=None):
     """把布线结果变成 XML 实例片段 ✓ ⇒ `(xml, stats)`"""
     mil_of = mil_of or (lambda n: RT.TRACE_MIL)     # ★ 按网分宽 ✓（没给 ⇒ 全局那档 ✓）
@@ -263,22 +317,22 @@ def build_xml(text, res, model, pads, *, color_map=None, mil_of=None):
     zones = RT.neck_zones(pads)
     wire_at = {}
     raw = []                                      # (net, lay, a, b, mil) 碎段 ✓
+    # ★★★ 写回的流水顺序 ✗✓（2026-10-01 定案 ✓，实测把 17 处悬空端点治掉的**唯一**原因 ✓）：
+    #     ① 按缩宽区**切段**（只切、先不标 mil ✓）
+    #     ② **端点归并**（全局一起做 ✓ —— 两侧必须拿到**同一个 rep** ✓）
+    #     ③ **拓扑整理**（`split_touchings` ✓）—— ★ 必须在②**之后** ✗
+    #     ④ 按位置标 mil ✓（`in_neck` 看中点 ✓）
+    #     ⑤ 合并同向同 mil 段 ✓（`merge_collinear` ✓）
+    #   ✗ 旧顺序是 ①→③→② ✗ ⇒ 端点归并把端点挪了 ≤0.051 mm ✓，而它的对家往往是
+    #     **另一条线段的中段**（T 型 ✓）⇒ 挪开就**断** ✗。实测证据 ✓：路由器产物自检
+    #     **孤立端点 0** ✓（布线器是干净的 ✓），而对账发现 `res` 的端点有 **19 个“消失”** ✗
+    #     ＝ 被②搬走了 ✓ ⇒ 对不上 ⇒ 报成 17 处「悬空端点」✗。
+    pre = []                                       # (net, lay, a, b) ✓
     for net in sorted(res):
         d = res[net]
-        wide = mil_of(net)
-        # ★★ 顺序必须是：**先按缩宽区切** ✓ → **再跑一遍拓扑整理** ✓ → 最后按位置标 mil ✓
-        #   ✗ 旧写法只切不整理 ✗ ⇒ 新切出来的 T 型接点没人管 ✗ ⇒ 端点对不上
-        #     ⇒ 实测报 **13 处“悬空端点”** ✗（v50pC/D ✓）；
-        #   ✗ 只把切点取整也治不了 ✗（另一侧的点不是切点 ✗，相差 <1e-3 却落在 `key()` 取整两侧 ✗）。
-        #   → 整理后两侧共用**同一个精确浮点值** ✓ ⇒ `key()` 自然一致 ✓。
-        cut = []
         for seg in d["segs"]:
-            for (l2, p2, q2, _m2) in split_neck(seg, zones, RT.NECK_MIL, wide):
-                cut.append((l2, p2, q2))
-        for (l2, p2, q2) in split_touchings(cut):
-            mx, my = (p2[0] + q2[0]) / 2.0, (p2[1] + q2[1]) / 2.0
-            m2 = RT.NECK_MIL if RT.in_neck(mx, my, zones) else wide
-            raw.append((net, l2, p2, q2, m2))
+            for (l2, p2, q2, _m2) in split_neck(seg, zones, RT.NECK_MIL, mil_of(net)):
+                pre.append((net, l2, p2, q2))
     # ★ 先合并同向碎段 ✓（用户点名 ✓）—— ✗ 必须放在 `wire_at` **之前** ✓：
     #   合并后端点变了 ✓，`wire_at` 要按**合并后**的端点建表 ✓，否则连接对不上 ✗。
     keep = set()
@@ -309,13 +363,48 @@ def build_xml(text, res, model, pads, *, color_map=None, mil_of=None):
         reps.append(p)
         return p
 
-    _r2 = []
-    for (net, lay, a, b, mil) in raw:
+    snapped = []                                   # (net, lay, a, b) ✓（已归并 ✓）
+    for (net, lay, a, b) in pre:
         a2, b2 = _snap(a), _snap(b)
-        if a2 != b2:                       # 吸附后可能变零长 ⇒ 丢掉 ✗
-            _r2.append((net, lay, a2, b2, mil))
-    raw = _r2
-    wires = merge_collinear(raw, keep)
+        if a2 != b2:                               # 归并后可能变零长 ⇒ 丢掉 ✗
+            snapped.append((net, lay, a2, b2))
+    # ③ 拓扑整理 ✓（**按网**做 ✓ —— 不同网相碰是**短路** ✗，绝不能“顺手接上” ✗）
+    for net in sorted(res):
+        cut = [(l2, p2, q2) for (n2, l2, p2, q2) in snapped if n2 == net]
+        wide = mil_of(net)
+        for (l2, p2, q2) in split_touchings(cut):
+            mx, my = (p2[0] + q2[0]) / 2.0, (p2[1] + q2[1]) / 2.0
+            m2 = RT.NECK_MIL if RT.in_neck(mx, my, zones) else wide
+            raw.append((net, l2, p2, q2, m2))
+    # ★★ 端点集合对账 ✓（2026-10-01 立 ✓，`--why` 打开 ✓）：
+    #   路由器产物 `res` **自检是干净的** ✓（孤立端点 0 ✓，实测 ✓）—— 所以「悬空端点」一定是
+    #   **写回这一段**（缩宽切段 / 拓扑整理 / 端点归并 / `key()` … ✗）弄出来的 ✗。
+    #   判据：拿 `res` 的端点集合与写回后 `wires` 的端点集合**对一遍** ✓ ——
+    #   ① `res` 有、`wires` 没有 ⇒ 端点被**搬走**了 ✗（元凶 ✓）；② `wires` 多出来的是切段 ✓（正常 ✓）。
+    if RT.DIAG["on"]:
+        def _ends(segs):
+            s = set()
+            for (lay, a, b) in segs:
+                s.add((key(a[0], a[1], lay)))
+                s.add((key(b[0], b[1], lay)))
+            return s
+        e_res = set()
+        for net in sorted(res):
+            e_res |= _ends(res[net]["segs"])
+            for v in res[net]["vias"]:
+                for lay in ("copper0", "copper1"):
+                    e_res.add(key(v[0], v[1], lay))
+        e_out = set()
+        for (net, lay, a, b, _m) in raw:
+            e_out.add(key(a[0], a[1], lay))
+            e_out.add(key(b[0], b[1], lay))
+        gone = sorted(e_res - e_out)
+        add = sorted(e_out - e_res)
+        print("   ⇒ **端点对账** ✓：`res` %d 个 ✓｜写回后 %d 个 ✓｜**消失 %d** ✗｜新切出 %d ✓"
+              % (len(e_res), len(e_out), len(gone), len(add)))
+        for k in gone[:8]:
+            print("       ✗ 消失：(%.3f, %.3f) 层 %s" % k)
+    wires = raw if NO_MERGE else merge_collinear(raw, keep)
     stats_raw = len(raw)
     stats_neck = sum(1 for w in wires if w[4] == RT.NECK_MIL)
     vias = [(net, v) for net in sorted(res) for v in res[net]["vias"]]
@@ -395,10 +484,11 @@ def build_xml(text, res, model, pads, *, color_map=None, mil_of=None):
                         if best is None or dd < best[0]:
                             best = (dd, "via mi=%s" % vv["mi"])
                     stats["misses"].append(
-                        "%s 线#%d 端%d 在 (%s, %s) 层 %s ⇒ 最近: %s 差 %s mm"
+                        "%s 线#%d 端%d 在 (%s, %s) 层 %s ⇒ 最近: %s 差 %s mm%s"
                         % (net, i, k, PW.fmt(p[0]), PW.fmt(p[1]), lay,
                            best[1] if best else "-",
-                           ("%.3f" % MM(best[0])) if best else "-"))
+                           ("%.3f" % MM(best[0])) if best else "-",
+                           _why_miss(res, net, lay, p) if RT.DIAG["on"] else ""))
                 continue
             conns.append((k, tgt))
         color = color_map.get(net) or NET_COLOR.get(net) \
@@ -701,6 +791,13 @@ def main(argv):
         print(__doc__)
         return 2
     base, out = rest[0], rest[1]
+    # ★ 布不通时的**诊断** ✓（2026-10-01 ✓）：`--why` ⇒ 每条失败的段都报
+    #   「起点能泛洪到多少格 ✓／目标在不在可达集里 ✓」⇒ 一眼分清
+    #   「真没路」✗ 与「有路但 A* 没搜到 / 代价把它顶歪」✗（不再猜 ✗）。
+    if "--why" in argv:
+        RT.DIAG["on"] = True
+    if "--nomerge" in argv:
+        NO_MERGE.append(1)
     data = projdata.load(netsf, need=("NETS",))
     cell = RT.opt(argv, "--cell", RT.CELL_MM, float)
     via_cost = RT.opt(argv, "--via", RT.K_VIA, float)
@@ -739,7 +836,14 @@ def main(argv):
     net_pads, unresolved = RT.resolve_nets(model, data.NETS)
     if unresolved:
         print("✗ 脚名解析不了：%s" % ", ".join(unresolved))
-        return 2
+    # ★ 把**路由器眼里的映射**打出来 ✓（2026-10-01 ✓）：核对「`U1` 的哪些脚算进了哪张网」✓
+    #   起因：实测有一根线把 `PA2`（DATA_IN）与 `VSS`（GND）连起来 ✗，
+    #   而 `pixel_nets.py` 的 `NETS` / `EXPECT` 两边**都是对的** ✓ ⇒ 查路由器这边 ✓。
+    if RT.DIAG["on"]:
+        for _n in sorted(net_pads):
+            _u = sorted(c for (t, c) in net_pads[_n] if t == "U1")
+            if _u:
+                print("   [--why] 网 `%s` 含 U1 的脚：%s" % (_n, ", ".join(_u)))
     print("== 自动布线 + 写回：%s ⇒ %s ==" % (os.path.basename(base), os.path.basename(out)))
     print("   线宽：电源 %s（%s %d mil ✓）／信号 %s（%s %d mil ✓）｜电源网：%s｜过孔 %s ✓"
           % ("%.4f mm" % (mil_pow * RT.MIL_MM), RT.MIL_TIERS[mil_pow], mil_pow,
@@ -754,7 +858,8 @@ def main(argv):
                    for lay, b, _i in (q.get("shapes") or ())
                    if lay in ("copper0", "copper1")]
     print("   过孔禁落：元件铜 %d 块 ✓（含线圈 ✓）｜同网焊盘也禁 ✓（0.25 mm ✓）"
-          % len(copper_keep))
+          "｜**安装孔 %d 颗**（距内壁 ≥ %.2f mm ✓）"
+          % (len(copper_keep), len(model.get("holes") or ()), RT.HOLE_CLEAR_MM))
     res = RT.route_ripup(items, r, net_pads, pads, cell, via_cost, tries=tries, passes=passes,
                          width_of=width_of, first=power, mid_keep=power,
                          copper_keep=[b for _l, b in copper_keep])
@@ -774,6 +879,65 @@ def main(argv):
                      for d in r.values() for s in d["segs"]))
 
     res_s = _score(res)
+    # ★★ 路由器**产物自检** ✓（2026-10-01 立 ✓，`--why` 打开 ✓）：
+    #   目的 = 分开两件事 ✗（写回端一直报「悬空端点」✗，但到底是**谁**弄断的 ✓ 不知道 ）：
+    #     ① 布线器自己就断了（`res` 里端点谁也不靠 ✗）；
+    #     ② 布线器是好的 ✓、是**写回**（缩宽切段 / 拓扑整理 / 端点归并 / `key()` 取整 ✗）弄断的 ✓。
+    #   判据 = 每个端点必须落在 ① 焊盘心 ✓、② 过孔心 ✓、③ 别的段端点 ✓ 三者之一上 ✓。
+    if RT.DIAG["on"]:
+        ats = {}
+        for q in model["pads"]:
+            for lay in PC.pad_layers(q):
+                ats.setdefault(key(q["c"][0], q["c"][1], lay), []).append("pad:%s.%s"
+                                                                          % (q["title"], q["cid"]))
+        for net in sorted(res):
+            d = res[net]
+            for (lay, a, b) in d["segs"]:
+                ats.setdefault(key(a[0], a[1], lay), []).append("seg")
+                ats.setdefault(key(b[0], b[1], lay), []).append("seg")
+            for v in d["vias"]:
+                for lay in ("copper0", "copper1"):
+                    ats.setdefault(key(v[0], v[1], lay), []).append("via")
+        lone = [(k, v) for k, v in ats.items() if len(v) < 2 and not v[0].startswith("pad")]
+        print("   ⇒ **路由器产物自检** ✓：孤立端点 %d 处 ✗（必须 0 ✓）" % len(lone))
+        for k, v in sorted(lone)[:8]:
+            print("       (%.3f, %.3f) 层 %s ⇒ 只有 %d 个端点 ✗（%s ✓）"
+                  % (k[0], k[1], k[2], len(v), ",".join(v)))
+        # ★★ 几何级自检 ✓（2026-10-01 补 ✗）：✗ 上面那个只比**点**（还按 `key()` 取整 ✓）
+        #   ⇒ 抓不到「**歪段**」✗（实测：`(52.781,25.505)→(52.381,25.472)` 就是歪的 ✓，
+        #     可它的两端各自都另有搭子 ⇒ 逐点看都“有主” ✓）。
+        #   这里补两条硬判据 ✓：① 每段必须**横平竖直** ✓；② 接点必须**逐位相同** ✓。
+        skew, unb = [], []
+        for net in sorted(res):
+            for (lay, a, b) in res[net]["segs"]:
+                if abs(a[0] - b[0]) > 1e-6 and abs(a[1] - b[1]) > 1e-6:
+                    skew.append((net, lay, a, b))
+        print("   ⇒ **几何自检** ✓：歪段（既不横也不竖）%d 条 ✗（必须 0 ✓）" % len(skew))
+        for (net, lay, a, b) in skew[:8]:
+            print("       ✗ %s %s (%.3f,%.3f)→(%.3f,%.3f) ⇒ 斜了 (%.3f,%.3f) mm ✗"
+                  % (net, lay, MM(a[0]), MM(a[1]), MM(b[0]), MM(b[1]),
+                     MM(b[0] - a[0]), MM(b[1] - a[1])))
+        # ★★ 跨网自检 ✓（2026-10-01 ✓）：段的**某一端正好落在「别的网」的焊盘中心**上吗 ✗？
+        #   起因：实体文件里有一根 10 mil 的线，两端正好是 `PA2`(DATA_IN) 与 `VSS`(GND) ✗，
+        #   而路由器眼里的映射是**对的** ✓（`GND`={connector3,connector20} ✓）⇒ 查产物 ✓。
+        _owner = {}
+        for _n, _lst in net_pads.items():
+            for _k in _lst:
+                _owner[_k] = _n
+        _centre = {}
+        for _k, _q in pads.items():
+            _centre[(round(_q["c"][0], 6), round(_q["c"][1], 6))] = _k
+        cross = []
+        for net in sorted(res):
+            for (_lay, a, b) in res[net]["segs"]:
+                for (q2, w2) in ((a, "起"), (b, "终")):
+                    k2 = _centre.get((round(q2[0], 6), round(q2[1], 6)))
+                    if k2 is not None and _owner.get(k2) not in (None, net):
+                        cross.append((net, k2, _owner.get(k2), w2))
+        print("   ⇒ **跨网自检** ✓：段端点落在**别的网**的盘心上 %d 处 ✗（必须 0 ✓）" % len(cross))
+        for (net, k, own, w2) in cross[:8]:
+            print("       ✗ 网 `%s` 的段%s端落在 `%s.%s`（属 `%s`）✗" % (net, w2, k[0], k[1], own))
+        _ = unb
     # ★★ 2026-10-01 定点修 ✗（用户原话：「我对 `Via5` 和 `Via6` 的必要性存疑，为什么要有它们？」✓）：
     #   实测那两颗 **相距 0.30 mm**、属 `BR+` 网，而它们之间那段在 **copper0 上完全畅通**
     #   （`via_pair_why.py` 逐格查过 ✓）⇒ 就是**白钻两颗孔** ✗。
@@ -948,6 +1112,10 @@ def main(argv):
             print("   ✗ 有网没布通 ⇒ **不写文件** ✗（先把摆位/参数调好 ✓；想先看图加 `--partial` ✓）")
             return 1
         print("   ⚠️ `--partial` ⇒ **照写** ✗（这份图里有 %d 张网没通 ✓）" % len(bad))
+    if RT.DIAG["on"] and RT.DIAG["fails"]:
+        print("\n   == 为什么布不通（`--why` 诊断 ✓，`flood` 与 A* 同口径 ✓）==")
+        for s in RT.DIAG["fails"]:
+            print("      %s" % s)
 
     # ★★ 硬闸门 ②：过孔**铜盘不许压盘** ✓（2026-10-01 补 ✗ —— 用户点名的"通孔严重错误" ✓）
     #   起因（实测 v47 ✗）：18 个过孔里 7 个的铜盘压进邻盘，其中 `Via18`（RC）把
