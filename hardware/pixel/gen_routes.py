@@ -944,19 +944,22 @@ def main(argv):
     #        ⇒ 谁都不许占它的通道 ✓（这就是“留走廊” ✓）；
     #     ③ 代价（说清 ✗）：别的网可能绕远 ✓、个别网可能因此布不通 ✗ ⇒ 用同一套
     #        “**只有总分更好才接受**”的规矩压着 ✓（不行就退回 ✓）。想对比旧行为：`--no-lock` ✓。
-    prio = "5V"
+    # ★★ 试过：`("5V", "RC")`（给 `RC` 也留走廊 ✓）⇒ **不加连通数** ✓ 但把过孔
+    #   从 8 抬到 16 ✗（`RC` 被钉住后别的网要绕 ✗）⇒ **退回只钉 `5V`** ✓（2026-10-01 实测对比 ✓）。
+    prio_list = [p for p in ("5V",) if p in net_pads]
     locked = {}
-    if "--no-lock" not in argv and prio in net_pads:
+    for prio in (() if "--no-lock" in argv else prio_list):
         _one = RT.route(items, r, {prio: net_pads[prio]}, pads, cell, via_cost,
                         verbose=False, tries=tries, width_of=width_of,
-                        copper_keep=[b for _l, b in copper_keep])
+                        copper_keep=[b for _l, b in copper_keep], pre=locked)
         if _one.get(prio, {}).get("ok"):
-            locked = {prio: _one[prio]}
-            print("   [留走廊] 先把 `%s` 单独布好并**钉住** ✓（段 %d ｜过孔 %d ✓）"
-                  "⇒ 其余网的栅格里它是硬障碍 ✓"
+            locked[prio] = _one[prio]
+            print("   [留走廊] `%s` 先单独布好并**钉住** ✓（段 %d ｜过孔 %d ✓）"
+                  "⇒ 后面每张网的栅格里它是硬障碍 ✓"
                   % (prio, len(locked[prio]["segs"]), len(locked[prio]["vias"])))
         else:
-            print("   [留走廊] `%s` 单独布都**没通** ✗ ⇒ 不钉 ✓（说明问题不在别人挡它 ✓）" % prio)
+            print("   [留走廊] `%s` 单独布都**没通** ✗ ⇒ 不钉 ✓（说明堵它的不是别人占位 ✗）"
+                  % prio)
     res = RT.route_ripup(items, r, net_pads, pads, cell, via_cost, tries=tries, passes=passes,
                          width_of=width_of, first=power, mid_keep=mid_keep_nets,
                          copper_keep=[b for _l, b in copper_keep], pre=locked)
