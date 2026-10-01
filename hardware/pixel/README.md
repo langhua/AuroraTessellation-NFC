@@ -2376,6 +2376,36 @@ py -3.13 _work\run_gen.py _work\bus3.fzz _work\v57.fzz --nets=_work\bh_nets.py -
 py -3.13 f:\git\fritzing-parts-langhua\tools\pcb_check.py pixel-pcb-v57.fzz --nets=pixel_nets.py
 ```
 
+★ **用户手工收尾用的清单** ✓（`_work/power_list.py` 从 v57 **重新量**的 ✓，含坐标 mm ✓）：
+工作副本 ✓：**`pixel-pcb-v57_byHand.fzz`**（= v57 的拷贝 ✓，`*_byHand.fzz` 按仓规**不入库** ✓）。
+
+**网 `5V`** ✗ 4 块铜（5 只脚）—— 把下面 3 个"孤块"并到主块 ✓：
+
+| 块 | 脚 | 位置（板坐标 mm ✓） | 层 |
+|---|---|---|---|
+| **主块**（已通 ✓） | `J1.connector0` | (35.80, 8.52) | copper0 ✓ |
+| | `C2.connector0` | (50.95, 7.05) | copper0 ✓ |
+| 孤块 ① | `J2.connector0` | (52.78, 27.50) | copper0 |
+| 孤块 ② | `LED2.connector3` | (44.76, 17.40) | **copper1（顶层 ✗ 要过孔 ✓）** |
+| 孤块 ③ | `U1.connector5`（VDD） | (47.13, 18.72) | copper0 |
+
+**网 `GND`** ✗ 7 块铜（9 只脚）：
+
+| 块 | 脚 | 位置（板坐标 mm ✓） | 层 |
+|---|---|---|---|
+| **主块**（已通 ✓） | `J1.connector1` | (34.80, 8.52) | copper0 ✓ |
+| | `C2.connector1` | (49.75, 8.25) | copper0 ✓ |
+| | `J2.connector1` | (52.78, 26.50) | copper0 ✓ |
+| 孤块 ① | `C1.connector1` | (42.55, 18.55) | copper0 |
+| 孤块 ② | `D3.connector0` | (41.48, 17.92) | copper0 |
+| 孤块 ③ | `D3.connector1` | (40.83, 17.92) | copper0 |
+| 孤块 ④ | `LED2.connector1` | (43.91, 16.55) | **copper1（顶层 ✗ 要过孔 ✓）** |
+| 孤块 ⑤ | `U1.connector20`（EPAD ✓） | (46.33, 16.97) | copper0 |
+| 孤块 ⑥ | `U1.connector3`（VSS） | (48.08, 17.37) | copper0 |
+
+★ 两点提醒 ✓：① 两个"孤块"在 **copper1（顶层）** ✗ ⇒ 连它们要**过孔** ✓（`LED2` 是正面件 ✓）；
+② `U1` 是**背面**件 ✓ ⇒ 它的脚在**底层** ✓（表里已按物理层列出 ✓）。
+
 ## 1. 定位
 
 - **单卖**：一片小方板 + 5 V 输入，线圈朝向被测物体 → 板载 LED 的亮度/颜色表示 13.56 MHz 近场场强。
