@@ -861,12 +861,14 @@ def main(argv):
     cell = RT.opt(argv, "--cell", RT.CELL_MM, float)
     via_cost = RT.opt(argv, "--via", RT.K_VIA, float)
     tries = RT.opt(argv, "--tries", 6, int)
-    mil_sig = RT.opt(argv, "--mil-signal", RT.opt(argv, "--mil", 12, int), int)
-    # ★★ 2026-10-01 用户定 ✗：**5V/GND 也走 12 mil**（原来是 24 ✓）——
-    #   原话：24 mil 的 5V/GND 线**可以单独画** ✓，保证 `J1`/`J2` 直连用 24 mil 即可 ✓
-    #   ⇒ 本工具统一按 12 mil 出图 ✓；那根 24 mil 的直连由用户**另外画** ✓。
-    #   ★ 想回到 24：`--mil-power=24` ✓（一行开关 ✓）。
-    mil_pow = RT.opt(argv, "--mil-power", 12, int)
+    # ★★ 2026-10-01 用户定 ✗：**全板统一用最窄那档 = 8 mil** ✓
+    #   原话：「线宽忽宽忽窄，不好吧？直接使用最窄的，作为整张 pcb 的标准线宽吧」✓
+    #   ⇒ 电源与信号**同档 8 mil** ✓（= Fritzing 宽度下拉里最细的“超细”✓）；
+    #     `pcb_route.NECK_MIL` 也是 8 ✓ ⇒ 缩宽机制留着 ✓，但两边同值 ⇒ 出图**只有一个宽度** ✓
+    #     （病根：12 mil 主体 + 8 mil 缩宽段 = 忽宽忽窄 ✗，就是用户看到的那样 ✗）。
+    #   ★ 想改回按网分档：`--mil-signal=12 --mil-power=24` ✓（开关都在 ✓）。
+    mil_sig = RT.opt(argv, "--mil-signal", RT.opt(argv, "--mil", 8, int), int)
+    mil_pow = RT.opt(argv, "--mil-power", 8, int)
     for _m in (mil_sig, mil_pow):
         if _m not in RT.MIL_TIERS:
             raise SystemExit("✗ 线宽只能是这几档 ✓（Fritzing 的宽度下拉 ✓）：%s（mil ✓）"
