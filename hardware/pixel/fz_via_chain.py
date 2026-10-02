@@ -53,6 +53,30 @@ pads = {}
 for q in PC.collect(path)["pads"]:
     pads[(q.get("mi"), q.get("cid"))] = q
 
+
+def walk(wmi, seen=None):
+    """把 wmi 这条线**整条链**收齐 ✓（穿过走线 ✓、到过孔就停 ✓ = 另一端那层 ✗）
+    ⇒ 返回（路上接到的**脚** ✓、停下来的过孔 ✓）"""
+    seen = seen if seen is not None else set()
+    ends, vstop, stack = [], [], [wmi]
+    while stack:
+        k = stack.pop()
+        if k in seen:
+            continue
+        seen.add(k)
+        for _e, lst in (wire[k]["ends"] or {}).items():
+            for (cid, tmi, _lay) in lst:
+                if tmi in wire:
+                    stack.append(tmi)
+                elif tmi in via:
+                    vstop.append(via[tmi]["title"])
+                else:
+                    q = pads.get((tmi, cid))
+                    ends.append((q["title"] + "." + (q["nm"] or cid)) if q
+                                else "%s.%s" % (tmi, cid))
+    return ends, vstop
+
+
 for v in via.values():
     if want and v["title"] not in want:
         continue
@@ -60,19 +84,9 @@ for v in via.values():
     for (host_cid, wmi, wlay) in v["conn"]:
         w = wire.get(wmi)
         if w is None:
-            print("   邻居 %s（不是走线 ✗）" % wmi)
             continue
-        print("   邻居 `Wire%s`（自己的层=%s ✓ 长度 %.2f mm ✓）"
-              % (wmi, w["layer"],
-                 (((w["a"][0] - w["b"][0]) ** 2 + (w["a"][1] - w["b"][1]) ** 2) ** .5) * SK))
-        for e, lst in w["ends"].items():
-            for (cid, tmi, lay) in lst:
-                if tmi in via:
-                    print("      端%s → 过孔 `%s`" % (e, via[tmi]["title"]))
-                elif tmi in wire:
-                    print("      端%s → 走线 `Wire%s`（层=%s ✓）" % (e, tmi, wire[tmi]["layer"]))
-                else:
-                    q = pads.get((tmi, cid))
-                    print("      端%s → 脚 `%s`（%s ✓ 层=%s ✓）"
-                          % (e, (q["title"] + "." + (q["nm"] or cid)) if q else tmi,
-                             cid, q["layer"] if q else "?"))
+        ends, vstop = walk(wmi, set())
+        print("   %s 这一侧（`Wire%s` ✓ 层=%s ✓）：通到 **%s**%s"
+              % (wlay, wmi, w["layer"],
+                 "、".join("`%s`" % e for e in ends) or "（没通到任何脚 ✗）",
+                 ("；路上还碰到过孔 %s" % ",".join(vstop)) if vstop else ""))

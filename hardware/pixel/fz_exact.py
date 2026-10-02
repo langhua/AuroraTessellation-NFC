@@ -219,6 +219,32 @@ for k, w in allW.items():
     for pt in (w["a"], w["b"]):                                     # ★ 只认**两个端点** ✓
         for pk in pads_under(pt, lay_base(w["layer"])):             #   中段压过焊盘**不算连** ✗
             link(k, ("P", pk))                                      #   （`wire.cpp:1133` 只查自由端 ✓）
+# ★★ A/B 对照开关 ✓（`PADLINK=geom|records|both` ✓，默认 geom ✓）：
+#   文件里那份 `<connect>` 到底算不算数 ✓ —— 实测两种口径给的是**不同**的网数 ✓，
+#   而用户 Fritzing 的数字（7 个网）在两者之间 ✓ ⇒ 拿它做对照用 ✓，别当结论 ✗。
+if os.environ.get("PADLINK", "geom") in ("records", "both"):
+    _n = 0
+    for _i, b in PW.blocks(text):
+        mi = re.search(r'modelIndex="(\d+)"', b)
+        pv = re.search(r"(?ms)<pcbView\b[^>]*>(.*?)</pcbView>", b)
+        if not (mi and pv):
+            continue
+        for cm in re.finditer(r'(?s)<connector connectorId="(\w+)"[^>]*>(.*?)</connector>',
+                              pv.group(1)):
+            for x in re.finditer(r'<connect connectorId="[\w]+" modelIndex="(\d+)"', cm.group(2)):
+                _t = x.group(1)
+                _p = ("P", (mi.group(1), cm.group(1)))
+                if _p not in adj:
+                    continue
+                if ("W", _t) in allW:
+                    link(_p, ("W", _t))
+                    _n += 1
+                elif ("V", _t) in allV:
+                    link(_p, ("V", _t))
+                    _n += 1
+    if os.environ.get("DBG"):
+        print("   [dbg] 按**文件记录**额外连了 %d 处「脚↔线/孔」✓（`PADLINK=%s` ✓）"
+              % (_n, os.environ.get("PADLINK")))
 for k, v in allV.items():
     # ★ 过孔的**铜心** ≠ 文件里的 x,y ✗：恒差「孔径/2 + 环宽 + 0.56444mm」✓
     #   （实测 v59：Δ = (+3.063, +3.063) 单位 = 0.8644 mm ✓）—— 只有一份实现 ✓：
