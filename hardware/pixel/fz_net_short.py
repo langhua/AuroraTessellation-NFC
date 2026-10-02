@@ -28,7 +28,10 @@ import pcb_wire as PW                                              # noqa: E402
 
 SK = 25.4 / 90.0
 M = lambda u: u * SK                                               # noqa: E731
-path, seedA, seedB = sys.argv[1], sys.argv[2], sys.argv[3]
+path = sys.argv[1]
+ALL = "--all" in sys.argv[1:]           # ★ 早定义 ✓（下面种子那段要用它 ✓）
+seedA = sys.argv[2] if len(sys.argv) > 2 and not sys.argv[2].startswith("--") else None
+seedB = sys.argv[3] if len(sys.argv) > 3 and not sys.argv[3].startswith("--") else None
 
 zin = zipfile.ZipFile(path)
 fz = [n for n in zin.namelist() if n.endswith(".fz")][0]
@@ -52,12 +55,18 @@ for k, q in pads.items():
     if q.get("nm"):
         name2key.setdefault("%s.%s" % (q["title"], q["nm"]), k)
 for _v in (seedA, seedB):
+    if _v is None:
+        continue
     if _v not in pads and _v not in name2key:
         print("✗ 找不到种子脚 `%s` ✓ ⇒ 可用名字（如 `U1.connector5` ✓）或 `mi.cid` ✓" % _v)
         sys.exit(1)
-seedA = name2key.get(seedA, seedA)
-seedB = name2key.get(seedB, seedB)
-print("   种子解析 ✓：A=`%s` ✓ B=`%s` ✓" % (seedA, seedB))
+    seedA_ok = seedB_ok = None
+if seedA is not None:
+    seedA = name2key.get(seedA, seedA)
+if seedB is not None:
+    seedB = name2key.get(seedB, seedB)
+if seedA and seedB:
+    print("   种子解析 ✓：A=`%s` ✓ B=`%s` ✓" % (seedA, seedB))
 for _i, b in PW.blocks(text):
     mo = re.search(r'moduleIdRef="([^"]+)"', b)
     mi = re.search(r'modelIndex="(\d+)"', b)
@@ -131,8 +140,12 @@ def copper(net):
     return out
 
 
-A = copper(reach("P:" + seedA))
-B = copper(reach("P:" + seedB))
+if not ALL and (not seedA or not seedB):
+    print("✗ 需要两个种子脚 ✓（例：`U1.connector5 U1.connector3` ✓）或用 `--all` ✓")
+    sys.exit(1)
+# ★ `--all` 模式不要种子 ✓ ⇒ 这里先留空 ✓，真正的扫描在下面的 `if ALL:` 里 ✓
+A = [] if ALL else copper(reach("P:" + seedA))
+B = [] if ALL else copper(reach("P:" + seedB))
 print("== %s ==" % os.path.basename(path))
 print("   网A（种子 `%s` ✓）：%d 样铜 ✓" % (seedA, len(A)))
 print("   网B（种子 `%s` ✓）：%d 样铜 ✓" % (seedB, len(B)))
@@ -187,6 +200,59 @@ def gap(x, y):
         return gap(y, x)
     return None
 
+
+ALL = "--all" in sys.argv[1:]
+if ALL:
+    # ★★ `--all` ✓：**不带种子**，按记录自动分网 ✓ ⇒ 再逐对算**跨网的铜净距** ✓
+    #   要找的正是「**记录里没写、但铜真的碰上**」那种 ✓（= 真短路 ✓），
+    #   它同时也是 Fritzing 会**并网**的地方 ✓（它的连接图是场景命中测试 ✓）。
+    #   ✗ 别按记录找"不同网相连" —— 记录本身就会把它们并成一个网 ✓，那样必然为空 ✗。
+    _root = {}
+
+    def _find(x):
+        _root.setdefault(x, x)
+        while _root[x] != x:
+            _root[x] = _root[_root[x]]
+            x = _root[x]
+        return x
+
+    for k in list(adj):
+        _find(k)
+    for a, ns in adj.items():
+        for b in ns:
+            if _find(a) != _find(b):
+                _root[_find(a)] = _find(b)
+    _grp = {}
+    for k in list(adj):
+        _grp.setdefault(_find(k), []).append(k)
+    nets_all = [copper(v) for v in _grp.values() if any(x.startswith("P:") for x in v)]
+    print("   `--all`：按记录分出 **%d** 个网 ✓（含脚 ✓）" % len(nets_all))
+    bad, tight = [], []
+    for i in range(len(nets_all)):
+        for j in range(i + 1, len(nets_all)):
+            for na, xa in nets_all[i]:
+                for nb, xb in nets_all[j]:
+                    d = gap(xa, xb)
+                    if d is None:
+                        continue
+                    if d <= 0:
+                        bad.append((na, nb, xa, xb))
+                    elif d * SK < 0.15:
+                        tight.append((d, na, nb))
+    print("★★ 跨网**真接触**（净距 ≤ 0 ✓ = 真短路 / Fritzing 会并网 ✓）：**%d** 处" % len(bad))
+    for na, nb, xa, xb in bad[:20]:
+        cx, cy = None, None
+        for x in (xa, xb):
+            if x[0] == "via":
+                cx, cy = M(x[1]["c"][0]), M(x[1]["c"][1])
+        if cx is None:
+            p = xa[1]["c"] if xa[0] == "pad" else xa[1]["a"]
+            cx, cy = M(p[0]), M(p[1])
+        print("   ✗ `%s` ↔ `%s` ✓  约在 (%.3f, %.3f) mm" % (na, nb, cx, cy))
+    print("⚠ 跨网净距 < 0.15 mm（**太紧** ✗，制造要 ≥0.25 ✓）：**%d** 处" % len(tight))
+    for d, na, nb in sorted(tight)[:6]:
+        print("   ⚠ %6.4f mm  `%s` ↔ `%s`" % (M(d), na, nb))
+    sys.exit(1 if bad else 0)
 
 res = []
 for na, xa in A:
