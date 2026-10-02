@@ -921,6 +921,10 @@ def main(argv):
     #   「真没路」✗ 与「有路但 A* 没搜到 / 代价把它顶歪」✗（不再猜 ✗）。
     if "--why" in argv:
         RT.DIAG["on"] = True
+        # ★★ 2026-10-03 加 ✓：**顺便打开栅格出处记录** ✓ —— 布不通时才能报
+        #   「这格是**谁**挡的」✓（旧诊断只能说"可达 39 格 ⇒ 堵死了"✗，等于没说 ✓）。
+        #   ★ 只在 `--why` 时开 ✗ ⇒ 正常布线的速度与结果**一个字不变** ✗（见 `Grid.OWN` ✓）。
+        RT.Grid.OWN = True
     if "--nomerge" in argv:
         NO_MERGE.append(1)
     data = projdata.load(netsf, need=("NETS",))
@@ -1010,6 +1014,10 @@ def main(argv):
              % (RT.PITCH_MIN_MM, RT.PITCH_MIN_MM - mil_sig * RT.MIL_MM)
              if RT.PITCH_MIN_MM > 0 else "关 ✗（= 与以前逐项一致 ✓）"))
     items, _st = RT.obstacles(model)
+    # ★ 障碍出处表 ✓（与 `items` **逐条对齐** ✓）：诊断时栅格用它报“谁堵的” ✓
+    #   ★ 用 **list** ✗（不是 tuple ✓）：下面「保线」段会**再往 items 里追加** ✓
+    #     ⇒ 这里必须**同步追加** ✓，否则两张表长度不一 ⇒ 索引越界 ✗（实测撞过 ✓）。
+    _labels = list(_st.get("labels") or ())
     # ★★ 保线 ✓（2026-10-03 用户定「**甲**」✓）：把他自己画的 PCB 走线 + 过孔
     #   当作**已布好的铜** ✓ —— 四条口径（**逐条都可核 ✓**）：
     #     ① **谁都绕开它** ✗（塞进 `items` ⇒ 与焊盘/件铜/安装孔同等待遇 ✓）；
@@ -1036,9 +1044,11 @@ def main(argv):
                 (ax, ay), (bx, by) = pts0[i], pts0[i + 1]
                 items.append((lay, (min(ax, bx), min(ay, by),
                                      max(ax, bx), max(ay, by)), KEEP_GROW, "__keep__"))
+                _labels.append("保线:%s" % _net)      # ★ 同步追加 ✓（两张表必须等长 ✗）
                 n_kw += 1
         for (_net, p) in kd.KEEP_V:
             items.append(("both", (p[0], p[1], p[0], p[1]), KEEP_V_GROW, "__keep__"))
+            _labels.append("保线过孔:%s" % _net)
             n_kv += 1
         # ④ 网表瘦身 ✓（甲 ✓）：链上已连到的脚 ⇒ **从网表里去掉** ✗；每条链留一个代表脚 ✓
         done_keys = {("%s.%s" % (k.split(".", 1)[0], k.split(".", 1)[1]))
@@ -1049,8 +1059,13 @@ def main(argv):
             cur = list(net_pads.get(_net) or ())
             newl = []
             for (t, c) in cur:
-                key = "%s.%s" % (t, c)
-                if key in rep_keys or key not in done_keys:
+                # ★★ 2026-10-03 修 ✗：这里原来叫 `key` ✗ —— 它把**模块级函数** `key()`
+                #   **遮蔽**掉 ✗ ⇒ 后面（第 1136 行起）`key(q["c"][0], …)` 变成
+                #   「'str' object is not callable」✗ ⇒ **main 崩在半路** ✗
+                #   ⇒ 打印"为什么布不通"那一段**根本跑不到** ✗
+                #   （这就是"诊断明明写了却没出现"的真原因 ✓ —— 不是被截断 ✗，是崩了 ✗）。
+                pk = "%s.%s" % (t, c)
+                if pk in rep_keys or pk not in done_keys:
                     newl.append((t, c))
                 else:
                     n_cut += 1
@@ -1096,7 +1111,8 @@ def main(argv):
     for prio in (() if "--no-lock" in argv else prio_list):
         _one = RT.route(items, r, {prio: net_pads[prio]}, pads, cell, via_cost,
                         verbose=False, tries=tries, width_of=width_of,
-                        copper_keep=[b for _l, b in copper_keep], pre=locked)
+                        copper_keep=[b for _l, b in copper_keep], pre=locked,
+                        labels=_labels)
         if _one.get(prio, {}).get("ok"):
             locked[prio] = _one[prio]
             print("   [留走廊] `%s` 先单独布好并**钉住** ✓（段 %d ｜过孔 %d ✓）"
@@ -1107,7 +1123,8 @@ def main(argv):
                   % prio)
     res = RT.route_ripup(items, r, net_pads, pads, cell, via_cost, tries=tries, passes=passes,
                          width_of=width_of, first=power, mid_keep=mid_keep_nets,
-                         copper_keep=[b for _l, b in copper_keep], pre=locked)
+                         copper_keep=[b for _l, b in copper_keep], pre=locked,
+                         labels=_labels)
 
     # ★★ 成对过孔回收 ✓（2026-09-30 用户选 1 ✓，起因：用户点名 `Via11`/`Via12` 硌眼 ✗）：
     #   实测那两颗是**一对** ✓ —— "从 `copper1` 钻下去 ✓、走约 2 mm ✓、再钻回来" ✓
@@ -1311,7 +1328,8 @@ def main(argv):
         trial = RT.route_ripup(items, r, net_pads, pads, cell, via_cost, tries=tries,
                                passes=passes, width_of=width_of, first=power,
                                mid_keep=mid_keep_nets, ban_via=cand, pre=locked,
-                               copper_keep=[b for _l, b in copper_keep], verbose=False)
+                               copper_keep=[b for _l, b in copper_keep], verbose=False,
+                               labels=_labels)
         s2 = _score(trial)
         print("   [去白钻对] 第 %d 轮：网 `%s` 的一对相隔 %.2f mm ✓（中间畅通 ✓）"
               "｜禁 %d 格 ⇒ 连通 %d/%d ✓｜过孔 %d ⇒ %d ✓"
@@ -1393,7 +1411,14 @@ def main(argv):
     # ★ 交付时把"没通哪几张"**原样写进日志** ✓（不许只写在人脑里 ✗）
     if RT.DIAG["on"] and RT.DIAG["fails"]:
         print("\n   == 为什么布不通（`--why` 诊断 ✓，`flood` 与 A* 同口径 ✓）==")
+        # ★★ 2026-10-03 去重 ✓：`DIAG["fails"]` 是**跨所有尝试累加**的 ✓
+        #   （6 种次序 × 拆线重布 × 去白钻对 ✓）⇒ 同一张网会重复十几遍 ✗
+        #   ⇒ 把真正的新信息淹掉 ✗；这里按**首次出现**去重 ✓、保持原顺序 ✓。
+        _seen = set()
         for s in RT.DIAG["fails"]:
+            if s in _seen:
+                continue
+            _seen.add(s)
             print("      %s" % s)
 
     # ★★ 硬闸门 ②：过孔**铜盘不许压盘** ✓（2026-10-01 补 ✗ —— 用户点名的"通孔严重错误" ✓）
