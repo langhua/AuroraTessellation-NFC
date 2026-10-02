@@ -44,27 +44,37 @@ def load(path):
     return conn, title
 
 
+def by_title(conn, title):
+    """★ 按**部件名**归 ✓ —— Fritzing 另存时会把 modelIndex **重新编号** ✗
+    ⇒ 按 id 比会整片错位 ✓（实测：它给 194 个实例全换了号 ✓）。"""
+    out = {}
+    for mi, s in conn.items():
+        out.setdefault(title.get(mi, "index" + mi), set()).update(
+            (cid, title.get(tmi, "index" + tmi)) for (cid, tmi) in s)
+    return out
+
+
 a, ta = load(sys.argv[1])
 b, tb = load(sys.argv[2])
-print("== 比 `<connect>` ==")
-print("   %-28s：%d 个实例有连接记录 ✓" % (os.path.basename(sys.argv[1]), len(a)))
-print("   %-28s：%d 个实例有连接记录 ✓" % (os.path.basename(sys.argv[2]), len(b)))
+A, B = by_title(a, ta), by_title(b, tb)
+print("== 比 `<connect>`（**按部件名** ✓，因为另存会重编号 ✗）==")
+print("   %-30s：%d 个带连接记录的部件 ✓" % (os.path.basename(sys.argv[1]), len(A)))
+print("   %-30s：%d 个带连接记录的部件 ✓" % (os.path.basename(sys.argv[2]), len(B)))
 only_b = only_a = 0
-for k in sorted(set(a) | set(b), key=lambda z: int(z)):
-    sa, sb = a.get(k, set()), b.get(k, set())
+for k in sorted(set(A) | set(B)):
+    sa, sb = A.get(k, set()), B.get(k, set())
     if sa == sb:
         continue
-    t = "`%s`(index=%s)" % (ta.get(k) or tb.get(k) or "?", k)
     if sb - sa:
         only_b += len(sb - sa)
-        print("\n   仅 **Fritzing 另存的**里有 ✓ ⇒ %s" % t)
-        for cid, tmi in sorted(sb - sa):
-            print("      `%s` → index %s（%s）" % (cid, tmi, tb.get(tmi) or ta.get(tmi) or "?"))
+        print("\n   仅 **Fritzing 另存的**里有 ✓ ⇒ `%s`" % k)
+        for cid, t in sorted(sb - sa):
+            print("      `%s` → `%s`" % (cid, t))
     if sa - sb:
         only_a += len(sa - sb)
-        print("\n   仅 **我这边**有 ✗ ⇒ %s" % t)
-        for cid, tmi in sorted(sa - sb):
-            print("      `%s` → index %s（%s）" % (cid, tmi, ta.get(tmi) or tb.get(tmi) or "?"))
+        print("\n   仅 **我这边**有 ✗ ⇒ `%s`" % k)
+        for cid, t in sorted(sa - sb):
+            print("      `%s` → `%s`" % (cid, t))
 print("\n★ 汇总 ✓：Fritzing 多出 %d 条、我多出 %d 条" % (only_b, only_a))
 if only_b == 0 and only_a == 0:
-    print("   ⇒ 两边**逐条相同** ✓（那就是我在自己这边多算的，不在文件里 ✓）")
+    print("   ⇒ 两边**逐条相同** ✓（那我多算的那几个网不在文件里 ✓，是**算法**差异 ✓）")

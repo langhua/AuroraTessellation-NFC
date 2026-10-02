@@ -258,8 +258,39 @@ for k, w in allW.items():
                 #   ⇒ 已撤回 ✓（`AGENTS.md` §0：过拟合信号 = 停手信号）。
                 link(k, ("V", tmi))
     for pt in (w["a"], w["b"]):                                     # ★ 只认**两个端点** ✓
+        if os.environ.get("GEOM", "1") == "0":
+            break                                                   # 只认记录 ✓（做 A/B 用 ✓）
         for pk in pads_under(pt, lay_base(w["layer"])):             #   中段压过焊盘**不算连** ✗
             link(k, ("P", pk))                                      #   （`wire.cpp:1133` 只查自由端 ✓）
+
+# ★★ 线↔线也要**按几何**算连 ✓ —— 实证（用户 2026-10-02 给的 Fritzing 另存文件 ✓）：
+#   他 `Ctrl+S` 之后，我逐条比 `<connect>` ✓ ⇒ **Fritzing 多出 46 条、我多出 0 条** ✓，
+#   而且多出来的**全是 `Wire → Wire`** ✓ ⇒ 它就是按"**一条线的端点落在另一条线身上**"
+#   认定接上了 ✓ 并写进记录 ✓；而我的模型只认记录 ✗ ⇒ 少这 46 个接头 ⇒ 网数 9 ✗（它 7 ✓）。
+#   ⇒ 这条就是"我的全连通判据跟 Fritzing 不一样"的**第二处**（用户两次怀疑都对 ✓）。
+def _d_seg(p, a, b):
+    vx, vy = b[0] - a[0], b[1] - a[1]
+    L = vx * vx + vy * vy
+    if L <= 0:
+        return ((p[0] - a[0]) ** 2 + (p[1] - a[1]) ** 2) ** .5
+    t = max(0.0, min(1.0, ((p[0] - a[0]) * vx + (p[1] - a[1]) * vy) / L))
+    return ((p[0] - (a[0] + t * vx)) ** 2 + (p[1] - (a[1] + t * vy)) ** 2) ** .5
+
+
+GEOM_WW = 1.0                    # sketch 单位 ≈ 0.28 mm ✓（Fritzing 自己吸附得比这紧 ✓）
+_nww = 0
+if os.environ.get("GEOM", "1") != "0":
+    for k, w in allW.items():
+        for pt in (w["a"], w["b"]):
+            for k2, w2 in allW.items():
+                if k2 == k or lay_base(w2["layer"]) != lay_base(w["layer"]):
+                    continue
+                if _d_seg(pt, w2["a"], w2["b"]) <= GEOM_WW:
+                    if ("W", k2) not in adj.get(k, ()):
+                        _nww += 1
+                    link(k, ("W", k2))
+if os.environ.get("DBG"):
+    print("   [dbg] 线↔线按**几何**补上的接头 %d 处 ✓" % _nww)
 # ★★ A/B 对照开关 ✓（`PADLINK=geom|records|both` ✓，默认 geom ✓）：
 #   文件里那份 `<connect>` 到底算不算数 ✓ —— 实测两种口径给的是**不同**的网数 ✓，
 #   而用户 Fritzing 的数字（7 个网）在两者之间 ✓ ⇒ 拿它做对照用 ✓，别当结论 ✗。
