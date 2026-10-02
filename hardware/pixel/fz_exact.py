@@ -22,9 +22,22 @@ r"""★★ **照 Fritzing 源码逐条实现**的「接线 / 连通」判据 ✓
 | 状态栏那句 ✓ | `mainwindow/mainwindow.cpp:2298`：`"%1 of %2 nets routed - %n connector(s) still to be routed"` ✓ |
 
 ★ 已知还差一口 ✓（**老实写在这里 ✗**）：拿本板 `pixel-pcb-v59.fzz` 量，本判据给
-**9 个网 / 全通** ✗，而用户 Fritzing 截图是 **7 个网 / 还有 2 个连接件** ✓ ⇒ 还差**一条**我
-没读到的规则（网数 9≠7 ✓、以及那 2 个"没布"是怎么来的 ✗）。**不要用猜的补齐** ✗ ——
-要么再回源码找 ✓，要么请用户在 Fritzing 里点一下那两条虚线的两端是什么 ✓（见 `AGENTS.md` §13 ✓）。
+**9 个网 / 全通** ✗，而用户 Fritzing 截图是 **7 个网 / 还有 2 个连接件** ✓ ⇒ 还差两条规则：
+
+1. **网数 9 ≠ 7** ✗：Fritzing 少数 2 个网 ✓（怎么少法还没读出来 ✗）。
+2. **那 2 个"没布"是两颗换层过孔** ✓（用户实测 ✓，2026-10-02）：点虚线，两端显示
+   **`Via1` ↔ `C1.pin1`** 与 **`L1.inner` ↔ `Via8`** ✓ ⇒ 过孔要出现在它的记法里 ✓。
+   本工具量到的事实（可复算 ✓）：`Via1` / `Via8` 各把 **copper0 的一条链**
+   （`Wire90013959→90013960` / `90013995→90013996` ✓）与 **copper1 的一条链**
+   （`90013961→90013962` / `90013997→90013998` ✓）接起来 ✓ —— 也就是"换层孔" ✓。
+   而 Fritzing 说这两处**没接通** ✗ ⇒ **v59 的这两颗孔在 Fritzing 里不导换层** ✓
+   ⇒ 这是**板的真缺陷** ✓，不是判据的差异 ✓。
+
+★ 试过又**撤回**的一条（记着别重犯 ✗）：给"线↔过孔"加"**层必须一致**"的规则 ✗
+—— 实测网数 9 → 16 ✗、方向反了 ✓（见下面那段注释 ✓）。
+
+**不要用猜的补齐** ✗ —— 要么再回源码找 ✓，要么请用户在 Fritzing 里点一下虚线的两端 ✓
+（见 `AGENTS.md` §13 ✓）。
 
 
 用法 ✓：`fz_exact.py <sketch.fzz>`（`--flags=N` 可换闸门做对照 ✓）。
@@ -40,6 +53,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT2 = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
 sys.path.insert(0, os.path.join(ROOT2, "fritzing-parts-langhua", "tools"))
 sys.path.insert(0, os.path.dirname(HERE))
+import part_box as PB                                           # noqa: E402
 import pcb_check as PC                                          # noqa: E402
 import pcb_wire as PW                                           # noqa: E402
 
@@ -83,7 +97,9 @@ for _i, b in PW.blocks(text):
                              layer=t["layer"], a=a, b=bb,
                              ends=t.get("ends") or {})
 
-# ── ③ 过孔 ✓（本判据里当**走线**用 ✓：链会穿过去 ✓、不当连接件数 ✓）──────────────
+# ── ③ 过孔 ✓（★ 两种身份都要 ✓：链里当**走线**穿过去 ✓；同时它**也是一个连接件** ✓
+#   —— Fritzing 的 `collectParts` 里就有 `case ModelPart::Via:` ✓ ⇒ 它会出现在"还剩
+#   几个连接件"里 ✓；用户给出的证据也正是这样：虚线两端写着 `Via1` ✓）────────────────
 via = {}
 for _i, b in PW.blocks(text):
     mo = re.search(r'moduleIdRef="([^"]+)"', b)
@@ -95,8 +111,14 @@ for _i, b in PW.blocks(text):
     if not x:
         continue
     fl = re.search(r'wireFlags="(\d+)"', g.group(1))
+    ti = re.search(r"<title>([^<]*)</title>", b)
+    own = re.search(r'<connector connectorId="\w+"\s+layer="(\w+)"', g.group(1))
+    hs = re.search(r'<property name="hole size" value="([\d.]+)mm,([\d.]+)mm"', b)
+    _hole = (float(hs.group(1)), float(hs.group(2))) if hs else (0.3, 0.15)
     via[mi.group(1)] = dict(mi=mi.group(1), p=(float(x.group(1)), float(x.group(2))),
-                            flags=int(fl.group(1)) if fl else None, ends={})
+                            flags=int(fl.group(1)) if fl else None, ends={}, hole=_hole,
+                            title=(ti.group(1) if ti else "Via") + ".connector0",
+                            own=own.group(1) if own else None)
 
 # ── ④ `<buses>`（从包里各 `.fzp` 读 ✓，按 `moduleIdRef` 对上实例 ✓）─────────────
 mid2bus = {}
@@ -185,14 +207,25 @@ def wired(cid, tmi):
 for k, w in allW.items():
     for _e, lst in w["ends"].items():
         for (_cid, tmi, _l) in lst:
-            t = wired(None, tmi)
-            if t:
-                link(k, t)                                          # 线↔线 / 线↔孔 ✓（按记录 ✓）
+            if ("W", tmi) in allW:
+                link(k, ("W", tmi))                                # 线↔线 ✓（按记录 ✓）
+            elif ("V", tmi) in allV:
+                # ★ 线↔过孔：按**文件里记的**连 ✓（两侧都记着 ✓、层也自洽 ✓ —— 实测
+                #   v59：`Wire90013961` 自己的层 = `copper1trace` ✓、它记的层 = `copper0` ✓
+                #   ＝过孔连接器的层 ✓；过孔那边记的 = `copper1trace` ✓ ⇒ **两边都没错** ✓）。
+                #   ✗ 曾试过加一条"线自己的层必须等于过孔层"的规则 ⇒ 网数 9→16、方向反了 ✗
+                #   ⇒ 已撤回 ✓（`AGENTS.md` §0：过拟合信号 = 停手信号）。
+                link(k, ("V", tmi))
     for pt in (w["a"], w["b"]):                                     # ★ 只认**两个端点** ✓
         for pk in pads_under(pt, lay_base(w["layer"])):             #   中段压过焊盘**不算连** ✗
             link(k, ("P", pk))                                      #   （`wire.cpp:1133` 只查自由端 ✓）
 for k, v in allV.items():
-    for pk in pads_under(v["p"], "copper0") + pads_under(v["p"], "copper1"):
+    # ★ 过孔的**铜心** ≠ 文件里的 x,y ✗：恒差「孔径/2 + 环宽 + 0.56444mm」✓
+    #   （实测 v59：Δ = (+3.063, +3.063) 单位 = 0.8644 mm ✓）—— 只有一份实现 ✓：
+    #   `part_box.ring_off_mm` ✓（`AGENTS.md` §12 那条）
+    _off = PB.ring_off_mm(*v["hole"]) / SK
+    _c = (v["p"][0] + _off, v["p"][1] + _off)
+    for pk in pads_under(_c, lay_base(v["own"]) if v["own"] else "copper0"):
         link(k, ("P", pk))                                          # 过孔落在盘上（EPAD 那种 ✓）
 _lk = sum(1 for k, ns in adj.items() if k[0] in ("W", "V") for n in ns if n[0] == "P")
 print("   [dbg] 走线/过孔↔焊盘命中 **%d** 条 ✓｜adj 节点 %d ✓｜有 poly 的盘 %d ✓｜盘 %d ✓"
@@ -248,11 +281,20 @@ for k in pin:
 comp = {}
 for k in adj:
     comp.setdefault(find(k), []).append(k)
+# ★★ 网的节点 = **件脚 ＋ 过孔** ✓（`collectParts` 里 `case ModelPart::Via:` ✓ —— 过孔
+#   也在"还剩几个连接件"里数 ✓，用户给的虚线端点 `Via1`/`Via8` 就是铁证 ✓）
+node = {}
+for k, q in pin.items():
+    node[("P", k)] = dict(title=q["title"], cid=q["cid"], mi=q["mi"], c=q["c"])
+for k, v in via.items():
+    _off = PB.ring_off_mm(*v["hole"]) / SK
+    node[("V", k)] = dict(title=v["title"], cid="connector0", mi=k,
+                          c=(v["p"][0] + _off, v["p"][1] + _off))
 nets = []
 for root, members in comp.items():
-    pins = [kk for kk in members if kk[0] == "P"]
-    if pins:
-        nets.append((root, pins, members))
+    ids = [kk for kk in members if kk[0] in ("P", "V")]
+    if ids:
+        nets.append((root, ids, members))
 
 
 # ── ⑧ 逐网跑 `scoreOneNet` ✓ ────────────────────────────────────────────────
@@ -275,21 +317,21 @@ def chain(nod):
 netCount = routed = leftToRoute = 0
 print("== %s（Fritzing 判据 ✓：闸门 `wireFlags & %d` ✓ ＋ **几何命中** ✓）=="
       % (os.path.basename(path), GATE))
-print("   件脚 %d ✓ 走线 %d ✓ 过孔 %d ✓｜网（含脚的片）%d ✓"
+print("   件脚 %d ✓ 走线 %d ✓ 过孔 %d ✓（★ 过孔也算连接件 ✓）｜含脚/过孔的片 %d ✓"
       % (len(pin), len(wire), len(via), len(nets)))
 badflags = []
 for root, pins, members in sorted(nets, key=lambda z: (-len(z[1]), len(z[2]))):
-    ids = [kk[1] for kk in pins]
-    idx = {kk: n for n, kk in enumerate(pins)}
+    ids = list(pins)                     # ★ 现在是**节点键** ✓：`("P",(mi,cid))` / `("V",mi)` ✓
+    idx = {kk: n for n, kk in enumerate(ids)}
     # ── 建边（照 `scoreOneNet` 第一段 ✓）─────────────────────────────────
     ed = set()
     gotUser = False
     for i in range(len(ids)):
         for j in range(i + 1, len(ids)):
-            if pin[ids[i]]["mi"] != pin[ids[j]]["mi"]:
+            if node[ids[i]]["mi"] != node[ids[j]]["mi"]:
                 gotUser = True               # 不同件 ⇒ 只记"有用户连接" ✓、**不加边** ✗
                 continue
-            if bus_of(ids[i]) and bus_of(ids[i]) == bus_of(ids[j]):
+            if bus_of(ids[i][1]) and bus_of(ids[i][1]) == bus_of(ids[j][1]):
                 ed.add((i, j))               # 同件同 `bus()` ⇒ 直接相连 ✓
                 continue
             gotUser = True
@@ -297,8 +339,9 @@ for root, pins, members in sorted(nets, key=lambda z: (-len(z[1]), len(z[2]))):
         continue                             # ★ 不数这一网 ✓
     netCount += 1
     if os.environ.get("DBG"):
-        print("\n   [dbg] 网 #%d（%d 只脚）%s" % (netCount, len(ids), " ｜ ".join(
-            "`%s.%s`" % (pin[x]["title"], x[1]) for x in ids[:14])))
+        print("\n   [dbg] 网 #%d（%d 个节点）%s" % (netCount, len(ids), " ｜ ".join(
+            "`%s`" % node[x]["title"] if x[0] == "V" else
+            "`%s.%s`" % (node[x]["title"], node[x]["cid"]) for x in ids[:14])))
     # ── 走线链 ⇒ 边（照 `scoreOneNet` 第二段 ✓）─────────────────────────────
     for i, p in enumerate(pins):
         for w in list(adj.get(p, ())):
@@ -342,23 +385,26 @@ for root, pins, members in sorted(nets, key=lambda z: (-len(z[1]), len(z[2]))):
           % left)
     for g in grp:
         print("      片：%s" % " ｜ ".join(
-            "`%s.%s`" % (pin[ids[i]]["title"], pin[ids[i]]["cid"]) for i in g))
+            ("`%s`" % node[ids[i]]["title"]) if ids[i][0] == "V" else
+            ("`%s.%s`" % (node[ids[i]]["title"], node[ids[i]]["cid"])) for i in g))
     best = None
     for gi in range(len(grp)):
         for gj in range(gi + 1, len(grp)):
             for i in grp[gi]:
                 for j in grp[gj]:
-                    d = ((pin[ids[i]]["c"][0] - pin[ids[j]]["c"][0]) ** 2 +
-                         (pin[ids[i]]["c"][1] - pin[ids[j]]["c"][1]) ** 2) ** .5
+                    d = ((node[ids[i]]["c"][0] - node[ids[j]]["c"][0]) ** 2 +
+                         (node[ids[i]]["c"][1] - node[ids[j]]["c"][1]) ** 2) ** .5
                     if best is None or d < best[0]:
                         best = (d, i, j)
     if best:
         d, i, j = best
-        print("      ⇒ 最近的两片只差 **%.3f mm** ✓：`%s.%s`(%8.4f,%8.4f) ↔ `%s.%s`(%8.4f,%8.4f)"
-              % (M(d), pin[ids[i]]["title"], pin[ids[i]]["cid"],
-                 M(pin[ids[i]]["c"][0]), M(pin[ids[i]]["c"][1]),
-                 pin[ids[j]]["title"], pin[ids[j]]["cid"],
-                 M(pin[ids[j]]["c"][0]), M(pin[ids[j]]["c"][1])))
+        print("      ⇒ 最近的两片只差 **%.3f mm** ✓：`%s`(%8.4f,%8.4f) ↔ `%s`(%8.4f,%8.4f)"
+              % (M(d), node[ids[i]]["title"] + ("." + node[ids[i]]["cid"]
+                                                if ids[i][0] == "P" else ""),
+                 M(node[ids[i]]["c"][0]), M(node[ids[i]]["c"][1]),
+                 node[ids[j]]["title"] + ("." + node[ids[j]]["cid"]
+                                          if ids[j][0] == "P" else ""),
+                 M(node[ids[j]]["c"][0]), M(node[ids[j]]["c"][1])))
 
 print("\n★★ **%d of %d nets routed - %d connector(s) still to be routed** ✓"
       % (routed, netCount, leftToRoute))
