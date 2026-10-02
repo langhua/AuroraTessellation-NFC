@@ -2607,6 +2607,84 @@ py -3.13 _work\conn_declared.py _work\v60.fzz                    # ⇒ 9/9 ✓
 py -3.13 f:\git\fritzing-parts-langhua\tools\render_pcb.py pixel-pcb-v60.fzz pixel-pcb-v60_preview.svg --png
 ```
 
+### 第四十手 ✅：**判据与 Fritzing 同源** ＋ 那 2 个"没布"其实是**两颗换层过孔** ⇒ `pixel-pcb-v61.fzz`（2026-10-02 ✓）
+
+#### 1. ★★ 先**改正**第三十九手的结论 ✗（它错了 ✓）
+
+第三十九手说「那 2 个没布在 `C2`」✗ —— **错** ✓。用户实测给出两条虚线的**两端** ✓：
+
+| 虚线 | 一端 | 另一端 |
+|---|---|---|
+| 黑（GND ✓） | **`Via1`** | `C1.pin1` |
+| 墨绿 | **`L1.inner`** | **`Via8`** |
+
+⇒ 那 2 个"没布"的端点里**写着过孔** ✓（Fritzing 的 `collectParts` 里确实有 `case ModelPart::Via:` ✓
+⇒ 过孔**也当连接件数** ✓）。把 `C2` 那两颗盘真几何量了一遍 ✓（`fz_pad_probe.py` ✓）：
+线端离盘心 **0.354 mm** ✓、而盘 **0.78 mm** 见方 ⇒ **在盘内** ✓ ✓ ⇒ `C2` 是**接好的** ✓，
+`v60` 里那两根 `C2` 补线**多余** ✗。同理，把「文件里声明的 358 条连接」逐条对几何
+（`fz_decl_inventory.py` ✓）⇒ **没有一条"声明了却碰不上"** ✓。
+
+#### 2. ★★ 判据改成**照 Fritzing 源码逐条实现** ✓（`fz_exact.py` ✓，只读 ✓）
+
+用户 2026-10-02 定的规矩（`AGENTS.md` §13 ✓）：**判据必须与 Fritzing 同源同语义** ✓ ——
+不然我报的问题他在 Fritzing 里找不到 ✓ = 两个声音 ✓。逐条对应（行号都在文件头表里 ✓）：
+
+| 我做的 | Fritzing 源码 |
+|---|---|
+| 分网 = `collectEqualPotential(items, true, RatsnestFlag)` ＋ 同 `bus()` ＋ 跨层同脚 | `sketchwidget.cpp:6998` / `connectoritem.cpp:1340` |
+| 网的节点只留**件脚／过孔**；单节点的网不数 | `sketchwidget.cpp:7013` ＋ `count() <= 1 ⇒ continue` |
+| "算不算 PCB 铜" = `wireFlags & 4`，且只闸**脚上直接挂的那条线** | `pcbsketchwidget.cpp:1983` ＋ `graphutils.cpp:550` |
+| 线串链**穿过过孔**（Fritzing 里过孔就是 `Wire`） | `wire.cpp:1137 / 1146` |
+| 判"接没接上"= **几何命中**（点落在对方真形状里 ✓），不信文件里的 `<connect>` | `connectoritem.cpp:1972` |
+| ★★「还剩几个连接件」= **该网连通片数 − 1**（**不是**没连上的脚数 ✗） | `scoreOneNet` 末尾 `check[]`（源码原话 *count it as one* ✓） |
+| 状态栏那句 | `mainwindow.cpp:2298` |
+
+★ 顺带修了两个**真 bug** ✓（都在本仓工具里 ✓，`cf7897b` ✓）：`pcb_pads` 的焊盘真矩形
+（`poly` ✓）四角顺序原来是**蝴蝶结**（自交 ✗）⇒ 连 `C2` 的**盘心**都会被判"不在盘里" ✗；
+以及**过孔铜心 ≠ 文件 x,y** ✗ —— 恒差 `ring_off_mm` ＝ **0.8644 mm** ✓（实测 Δ=(+3.063,+3.063) 单位 ✓）。
+
+#### 3. 那 2 个到底为什么"没布" —— 量到的与还没量到的 ✓
+
+| 量到的 ✓ | 结论 |
+|---|---|
+| 16 颗过孔排一张表（`fz_via_table.py` ✓） | `Via1`/`Via8` 与**它认的**（如 `Via18`）**写法完全一样** ✓（`flags=32` ✓、连接器层 `copper0` ✓、邻居层自洽 ✓）⇒ **文件里没有可指认的缺陷** ✗ |
+| 短路嫌疑（`fz_via_short.py` ✓，**制造判据** ✓） | `Via1`/`Via8` 跟"自己那一片之外"的铜**净间隙全为正** ✓ ⇒ **不构成短路** ✓（★ 先把"沿记录能走到的一律排除" ✗ —— 不排除会把**它自己那条链的下一跳**误报成短路 ✓） |
+| 虚线的另一头反查（`fz_via_reach.py` ✓） | 通到 `C1.Pin 1` 的只有 `Via18` ✓（★ 它的链里**只有它自己** ✓）；`Via1`/`Via8` 的链里都**串着别的过孔** ✓ ⇒ 差别只有这一条 ✓ |
+| 三种口径 A/B（`PADLINK=geom\|records\|both` ✓） | v59 上**结果相同**（9 of 9 - 0 ✗）⇒ 板里**没有陈旧的焊盘记录** ✓ |
+
+⚠ **还没读到的一条规则** ✗：我的判据仍给 **9 个网 / 全通** ✗，用户 Fritzing 是 **7 个网 / 还有 2 个** ✓
+⇒ 差两条：① 网数 9≠7（Fritzing 少数的 2 个是怎么并的 ✓）；② "过孔换层算不算边" ✓。
+✗ 试过"线↔过孔层必须一致"的规则 ⇒ 实测网数 9→**16**、方向反了 ⇒ 已**撤回** ✓
+（教训写进 `fz_exact.py` 注释 ✓：过拟合信号 = 停手信号 ✓）。
+
+#### 4. 这一手的改动：把两颗孔**当成全新实例**重写 ⇒ `v61`（**可回退** ✓）
+
+用户 2026-10-02：「**你来改吧？**」✓ ⇒ 做**唯一可辩护**的改动 ✓：给 `Via1`/`Via8` 换**新的
+`modelIndex`** ✓（`fz_recreate_vias.py` ✓）—— 几何、走线、`<connect>` 语义**一字未改** ✓，
+只让 Fritzing 载入时**从头重建**这两颗孔 ✓（= 在 app 里"删掉重放"的文件级等价物 ✓）。
+
+[![v61 预览](pixel-pcb-v61_preview.png)](pixel-pcb-v61_preview.png)
+
+| 复核 ✓ | 结果 |
+|---|---|
+| 改动范围 | **纯字符串替换** ✓：`90013946 → 90014167`（3 处 ✓）、`90013953 → 90014168`（6 处 ✓）⇒ 其余**逐字节不变** ✓（构造上保证 ✓） |
+| 连通性（`fz_exact.py` ✓） | 与 v59 **完全一样**：45 脚 / 168 线 / 16 孔｜**9 of 9 - 0** ✓（几何没动 ✓，当然一样 ✓） |
+| 渲染（`render_pcb.py` ✓） | 45 盘 / 168 线 / 18 孔 / 板框 25.00×25.00 mm ✓（与 v59 同 ✓） |
+
+★ **回退** ✓：不用回退 —— `pixel-pcb-v59.fzz` **原样没动** ✓；不认可 `v61` 就继续用 `v59` ✓。
+
+复现 ✓：
+```bash
+py -3.13 hardware\pixel\fz_recreate_vias.py pixel-pcb-v59.fzz pixel-pcb-v61.fzz Via1 Via8
+py -3.13 hardware\pixel\fz_exact.py pixel-pcb-v61.fzz                 # ⇒ 9 of 9 - 0（与 v59 同）
+py -3.13 hardware\pixel\fz_via_short.py pixel-pcb-v61.fzz Via1 Via8   # ⇒ 没有短路 ✓
+py -3.13 f:\git\fritzing-parts-langhua\tools\render_pcb.py pixel-pcb-v61.fzz pixel-pcb-v61_preview.svg --png
+```
+
+★ **请你在 Fritzing 里打开 `v61` 看一眼状态栏** ✓ —— 如果变成 **7 of 7 / 0 个连接件** ✓，
+就证明那 2 个是**它自己的账** ✓（不是板的铜 ✗）；如果**还是 2 个** ✓，说明原因在别处 ✓，
+我继续从源码找 ✓（不猜 ✓）。
+
 ## 1. 定位
 
 - **单卖**：一片小方板 + 5 V 输入，线圈朝向被测物体 → 板载 LED 的亮度/颜色表示 13.56 MHz 近场场强。
