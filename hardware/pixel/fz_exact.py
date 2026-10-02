@@ -120,30 +120,71 @@ for _i, b in PW.blocks(text):
                             title=(ti.group(1) if ti else "Via") + ".connector0",
                             own=own.group(1) if own else None)
 
-# ── ④ `<buses>`（从包里各 `.fzp` 读 ✓，按 `moduleIdRef` 对上实例 ✓）─────────────
-mid2bus = {}
-for n in zin.namelist():
-    if not n.endswith(".fzp"):
-        continue
-    t = zin.read(n).decode("utf-8")
-    mid = re.search(r"<moduleId>([^<]+)</moduleId>", t)
-    if not mid:
-        continue
-    buses = {}
+# ── ④ `<buses>` ✓ —— ★★ 这里原来有个**真 bug** ✗（2026-10-02 用户怀疑命中 ✓）：
+#   · 原来只在 **`.fzz` 包里**找 `.fzp` ✗ —— 而这包只有 7 个 ✓，`wire`/`netlabel`/`via`
+#     这些**核心件**一个都不在里面 ✗ ⇒ 总线表一直是空的 ✗（= "同 `bus()` 合并"从未生效 ✗）
+#   · 而且原来按 `<moduleId>` 建表 ✗，可 `inst2mid` 存的是 **`path="…"`** ✗ ⇒ 对不上 ✗
+#   ⇒ 现在：按 **`.fzp` 文件名**建表 ✓，来源两路 —— 包内的 ✓ ＋ `.fz` 里记的**绝对路径**
+#     （`C:\…\Fritzing\parts\user\….fzp` ✓ 或 `:/resources/parts/…` ⇒ 去安装目录找 ✓）✓。
+#   实测价值 ✓：`core/wire.fzp` 有 bus `wirebus` ✓、`core/netlabel.fzp` 有 bus `label` ✓。
+bus_by_file = {}
+FUZZ = [r"F:\build-fritzing\fritzing-app\resources\parts",
+        r"C:\Users\shi.jinghai-honor\AppData\Local\Programs\Fritzing\fritzing-parts"]
+
+
+def _buses_of(t):
+    out = {}
     for bm in re.finditer(r'(?s)<bus[^>]*\bid="([^"]*)"[^>]*>(.*?)</bus>', t):
         for cid in re.findall(r'<member[^>]*\bconnectorId="([^"]+)"', bm.group(2)):
-            buses[cid] = bm.group(1) or "bus"
-    mid2bus[mid.group(1)] = buses
+            out[cid] = bm.group(1) or "bus"
+    return out
+
+
+for n in zin.namelist():
+    if n.endswith(".fzp"):
+        bus_by_file[os.path.basename(n).lower()] = _buses_of(zin.read(n).decode("utf-8"))
+for _i, b in PW.blocks(text):
+    pa = re.search(r'path="([^"]+)"', b)
+    if not pa:
+        continue
+    p = pa.group(1)
+    for cand in ([p] if os.path.isabs(p) else []) + \
+                [os.path.join(r, p.replace(":/resources/parts/", "")
+                              .replace("/", os.sep)) for r in FUZZ]:
+        try:
+            if not os.path.exists(cand):
+                continue
+            bus_by_file[os.path.basename(cand).lower()] = \
+                _buses_of(open(cand, encoding="utf-8", errors="replace").read())
+            break
+        except OSError:
+            pass
 inst2mid = {}
+inst_title = {}
+inst_path = {}
 for _i, b in PW.blocks(text):
     mi = re.search(r'modelIndex="(\d+)"', b)
     mo = re.search(r'moduleIdRef="([^"]+)"', b)
+    ti = re.search(r"<title>([^<]*)</title>", b)
+    pa = re.search(r'path="([^"]+)"', b)
     if mi and mo:
         inst2mid.setdefault(mi.group(1), mo.group(1))
+        inst_title[mi.group(1)] = ti.group(1) if ti else ""
+        inst_path[mi.group(1)] = pa.group(1) if pa else ""
+
+# ★★ **同名 netlabel = 同一个网** ✓（`core/netlabel.fzp` 里有 `<bus id="label">` ✓，
+#   而 Netlabel 是靠**名字**来连的 ✓）—— ✗ 本工具原来**完全没实现**这条 ✗
+#   ⇒ 用户 2026-10-02 的怀疑（我的全接通判据跟 Fritzing 不一样 ✓）命中 ✓：
+#   本板挂了两个同名 `RC` ✓ ⇒ Fritzing 把它们算同一个网 ✓，我这里却是两个 ✗。
+netlabel = {}
+for k, p in inst_path.items():
+    if "netlabel" in p.lower():
+        netlabel.setdefault(inst_title.get(k, "?"), []).append(k)
 
 
 def bus_of(key):
-    return mid2bus.get(inst2mid.get(key[0], ""), {}).get(key[1])
+    f = inst2mid.get(key[0], "")
+    return bus_by_file.get(os.path.basename(f).lower(), {}).get(key[1])
 
 
 # ── ⑤ ★★ 几何命中（与 Fritzing 同源 ✓）：点落在**焊盘真形状**里才算接上 ✓ ──────
@@ -302,6 +343,16 @@ for k in list(pin):
     for k2 in pin:
         if k2 != k and k2[0] == k[0] and bus_of(k2) == b:
             union(("P", k), ("P", k2))
+# ★★ 同名 netlabel 并成一个网 ✓（中间那个 `label` 总线 + 名字相同 ✓）
+_nl = 0
+for name, mis in netlabel.items():
+    ks = [k for k in pin if k[0] in mis]
+    for k in ks[1:]:
+        union(("P", ks[0]), ("P", k))
+        _nl += 1
+    if len(ks) > 1:
+        print("   [dbg] 同名 netlabel `%s` ×%d ⇒ 并成一个网 ✓（%s）"
+              % (name, len(ks), ", ".join(pin[k]["title"] + "." + pin[k]["cid"] for k in ks)))
 for k in pin:
     find(("P", k))
 comp = {}
