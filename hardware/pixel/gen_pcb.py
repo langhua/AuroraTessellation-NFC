@@ -235,6 +235,23 @@ def variants(p):
                 out[(bottom, th)] = {cid: (q["absbox"][0], q["absbox"][1],
                                            q["absbox"][2], q["absbox"][3])
                                      for cid, q in got.items()}
+    # ★★ 把**它现在这个姿态**也放进去 ✓（上锁件可能是**非 90° 倍**朝向 ✗ ——
+    #   实测：用户文件里 `C2` = **329°** ✗，而上面那圈只覆盖 0/90/180/270 ✓
+    #   ⇒ 缺了它时：障碍框会拿 0° 的框去算 ✗、字面报告直接 `KeyError` ✗，两处都错 ✓）。
+    #   口径与上面**同一套** ✓（还是调 `part_pads` ✓，不另写旋转数学 ✗）。
+    M0 = p.get("M")
+    if M0:
+        th0 = int(round(math.degrees(math.atan2(M0[1], M0[0])))) % 360
+        if th0 not in ROTS:
+            fake = dict(p, loc=(0.0, 0.0), M=M0, pv=p["pv"])
+            got, _ex, _bad, _nt = PP.part_pads(fake)
+            if got:
+                # ★ 本函数是在 `load()` 里调的 ✓ ⇒ 那时 `p` 还是**原始记录** ✗、
+                #   没有 `bottom` 键 ✓（它是同一个 `dict(…)` 里现算的 ✓）⇒ 从 `pv` 读 ✓。
+                _bot0 = ((p.get("pv") or {}).get("bottom") or "").lower() == "true"
+                out[(_bot0, th0)] = {cid: (q["absbox"][0], q["absbox"][1],
+                                           q["absbox"][2], q["absbox"][3])
+                                     for cid, q in got.items()}
     return out
 
 
@@ -279,6 +296,10 @@ def load(base):
                         names={c: q["nm"] for c, q in pads.items()},
                         cids=set(pads), geo=p["geo"], side=(p.get("pv") or {}).get("layer"),
                         bottom=((p.get("pv") or {}).get("bottom") or "").lower() == "true",
+                        # ★★ 上锁 ✓ = Fritzing 的**移动锁** ✓（`<pcbView locked="true">` ✓，
+                        #   源码 `itembase.cpp:294` 写 / `sketchwidget.cpp:281` 读 ✓）
+                        #   ⇒ 摆位器**不许动它** ✗（见 `place()` 的 `LOCKED` ✓）。
+                        locked=((p.get("pv") or {}).get("locked") or "").lower() == "true",
                         box=union([q["box"] for q in pads.values()]),
                         cubox=cb, inkbox=ib, ntrack=ntrack, raw=p,
                         canvas=(wmm * SK, hmm * SK),
@@ -300,10 +321,38 @@ def board_rect(parts_all, board):
 
 
 # ── 摆位 ───────────────────────────────────────────────────────────────────
-def place(parts, r, nets_map, verbose=True):
-    """⇒ `{位号: 新 loc ✓}`（sketch 单位 ✓；只平移 ✓、不动朝向 ✗）"""
+def cur_pose(p):
+    """该件**现在**的姿态 ✓ ⇒ `(loc, 面, 朝向°)` —— 朝向从实例矩阵**反解** ✓
+
+    ★ 口径（**证据，不是猜** ✗）：`PB.tf_of` 给的是 `(m11, m12, m21, m22, m31, m32)` ✓
+      ⇒ `θ = atan2(m12, m11)` ✓ —— Fritzing 给 `L1` 亲笔写的 `m11=0 m12=1` ⇒ **90°** ✓
+      （与 `rot_about_canvas` 的口径同源 ✓）。
+    ★★ 为什么不能用 `(p["loc"], p["bottom"], 0)` ✗：那是"把朝向**归零**"✗ ——
+      上锁的件（例：用户文件里的 `C2` = **329°** ✓、`J2` = 90° ✓）会被**转掉** ✗。
+    """
+    M = p.get("M") or (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+    th = int(round(math.degrees(math.atan2(M[1], M[0])))) % 360
+    return (p["loc"], bool(p["bottom"]), th)
+
+
+def place(parts, r, nets_map, verbose=True, hole_exist=None):
+    """⇒ `{位号: 新 loc ✓}`（sketch 单位 ✓；只平移 ✓、不动朝向 ✗）
+
+    ★★ **上锁的件（`locked="true"` ✓）一律不动** ✗ ——
+      锁 = Fritzing 的**移动锁** ✓（源码：`itembase.cpp:294` 写 ✓、`sketchwidget.cpp:281` 读 ✓、
+      `:318` `setMoveLock(true)` ✓、`:1076 / :2442 / :7162` 拦移动 ✓、
+      `connectoritem.cpp:2508` 连着的线也拦 ✓、`resizableboard.cpp:1228` 板角也拦 ✓）。
+      做法 ✓：上锁件**不写进 `new`** ⇒ `transform_block` 连一个字节都不碰 ✓
+      （位/面/朝向/名 全保 ✓）；但它要进 `placed` ⇒ **别人得绕开它** ✓。
+    `hole_exist` = 板上**已经有**的安装孔 `{位号: (几何 x, y)}` ✓ ⇒ 照它原位 ✓、不重插 ✗。
+    """
     c = ctr(r)
     by = {p["title"]: p for p in parts}
+    LOCKED = {p["title"] for p in parts if p.get("locked")}
+    holes_exist = dict(hole_exist or {})
+    if LOCKED:
+        print("   上锁（`pcbView locked=\"true\"` ✓ = 移动锁 ✓）**一律保持原位** ✗：%s"
+              % "、".join(sorted(LOCKED)))
     # 网表展开成 `net ⇒ [(位号, connectorN)]` ✓（HPWL 要用 ✓；脚名认不出的**当场报** ✗）
     net_flat = {}
     for net, lst in nets_map.items():
@@ -488,7 +537,11 @@ def place(parts, r, nets_map, verbose=True):
             if (q.get("side") or "?") != (p.get("side") or "?") \
                     and not (has_thr(p) or has_thr(q)):
                 continue
-            qq = abs_pads(q, new[t][0], (new[t][1], new[t][2]))
+            # ★★ `placed` 里有**上锁的件** ✓（它们**不在 `new` 里** ✗ —— 见 `LOCKED` 的口径 ✓）
+            #   ⇒ 取它的姿态必须**回落**到 `cur_pose` ✓，✗ 不许直接 `new[t]`（那会 KeyError ✗，
+            #   实测 ✓：`KeyError: 'L1'` 就是这么来的 ✓）。
+            _po = new.get(t) or cur_pose(q)
+            qq = abs_pads(q, _po[0], (_po[1], _po[2]))
             for ab in abs_pads(p, loc, key).values():
                 for qb in qq.values():
                     if ovl(ab, qb, CL):
@@ -529,31 +582,48 @@ def place(parts, r, nets_map, verbose=True):
     coil = by.get("L1")
     if coil:
         cb = coil.get("cubox") or coil["box"]
-        new["L1"] = ((c[0] - ctr(cb)[0], c[1] - ctr(cb)[1]), False, 90)
+        if "L1" not in LOCKED:
+            _pose = (((c[0] - ctr(cb)[0], c[1] - ctr(cb)[1]), False, 90))
+            new["L1"] = _pose
+            _how = ("**正面** ✓、朝 90° ✓（照它原本的 transform ✓）、铜箔中心对板心 ✓"
+                    "（焊盘包围盒中心相对环心差 (%.2f, %.2f) mm ✓）"
+                    % ((ctr(coil["box"])[0] - ctr(cb)[0]) / SK,
+                       (ctr(coil["box"])[1] - ctr(cb)[1]) / SK))
+        else:
+            # ★★ 上锁 ⇒ **原位、原朝向** ✓（不重新对板心 ✗ —— 用户锁了它就是想让它别动 ✓）
+            #   ★ 但**不写进 `new`** ✗✓ —— 只在 `placed` 里当障碍 ✓ ⇒ 写回时**一个字节不碰** ✓
+            _pose = cur_pose(coil)
+            _how = "★**上锁** ⇒ 原位、原朝向 %d° ✓（不重新对板心 ✗、块不重写 ✓）" % _pose[2]
         placed["L1"] = coil
         # ★ 记下绕组的**绝对铜箔框** ✓ —— 后面"谁都不许压绕组"的硬约束就靠它 ✓
-        _cbb = rot_box_canvas(cb, 90, *(coil.get("canvas") or (0.0, 0.0)))
-        coil_abs = (_cbb[0] + new["L1"][0][0], _cbb[1] + new["L1"][0][1],
-                    _cbb[2] + new["L1"][0][0], _cbb[3] + new["L1"][0][1])
+        #   ★★ 角度**照实读** ✗（旧版写死 90 ✗ —— 上锁件可能是别的朝向 ✓）
+        _cbb = rot_box_canvas(cb, _pose[2], *(coil.get("canvas") or (0.0, 0.0)))
+        coil_abs = (_cbb[0] + _pose[0][0], _cbb[1] + _pose[0][1],
+                    _cbb[2] + _pose[0][0], _cbb[3] + _pose[0][1])
         # ★ 外半径 = 铜箔框的**半长边**（转 90° 后长宽对调 ✓ 但最大值不变 ✓）
         coil_r_out = max(cb[2] - cb[0], cb[3] - cb[1]) / 2.0
         coil_side = coil.get("side")
         print("   绕组：外半径 ≈ %.2f mm、在 **%s** ✓（§6.1：件优先塞进中心 φ8 ✓；"
               "**同面**件硬性让开 %.1f mm ✓、异面件只提醒 ✓）"
               % (coil_r_out / SK, coil_side, COIL_CLR_MM))
-        print("   线圈：**正面** ✓、朝 90° ✓（照它原本的 transform ✓）、铜箔中心对板心 ✓"
-              "（焊盘包围盒中心相对环心差 (%.2f, %.2f) mm ✓）"
-              % ((ctr(coil["box"])[0] - ctr(cb)[0]) / SK,
-                 (ctr(coil["box"])[1] - ctr(cb)[1]) / SK))
+        print("   线圈：%s" % _how)
     # ②a 先把两个安装孔的**目标孔心**定下来 ✓（纯几何 ✓）——
     #     ★ 必须早于 J1/J2 ✓：它们摆位时要按 Ø4.0 环**硬避让** ✓，那时就得知道孔在哪 ✓。
     #     ★ 规范 ✓：孔心离两条板边 **3.0 mm** ✓（`HOLE_MM` ✓，IPC-2221C ✓）。
     for nm, corner in sorted(HOLE_CORNER.items()):
         hx = (r[0] + U(HOLE_MM)) if corner in ("TL", "BL") else (r[2] - U(HOLE_MM))
         hy = (r[1] + U(HOLE_MM)) if corner in ("TL", "TR") else (r[3] - U(HOLE_MM))
+        if nm in holes_exist:
+            # ★★ 板上**已经有这颗孔** ✓（用户自己加的 ✓）⇒ 照它**现在**的位置 ✓、**不重插** ✗
+            #   定义对得上 ✓：写回去的是 `geometry = 孔心 − HOLE_OFF_MM` ✓ ⇒ 读回来再加 ✓
+            hx = holes_exist[nm][0] + U(HOLE_OFF_MM[0])
+            hy = holes_exist[nm][1] + U(HOLE_OFF_MM[1])
+            print("   · %-5s 安装孔**板上已有** ✓ ⇒ 照原位：孔心 (%.2f, %.2f) mm ✓（不重插 ✗）"
+                  % (nm, MM(hx - r[0]), MM(hy - r[1])))
+        else:
+            print("   · %-5s 安装孔 %s ✓ 占 **%s 角** ⇒ 孔心 (%.2f, %.2f) mm（离两条板边 %.2f mm ✓）"
+                  % (nm, HOLE_SIZE, corner, MM(hx - r[0]), MM(hy - r[1]), HOLE_MM))
         holes[nm] = (hx, hy)
-        print("   · %-5s 安装孔 %s ✓ 占 **%s 角** ⇒ 孔心 (%.2f, %.2f) mm（离两条板边 %.2f mm ✓）"
-              % (nm, HOLE_SIZE, corner, MM(hx - r[0]), MM(hy - r[1]), HOLE_MM))
 
     # ② J1/J2：**底层** ✓、各占一个**对角**（`CORNER` ✓）、**焊盘朝板内** ✓
     #    ★ 朝向**不是写死的** ✗ —— 4 个朝向里挑"焊盘簇离板心最近"的那个 ✓
@@ -567,6 +637,12 @@ def place(parts, r, nets_map, verbose=True):
     for ttl, corner in sorted(CORNER.items()):
         p = by.get(ttl)
         if not p:
+            continue
+        if ttl in LOCKED:
+            # ★ 只登记成**障碍** ✓ —— **不写 `new`** ✗ ⇒ 写回时块原样 ✓（一个字节不碰 ✓）
+            placed[ttl] = p
+            print("   · %-5s **上锁** ✓ ⇒ 保持原位、原朝向 %d° ✓（不重挑角 ✗）"
+                  % (ttl, cur_pose(p)[2]))
             continue
         best, bestk, bestd = None, None, None
         whys = {}                                # ★ 按**频次**记理由 ✓（前 8 条会误导 ✗）
@@ -603,8 +679,16 @@ def place(parts, r, nets_map, verbose=True):
 
     # ②b（孔位已在 ②a 算好 ✓ —— 这里不再重复算 ✗，免得两处一套 ✗）
 
+    # ★★ ③a 上锁的件**一律原位** ✓（①/② 里已处理 L1 / J1 / J2 / H1 / H2 ✓；
+    #   这里补上其余的：例 `C2` / `LED2` / `D3` ✓）—— 不搜位、不换面、不转 ✗
+    for t in sorted(LOCKED):
+        if t in by and t not in placed:
+            placed[t] = by[t]                 # ★ 只当障碍 ✓、不写 `new` ✗（块不动 ✓）
+            print("   · %-5s **上锁** ✓ ⇒ 保持原位、原朝向 %d° ✓（%s ✓）"
+                  % (t, cur_pose(by[t])[2], "正面" if not by[t]["bottom"] else "底层"))
+
     # ③ 其余件（**全部底层** ✓ 用户定 ✓）：从大到小贪心 ✓，**所在面与 4 个朝向一起搜** ✓
-    todo = [t for t in by if t not in new]
+    todo = [t for t in by if t not in new and t not in LOCKED]
     todo.sort(key=lambda t: -((vbox(by[t], (True, 0))[2] - vbox(by[t], (True, 0))[0])
                               * (vbox(by[t], (True, 0))[3] - vbox(by[t], (True, 0))[1])))
     for t in todo:
@@ -633,7 +717,9 @@ def place(parts, r, nets_map, verbose=True):
             print("   ✗ %s **找不到位置**（%s）⇒ 保持原位 ✗"
                   % (t, "; ".join("%s×%d" % (k, v) for k, v in
                                   sorted(bestwhy.items(), key=lambda kv: -kv[1])[:5])))
-            new[t] = (p["loc"], p["bottom"], 0)
+            # ★★ 用 `cur_pose` ✗（旧版写死 `(loc, bottom, 0)` ⇒ **把朝向归零** ✗ ——
+            #   原位但被转掉，等于没“保持原位” ✗）
+            new[t] = cur_pose(p)
             placed[t] = p
             continue
         new[t] = (best, bestkey[0], bestkey[1])
@@ -763,13 +849,25 @@ def write_back(base, out, newlocs, canvas, extra=""):
     fz = [n for n in zin.namelist() if n.endswith(".fz")][0]
     text = zin.read(fz).decode("utf-8")
     chunks, pos, n_moved = [], 0, 0
-    for m in re.finditer(r"(?ms)^([ \t]*)<instance\b.*?\n\1</instance>", text):
-        nb = transform_block(m.group(0), newlocs, canvas)
-        if nb != m.group(0):
+    # ★★ 块扫描**换成稳健版** ✗✓（2026-10-03 实测踩到 ✓）：
+    #   ✗ 旧写法 `^([ \t]*)<instance\b.*?\n\1</instance>` 靠**同缩进配对** ✗ ——
+    #     本仓早有记录 ✓：**有的实例没按 Fritzing 的缩进闭合** ✗ ⇒ 该正则错位 ✗
+    #     ⇒ 实测后果（本轮 ✓）：同一个文件里 **少了一个实例** ✗（113 ⇒ 112 ✓）、
+    #       上锁件明明没排位却**每块多 2 个字符** ✗（块边界被切错 ✓）。
+    #   ✓ 现在：按 `<title>` 定位 ✓、往前找 `<instance` ✓、往后找 `</instance>` ✓
+    #     （与 `fz_strip_pcb.blocks_of` **同一个口径** ✓ —— 全仓就这一份判据 ✓）。
+    for m in re.finditer(r"<title>([^<]*)</title>", text):
+        a = text.rfind("<instance", 0, m.start())
+        b = text.find("</instance>", m.end())
+        if a < 0 or b < 0:
+            continue
+        b += len("</instance>")
+        nb = transform_block(text[a:b], newlocs, canvas)
+        if nb != text[a:b]:
             n_moved += 1
-        chunks.append(text[pos:m.start()])
+        chunks.append(text[pos:a])
         chunks.append(nb)
-        pos = m.end()
+        pos = b
     chunks.append(text[pos:])
     text2 = "".join(chunks)
     if extra:
@@ -800,7 +898,12 @@ def main(argv):
                             argv[argv.index("--hole-off-mm") + 1].split(","))
     nets = projdata.load(netsf, need=("NETS",)).NETS
     parts, board = load(base)
-    r = board_rect(PP.read_fzz(base)[0], board)
+    raw_all, _b = PP.read_fzz(base)
+    r = board_rect(raw_all, board)
+    # ★★ 板上**已经有**的安装孔 ✓（用户在 Fritzing 里自己加的 ✓）—— 只留位置 ✓、**不重插** ✗
+    #   （插两遍 = 同一处两颗孔 ✗ —— 用户打开会看到重叠的孔 ✓）
+    hole_exist = {q["title"]: (q["loc"][0], q["loc"][1]) for q in raw_all
+                  if q["title"] in HOLE_CORNER and "loc" in q}
     print("== 摆位：%s ⇒ %s ==" % (os.path.basename(base), os.path.basename(out)))
     print("   板框 = (%.2f,%.2f)-(%.2f,%.2f) mm（%.2f × %.2f mm ✓）"
           % (MM(r[0]), MM(r[1]), MM(r[2]), MM(r[3]), MM(r[2] - r[0]), MM(r[3] - r[1])))
@@ -816,18 +919,19 @@ def main(argv):
                  else "（量不到 ⇒ 退回铜箔框 ✗）"))
     by = {p["title"]: p for p in parts}
     print("   放置 ✓")
-    new, c, holes = place(parts, r, nets)
+    new, c, holes = place(parts, r, nets, hole_exist=hole_exist)
     # ★ 安装孔：新插两个核心库实例 ✓（`modelIndex` 从现有最大值往后排 ✓，不撞号 ✗）
     used = [int(x) for x in re.findall(r'modelIndex="(\d+)"', PW.read(base)[0])]
     nxt = max(used) + 1 if used else 90000000
     extra = "".join(hole_block(nm, "%d" % (nxt + i),
                                (holes[nm][0] - U(HOLE_OFF_MM[0]),
                                 holes[nm][1] - U(HOLE_OFF_MM[1])))
-                    for i, nm in enumerate(sorted(holes)))
+                    for i, nm in enumerate(sorted(n for n in holes if n not in hole_exist)))
     n = write_back(base, out, new, {p["title"]: p["canvas"] for p in parts}, extra)
     print("   写回：挪了 %d 个实例的 pcbView ✓（面包板/原理图视图**未动** ✓）" % n)
-    print("   安装孔：插入 %d 个 `HoleModuleID` 实例 ✓（**只给了 pcbView** ✓，`modelIndex` 从 %d 起 ✓）"
-          % (len(holes), nxt))
+    print("   安装孔：新插 %d 个 `HoleModuleID` 实例 ✓（**只给了 pcbView** ✓，`modelIndex` 从 %d 起 ✓）"
+          "｜板上原有 %d 个 ⇒ **原位保留** ✓"
+          % (len(holes) - len(hole_exist), nxt, len(hole_exist)))
     if HOLE_OFF_MM == (0.0, 0.0):
         print("   ⚠️ 孔偏移按 (0,0) 写 ✓（= 拿 `<geometry>` 当孔心 ✓）"
               "—— 它**未必等于图上环心** ✗ ⇒ 请导一张这板的 PCB 图示 ✓ 让我按板校准 ✓")
@@ -841,7 +945,8 @@ def main(argv):
     tot_a = 0.0
     sx = sy = 0.0
     for p in sorted(parts, key=lambda q: q["title"]):
-        loc, bot, th = new[p["title"]]
+        # ★ 上锁的件不在 `new` 里 ✓（`transform_block` 就不会碰它 ✗）⇒ 报它**现在**的姿态 ✓
+        loc, bot, th = new.get(p["title"]) or cur_pose(p)
         pad_bb = union(p["var"][(bot, th)].values())   # 该 (面, 朝向) 的**局部焊盘**包围盒 ✓
         bb = pad_bb
         if p["title"] == "L1" and p.get("cubox"):

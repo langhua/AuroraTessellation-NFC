@@ -29,6 +29,11 @@ import pcb_wire as PW                                              # noqa: E402
 SK = 25.4 / 90.0
 M = lambda u: u * SK                                               # noqa: E731
 path = sys.argv[1]
+# ★ 阈值**参数化** ✓（默认 0.15 mm ✓；随工艺可调 ✓）——`--tight=0.20` ✓
+TIGHT = 0.15
+for _a in sys.argv[1:]:
+    if _a.startswith("--tight="):
+        TIGHT = float(_a[8:])
 ALL = "--all" in sys.argv[1:]           # ★ 早定义 ✓（下面种子那段要用它 ✓）
 seedA = sys.argv[2] if len(sys.argv) > 2 and not sys.argv[2].startswith("--") else None
 seedB = sys.argv[3] if len(sys.argv) > 3 and not sys.argv[3].startswith("--") else None
@@ -237,7 +242,7 @@ if ALL:
                         continue
                     if d <= 0:
                         bad.append((na, nb, xa, xb))
-                    elif d * SK < 0.15:
+                    elif d * SK < TIGHT:
                         tight.append((d, na, nb))
     print("★★ 跨网**真接触**（净距 ≤ 0 ✓ = 真短路 / Fritzing 会并网 ✓）：**%d** 处" % len(bad))
     for na, nb, xa, xb in bad[:20]:
@@ -249,7 +254,7 @@ if ALL:
             p = xa[1]["c"] if xa[0] == "pad" else xa[1]["a"]
             cx, cy = M(p[0]), M(p[1])
         print("   ✗ `%s` ↔ `%s` ✓  约在 (%.3f, %.3f) mm" % (na, nb, cx, cy))
-    print("⚠ 跨网净距 < 0.15 mm（**太紧** ✗，制造要 ≥0.25 ✓）：**%d** 处" % len(tight))
+    print("⚠ 跨网净距 < %.2f mm（**太紧** ✗）：**%d** 处" % (TIGHT, len(tight)))
     for d, na, nb in sorted(tight)[:6]:
         print("   ⚠ %6.4f mm  `%s` ↔ `%s`" % (M(d), na, nb))
     sys.exit(1 if bad else 0)

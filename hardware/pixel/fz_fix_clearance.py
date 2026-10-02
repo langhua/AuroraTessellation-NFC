@@ -32,10 +32,20 @@ import pcb_wire as PW                                              # noqa: E402
 
 SK = 25.4 / 90.0
 M = lambda u: u * SK                                               # noqa: E731
-TIGHT_VIA = 0.25           # mm ✓ 牵涉过孔
-TIGHT_WIRE = 0.20          # mm ✓ 线↔线
 src, dst = sys.argv[1], sys.argv[2]
-ROUNDS = int(sys.argv[3]) if len(sys.argv) > 3 else 40
+ROUNDS = int([a for a in sys.argv[3:] if a.isdigit()][0]) if any(
+    a.isdigit() for a in sys.argv[3:]) else 40
+# ★★ 两个目标净距**参数化** ✓（用户 2026-10-02 定 ✓：以后要加大/减小直接给参数 ✓）
+#   默认值 = 本仓规则 ✓：过孔 ≥ **0.25 mm** ✓（`pcb-rules.md` 的 `VIA_SAFE_MM` ✓）、
+#   线↔线 ≥ **0.20 mm** ✓（制造可做 ✓）。
+#   用法 ✓：`--via=0.30 --wire=0.25` ✓（想放宽工艺/收紧成本都只改参数 ✓）。
+TIGHT_VIA = 0.25           # mm ✓ 牵涉过孔 ✓（默认 = 本仓规则 ✓）
+TIGHT_WIRE = 0.20          # mm ✓ 线↔线 ✓
+for _a in sys.argv[1:]:
+    if _a.startswith("--via="):
+        TIGHT_VIA = float(_a[6:])
+    elif _a.startswith("--wire="):
+        TIGHT_WIRE = float(_a[7:])
 
 zin = zipfile.ZipFile(src)
 fz = [n for n in zin.namelist() if n.endswith(".fz")][0]

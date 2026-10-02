@@ -53,6 +53,12 @@ _VIA_HOLE_TXT = "0.3/0.15 mm 孔环（盘 Ø0.6 ✓）"
 #    `<connect … modelIndex="90014051" layer="copper0"/>` ✓）。
 _VIA_SIZE_MM = tuple(float(x) for x in re.findall(r"([\d.]+)\s*mm", _VIA_HOLE_VAL))
 
+# ★★ 「保线」时给**用户画的走线**留的净空基准 ✓（2026-10-03 ✓，见 `main` 里的 `[保线]` ✓）：
+#   他线上的**任意中点**到新线**中心线**的下限 = `KEEP_W_MM/2 + CLEAR_MM` ✓。
+#   取 **24 mil（标准档 ✓ 0.6096 mm ✓）** —— 宁可**偏保守** ✓：他的线若比这细 ✓，
+#   我们也只是**多让一点** ✓（不会压上去 ✗）；✗ 反之（按 8 mil 算）会**少让** ⇒ 有短路风险 ✗。
+KEEP_W_MM = 24 * 0.0254
+
 MM = RT.MM
 
 # ★ 走线颜色：**只用 Fritzing 官方配色表里的值** ✓（`ratsnestcolors.xml` 的 breadboardView 那组 ✓）
@@ -919,6 +925,13 @@ def main(argv):
         NO_MERGE.append(1)
     data = projdata.load(netsf, need=("NETS",))
     cell = RT.opt(argv, "--cell", RT.CELL_MM, float)
+    # ★★ 线↔线**中心距下限** ✓（2026-10-02 ✓；**默认 0 = 关** ✗ ⇒ 与以前逐项一致 ✓）
+    #   病根（实测 ✓）：净空 0.15 + 8 mil 线需要中心距 ≥ **0.4032 mm** ✓，
+    #     而 0.15 的栅格**只能给 2 格 = 0.30 mm** ✗ ⇒ 真实净距 **0.0968 mm** ✗
+    #     —— **低于嘉立创最小间距 0.127 mm** ✗（v64 实测 33 处 ✓）。
+    #   `--pitch=0.45` ⇒ 3 格 ✓ ⇒ 净距 **0.2468 mm** ✓（≥ 仓规 0.20 ✓）。
+    #   ✗ 别用 `--cell` 修 ✗：实测 0.225 ⇒ **4/9** ✗、0.25 ⇒ 7/9 ✗（"起点格空" ✗ = 脚口被吃 ✓）。
+    RT.PITCH_MIN_MM = RT.opt(argv, "--pitch", RT.PITCH_MIN_MM, float)
     via_cost = RT.opt(argv, "--via", RT.K_VIA, float)
     tries = RT.opt(argv, "--tries", 6, int)
     # ★★ 2026-10-01 用户定 ✗：**全板统一用最窄那档 = 8 mil** ✓
@@ -968,6 +981,15 @@ def main(argv):
     r = model["board"]
     pads = RT.pad_index(model)
     net_pads, unresolved = RT.resolve_nets(model, data.NETS)
+    # ★★★ 2026-10-03 修 ✗✓（**一行**修掉 4 张网布不通的真凶 ✓）：
+    #   `pcb_route.obstacles()` 的**同网豁免**读的是 `model["net_pads"]` ✓（源码注释原话：
+    #   「布某张网时，把 `tag == 本网` 的障碍**减掉**」✓），而 `resolve_nets()` **只返回、不写回** ✗
+    #   ⇒ 那张表**一直是空的** ✗ ⇒ **每只焊盘都算不出网名** ✗（实测 `_work/probe_start.py` ✓：
+    #     4 张网的**每一只脚**都报「判到的网 = None」✗）⇒ 邻居焊盘的盘框**永不被免** ✗
+    #   ⇒ 在 0.4 mm 脚距的 `U1`（QFN20 ✓）与 `D3`（SOT363 ✓）上，**起步格被隔壁盘盖住** ✗
+    #     ⇒ 布线器报 **“起点格空”** ✗、那 4 张网永远布不通 ✗（`BR+`/`DATA_IN`/`DATA_OUT`/`LED_DIN` ✓）。
+    #   ⇒ 把返回的那张表**写回 `model`** ✓ —— 口径一个字没改 ✓（只是把它真的填上 ✓）。
+    model["net_pads"] = net_pads
     if unresolved:
         print("✗ 脚名解析不了：%s" % ", ".join(unresolved))
     # ★ 把**路由器眼里的映射**打出来 ✓（2026-10-01 ✓）：核对「`U1` 的哪些脚算进了哪张网」✓
@@ -983,7 +1005,63 @@ def main(argv):
           % ("%.4f mm" % (mil_pow * RT.MIL_MM), RT.MIL_TIERS[mil_pow], mil_pow,
              "%.4f mm" % (mil_sig * RT.MIL_MM), RT.MIL_TIERS[mil_sig], mil_sig,
              "/".join(power), _VIA_HOLE_TXT))
+    print("   线↔线中心距下限：%s ✓"
+          % ("%.3f mm（已开 ✓ ⇒ 8 mil 并排净距 %.4f mm ✓）"
+             % (RT.PITCH_MIN_MM, RT.PITCH_MIN_MM - mil_sig * RT.MIL_MM)
+             if RT.PITCH_MIN_MM > 0 else "关 ✗（= 与以前逐项一致 ✓）"))
     items, _st = RT.obstacles(model)
+    # ★★ 保线 ✓（2026-10-03 用户定「**甲**」✓）：把他自己画的 PCB 走线 + 过孔
+    #   当作**已布好的铜** ✓ —— 四条口径（**逐条都可核 ✓**）：
+    #     ① **谁都绕开它** ✗（塞进 `items` ⇒ 与焊盘/件铜/安装孔同等待遇 ✓）；
+    #     ② **不重画它** ✗ —— 关键 ✗：**不进 `res`** ✓ ⇒ 后面那套
+    #        「拆线重布 / 去白钻对 / 确定性合并 / 回收过孔」全都**碰不到他的线** ✓
+    #        （进 `res` 就会被那些 pass 挪/删 ✓ —— 这是本仓踩过的坑 ✓）；
+    #     ③ 这几张网**只补缺的脚** ✓：网表里**保留**"每条链一个代表脚" ✓＋"还没连到的脚" ✓，
+    #        把链上**已经连到**的脚**删掉** ✗（它们已经有铜了 ✓ ⇒ 不许再画一根 ✗）；
+    #     ④ 过孔也当障碍 ✓、并进 `novia` ✓（`tag` 给个**永远不会等于网名**的标记 ✓
+    #        ⇒ 新过孔不许落在他的线/孔上 ✗）。
+    #   数据来源 ✓：`fz_keep_set.py` 生成的纯数据文件 ✓（`--keep=<file>` ✓；不给 ⇒ 老行为 ✓）。
+    keepf = next((a.split("=", 1)[1] for a in argv if a.startswith("--keep=")), None)
+    if keepf:
+        kd = projdata.load(keepf, need=("KEEP", "KEEP_V", "REPS", "DONE"))
+        # ★ 本文件里**没有** `U()` ✓（只有 `MM = RT.MM` 一个方向 ✓）⇒ 换算用 `RT.SK` ✓
+        #   （= 每毫米多少草图单位 ✓，`pcb_route` 里的 `SK` ✓）
+        KEEP_GROW = RT.SK * (KEEP_W_MM / 2.0 + RT.CLEAR_MM)      # 他线**中点**→新线心的下限 ✓
+        KEEP_V_GROW = RT.SK * (RT.VIA_CLEAR_MM + RT.VIA_SAFE_MM)  # 他孔心→新线心的下限 ✓
+        n_kw = n_kv = 0
+        for (_net, lay, pts0) in kd.KEEP:
+            # ★★ 保留的线可能是**曲线** ✓ ⇒ `fz_keep_set` 已把它采成折线 ✓ ⇒
+            #   这里**逐段各生成一个障碍框** ✓（弯铜才框得住 ✗ —— 只框两端会漏掉中段 ✓）。
+            for i in range(len(pts0) - 1):
+                (ax, ay), (bx, by) = pts0[i], pts0[i + 1]
+                items.append((lay, (min(ax, bx), min(ay, by),
+                                     max(ax, bx), max(ay, by)), KEEP_GROW, "__keep__"))
+                n_kw += 1
+        for (_net, p) in kd.KEEP_V:
+            items.append(("both", (p[0], p[1], p[0], p[1]), KEEP_V_GROW, "__keep__"))
+            n_kv += 1
+        # ④ 网表瘦身 ✓（甲 ✓）：链上已连到的脚 ⇒ **从网表里去掉** ✗；每条链留一个代表脚 ✓
+        done_keys = {("%s.%s" % (k.split(".", 1)[0], k.split(".", 1)[1]))
+                     for _n, lst in kd.DONE.items() for k in lst}
+        rep_keys = {k for _n, lst in kd.REPS.items() for k in lst}
+        n_cut = 0
+        for _net, reps in kd.REPS.items():
+            cur = list(net_pads.get(_net) or ())
+            newl = []
+            for (t, c) in cur:
+                key = "%s.%s" % (t, c)
+                if key in rep_keys or key not in done_keys:
+                    newl.append((t, c))
+                else:
+                    n_cut += 1
+            net_pads[_net] = newl
+        print("   [保线] 用户画的铜 ✓：走线 %d 段 ＋ 过孔 %d 个 ⇒ **当既有铜** ✓"
+              "（绕开它 ✗、不重画 ✗）" % (n_kw, n_kv))
+        for _net in sorted(kd.REPS):
+            print("      · %-5s 链上已连到 %s ✓ ⇒ **不再布线** ✗；从代表脚 %s ✓ 往外接剩下的脚 ✓"
+                  % (_net, "、".join(sorted(kd.DONE.get(_net, []))),
+                     "、".join(kd.REPS[_net])))
+        print("      ⇒ 网表里去掉已连到的脚 %d 个 ✓（甲：不动他连好的 ✗）" % n_cut)
     passes = RT.opt(argv, "--passes", 4, int)
     # ★★ 元件**画出来的铜**（含 NFC 线圈的螺旋 ✓）⇒ 过孔禁落区 ✓
     #   2026-10-01 用户定 ✗：「通孔不能在元件内，并与有安全距离」✓
