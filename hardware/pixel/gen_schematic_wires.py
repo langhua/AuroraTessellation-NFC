@@ -2067,6 +2067,40 @@ def main(argv):
         #   ★★ `RAILS` 里的 = 每脚 → **就近的上/下电源轨** ✓（2026-09-28 ✓ 用户提的架构 ✓）
         pairs = []
         rail_ys = RAIL_Y.get(net, []) if RAILS else []
+        # ★★★ 2026-10-03 ✓（用户点名"继续"后加 ✓）：轨的 y **不只有"包围盒外那两条"** ✗
+        #   —— 再补**一条"穿中缝"的内部候选** ✓ = 该网**脚行的中位 y** ✓。
+        #   · 动机（实测 ✓）：用户手画的 GND 主干是**穿中缝**的 ✓、脚**坐在干线上** ✓
+        #     （支线长度 ≈ 0 ✓）；而本工具原来只给"包围盒外 2 格 / 4 格"两条 ✗
+        #     ⇒ 每条支线都得跑到图外 ✗ ⇒ 实测 `--rails` 总长 **946.4 mm** ✗（同摆位手画 487.7 ✓）。
+        #   · 只加**一条** ✗（不把整张走廊表塞进来 ✗）：轨的 x 范围 = "所有落到该轨上的支线"
+        #     的 min/max ✓ ⇒ 候选一多 ⇒ 会画出**好几条长轨** ✗ ⇒ 反而更长 ✗。
+        #   · 安全 ✓：候选**先过两道门** ✗ —— 不穿任何本体 ✓、不压**别的网**的脚 ✓；
+        #     自己网的脚**允许**在轨上 ✓ —— 那正是 `_sit` 那套"轨在脚的 x 处断开" ✓ 的最优形态 ✓。
+        if rail_ys and len(pts) >= 3:
+            _own0 = {(d["ref"], d["cid"]) for d in pts}
+            _xs0 = [d["p"][0] for d in pts]
+            _mid = sorted(d["p"][1] for d in pts)[len(pts) // 2]
+            # 候选排序 ✓：① 该网脚行 ✓（**坐在上面的脚越多越优先** ✓）② 干净通道 ✓（离中位行近的先 ✓）
+            _rows = {}
+            for d in pts:
+                _rows[round(d["p"][1], 4)] = _rows.get(round(d["p"][1], 4), 0) + 1
+            _cand = sorted(_rows.items(), key=lambda kv: (-kv[1], abs(kv[0] - _mid)))
+            _cand += [(round(v, 4), 0) for v in sorted(chy_clean, key=lambda v: abs(v - _mid))]
+            _picked = None
+            for _v, _n in _cand:
+                if any(abs(_v - _w) < 1e-6 for _w in rail_ys):
+                    continue                       # 已经有了（= 包围盒外那两条）⇒ 不算新增 ✓
+                _seg0 = [(min(_xs0), _v), (max(_xs0), _v)]
+                if body_hard_bad(_seg0, boxes, PIN_ALL):
+                    continue                       # 穿本体 ✗
+                if pin_hard_bad(_seg0, PIN_ALL, _own0):
+                    continue                       # 压**别的网**的脚 ✗（自己的脚可以坐上去 ✓）
+                _picked = (_v, _n)
+                break
+            if _picked:
+                rail_ys = list(rail_ys) + [_picked[0]]
+                print("   ★ 轨 y **加一条内部候选** ✓：y=%.1f ✓（该行有 %d 只本网的脚 ✓；"
+                      "不穿本体 ✓、不压别人的脚 ✓）" % _picked)
         _sit = []                       # ★ 本网“**脚正好落在轨上**”的脚 ✓（`(x, ref, cid, y)` ✓）
         if rail_ys:
             print("网 %-9s **电源轨** ✓：轨 y = %s ✓（%d 只脚各打一条支线 ✓）"
