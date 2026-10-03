@@ -335,20 +335,42 @@ def cur_pose(p):
     return (p["loc"], bool(p["bottom"]), th)
 
 
-def place(parts, r, nets_map, verbose=True, hole_exist=None):
+def place(parts, r, nets_map, verbose=True, hole_exist=None, unlock=(), unpin=(), pin_rot=None):
     """⇒ `{位号: 新 loc ✓}`（sketch 单位 ✓；只平移 ✓、不动朝向 ✗）
 
     ★★ **上锁的件（`locked="true"` ✓）一律不动** ✗ ——
       锁 = Fritzing 的**移动锁** ✓（源码：`itembase.cpp:294` 写 ✓、`sketchwidget.cpp:281` 读 ✓、
-      `:318` `setMoveLock(true)` ✓、`:1076 / :2442 / :7162` 拦移动 ✓、
-      `connectoritem.cpp:2508` 连着的线也拦 ✓、`resizableboard.cpp:1228` 板角也拦 ✓）。
+      `:318` `setMoveLock(true)` ✓、`:1076 / :2442 / :7162` 拦移动 ✓、`connectoritem.cpp:2508`
+      连着的线也拦 ✓、`resizableboard.cpp:1228` 板角也拦 ✓）。
       做法 ✓：上锁件**不写进 `new`** ⇒ `transform_block` 连一个字节都不碰 ✓
       （位/面/朝向/名 全保 ✓）；但它要进 `placed` ⇒ **别人得绕开它** ✓。
+
+    ★★ 2026-10-03 加 `unlock` ✓（**用户点名**：`U1/D3/R1/C1/LED2` 都可移可转 ✓）：
+      被点名的件从 `LOCKED` 里**拿掉** ✗ ⇒ 走第 ③ 段 ⇒ **4 个朝向 ＋ 整片落点一起搜** ✓。
+      ⚠️ 代价要说清 ✗：`D3` 上有**用户保线**（`BR+` 接 `D3.3/3.4` ✓、`GND` 接 `D3.0/3.1` ✓）
+        ⇒ `D3` 一动，那几段铜就**接不到它了** ✗（他的线是**固定坐标** ✓ 不会跟着走 ✓）
+        ⇒ 必须**重算保线表** ✗（`fz_keep_set.py` 拿**新摆位**重跑 ✓），否则程序会以为
+        “已经连好了” ✗ ⇒ **静默漏掉** ✗✗（本仓最忌的自欺 ✓）。
+    ★★ `unpin` ✓：`PIN_CENTER`（用户 2026-09-30 定 ✓）把件**钉在板心正心** ✗ ——
+      用户 2026-10-03 明确要 `LED2` **也能移** ✓（新指令 ✓）⇒ 点名它就**解除钉心** ✓。
     `hole_exist` = 板上**已经有**的安装孔 `{位号: (几何 x, y)}` ✓ ⇒ 照它原位 ✓、不重插 ✗。
     """
     c = ctr(r)
     by = {p["title"]: p for p in parts}
     LOCKED = {p["title"] for p in parts if p.get("locked")}
+    _unlocked = LOCKED & set(unlock)
+    if _unlocked:
+        print("   ⚠️ **用户点名解铉** ✓：%s ⇒ 可平移 ＋ 可旋转（4 个直角方位 ✓）"
+              % "、".join(sorted(_unlocked)))
+        LOCKED -= _unlocked
+    _pin = tuple(t for t in PIN_CENTER if t not in unpin)
+    if set(unpin) & set(PIN_CENTER):
+        print("   ⚠️ **解除钉板心** ✓：%s ⇒ 除旋转外**也可平移** ✓"
+              % "、".join(sorted(set(unpin) & set(PIN_CENTER))))
+    _rot = dict(pin_rot or {})
+    if _rot:
+        print("   ⚠️ **钉住朝向** ✓：%s（其余朝向不试 ✗）"
+              % "、".join("%s=%d°" % kv for kv in sorted(_rot.items())))
     holes_exist = dict(hole_exist or {})
     if LOCKED:
         print("   上锁（`pcbView locked=\"true\"` ✓ = 移动锁 ✓）**一律保持原位** ✗：%s"
@@ -696,12 +718,18 @@ def place(parts, r, nets_map, verbose=True, hole_exist=None):
         best, bestc, bestkey, bestwhy = None, None, None, {}
         nc = int(RMAX / GRID)
         keys = [(False, th) for th in ROTS] if t in TOP_SIDE else [(True, th) for th in ROTS]
+        if t in _rot:
+            # ★★ 2026-10-03 加 ✓：**把件钉在指定朝向** ✗（`--pin-rot=U1:90` ✓）——
+            #   为什么需要 ✗：摆位器的 cost 按“对心/面积/间距”算 ✓、**不懂可布线性** ✗
+            #   ⇒ 它对 `U1` 选了 0° ✓，而 `DATA_IN`（`PA2`）就被邻脚的净空封成 39 格死胡同 ✗。
+            #   ⇒ 只能逐个朝向试布一遍 ✓、再拿“连通”选 ✗（机械 ✓，不用猜 ✓）。
+            keys = [k for k in keys if k[1] == _rot[t]] or keys
         for key in keys:
             if key not in p["var"]:
                 continue
             bb = pad_local(p, key)
             # ★★ 钉心的件：**只试"正心"这一个落点** ✓（用户 2026-09-30 定 ✓，见 `PIN_CENTER` ✓）
-            if t in PIN_CENTER:
+            if t in _pin:
                 cands = [(c[0] - ctr(bb)[0], c[1] - ctr(bb)[1])]
             else:
                 cands = [(c[0] + ix * GRID - ctr(bb)[0], c[1] + iy * GRID - ctr(bb)[1])
@@ -918,8 +946,29 @@ def main(argv):
                  ("%.2f × %.2f mm" % (MM(ib[2] - ib[0]), MM(ib[3] - ib[1]))) if ib
                  else "（量不到 ⇒ 退回铜箔框 ✗）"))
     by = {p["title"]: p for p in parts}
+    # ★★ 2026-10-03：用户点名要能移/转的件 ✓（`--unlock=U1,D3,R1,C1,LED2` ✓）
+    #   ＋ 解除钉板心 ✓（`--unpin-center=LED2` ✓，见 `PIN_CENTER` 与 `place()` 头注 ✓）
+    _unlock = tuple(x.strip() for x in
+                    (next((a.split("=", 1)[1] for a in argv if a.startswith("--unlock=")),
+                          "") or "").split(",") if x.strip())
+    _unpin = tuple(x.strip() for x in
+                   (next((a.split("=", 1)[1] for a in argv
+                          if a.startswith("--unpin-center=")), "") or "").split(",")
+                   if x.strip())
+    # ★★ 2026-10-03 加 ✓：`--pin-rot=U1:90,C1:270` ⇒ 把点名件**钉在该朝向** ✓
+    #   （摆位器的 cost 不懂可布线性 ✗ ⇒ 只能逐朝向试布、拿连通选 ✓）
+    _rot = {}
+    _rs = next((a.split("=", 1)[1] for a in argv if a.startswith("--pin-rot=")), None)
+    for _it in (_rs or "").split(","):
+        if ":" in _it:
+            _k, _v = _it.split(":", 1)
+            _rot[_k.strip()] = int(_v)
+    if _unlock or _unpin:
+        print("   用户放开的件 ✓：可移/转 = %s ✓｜解除钉心 = %s ✓"
+              % ("、".join(_unlock) or "（无 ✓）", "、".join(_unpin) or "（无 ✓）"))
     print("   放置 ✓")
-    new, c, holes = place(parts, r, nets, hole_exist=hole_exist)
+    new, c, holes = place(parts, r, nets, hole_exist=hole_exist,
+                          unlock=_unlock, unpin=_unpin, pin_rot=_rot)
     # ★ 安装孔：新插两个核心库实例 ✓（`modelIndex` 从现有最大值往后排 ✓，不撞号 ✗）
     used = [int(x) for x in re.findall(r'modelIndex="(\d+)"', PW.read(base)[0])]
     nxt = max(used) + 1 if used else 90000000
