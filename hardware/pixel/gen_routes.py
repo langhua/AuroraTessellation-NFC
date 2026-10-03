@@ -1177,8 +1177,15 @@ def main(argv):
         else:
             print("   [留走廊] `%s` 单独布都**没通** ✗ ⇒ 不钉 ✓（说明堵它的不是别人占位 ✗）"
                   % prio)
+    # ★★ 2026-10-03 加 `--first=网名,…` ✓（**点名排最前** ✓，`--last` 的反面 ✓）：
+    #   依据（诊断量出来的 ✓）：`RC` 的起点 `R1.connector1` 可达 **784 格** ⇒ 口袋是一大片
+    #     **x 7.95 × y 3.30 mm** ✗、边界是 `线:5V×55`＋`线:BR+×49`＋两者过孔 ✓
+    #     ⇒ 是**先布的线把它切断了** ✗ ⇒ 让它**先走** ✓（缺省仍是电源先 ✓，不传就不变 ✗）。
+    _fs = next((a.split("=", 1)[1] for a in argv if a.startswith("--first=")), None)
+    _first = (tuple(x.strip() for x in _fs.split(",") if x.strip())
+              if _fs is not None else power)
     res = RT.route_ripup(items, r, net_pads, pads, cell, via_cost, tries=tries, passes=passes,
-                         width_of=width_of, first=power, last=_last, mid_keep=mid_keep_nets,
+                         width_of=width_of, first=_first, last=_last, mid_keep=mid_keep_nets,
                          copper_keep=[b for _l, b in copper_keep], pre=locked,
                          labels=_labels)
 
@@ -1382,7 +1389,7 @@ def main(argv):
                 for dy in range(-n, n + 1):
                     cand.append((px + dx * RT.U(cell), py + dy * RT.U(cell)))
         trial = RT.route_ripup(items, r, net_pads, pads, cell, via_cost, tries=tries,
-                               passes=passes, width_of=width_of, first=power, last=_last,
+                               passes=passes, width_of=width_of, first=_first, last=_last,
                                mid_keep=mid_keep_nets, ban_via=cand, pre=locked,
                                copper_keep=[b for _l, b in copper_keep], verbose=False,
                                labels=_labels)
