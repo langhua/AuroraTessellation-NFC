@@ -64,10 +64,59 @@ def build_ruler(svg):
     """
     root = ET.parse(svg).getroot()
     ruler = {}
+    # ★★★ 2026-10-04 ✓ **没有 `partID` 的终端**（core 件：地符号 ✓ / 网标签 ✓）
+    #   ✗ 病（实测 ✓）：`Ground1`/`Ground2` 的原理图 svg 来自 **Fritzing 安装目录的 core 件**
+    #     （`path=":/resources/parts/core/ground.fzp"` ✗ —— 包内**没有**它们的 svg 副本 ✗，
+    #      磁盘上也搜不到 ✗）⇒ 渲染器认不出它 ✗ ⇒ 尺子里它的终端**没有 `partID`** ✗
+    #     ⇒ `pin_of` 报「导出里没有 @90012780 的 connector0」✗（本次真踩 ✓）。
+    #   ✓ 但它**在尺子里** ✓（实测：`<g id="connector0terminal" x="6.728" y="0">` ✓ ——
+    #     正是 core `ground.svg` 里那个 `rect x=6.728 y=0 w=0.945 h=0.953` ✓）
+    #     ⇒ 收进 `orphan` ✓，下面由**离它最近的、解析不到脚位的实例**认领 ✓（例：两个地符号 ✓）。
+    orphan = []
+    # ★★ 备用池 `soft` ✓（2026-10-04 ✓）：**有 `partID`、但元素本身没有 `x/y`** 的终端 ✓。
+    #   ✗ 实测病：`RC` 网标签的终端**不在 `ruler` 里** ✗（认领时最近还有 72.75 单位 ✗）
+    #     ⇒ 它的 `connector0pin/terminal` 大概是 `<line>`/`<path>` ✗（没有 `x/y` ✗）
+    #     ⇒ 上面那句 `el.get("x") is not None` 直接把它**跳过**了 ✗。
+    #   ★ 只做**备用** ✓（不动主表 `ruler` ✗）—— 否则会改变**其它网**现有那些脚位的取法 ✗
+    #     （那些件全都有小方块 `connectorNterminal` ✓，本来就走得很准 ✓，不该动 ✗）。
+    soft = {}
+    # ★★ 终端方块的中心 ✓（`<rect id="connectorNterminal">` 的 x+w/2 ✓）—— 用来挑
+    #   “引脚线的哪个端点是**真脚点**” ✓（见下 ✓）。
+    term_c = {}
+    # ★★ 实例分组号 ✓（`schematic` 组出现一次 +1 ✓）—— 池子去重必须**按实例** ✗：
+    #   两个地符号都叫 `connector0` ✗ ⇒ 按 cid 全局去重会把第二个**误删** ✗
+    #   （实测：池里只剩 1 个 ✗ ⇒ `Ground2` 接不上 ✗）。
+    _grp = [0]
+
+    def _segs_of(el):
+        r"""把 `<line>` / 简单 `<path d="M x,y[v dy|h dx]">` 的**两个端点**读出来 ✓
+
+        ✗ 为什么必须这么读（实测踩的 ✗）：core `ground.svg` 的脚点是
+          `<path id="connector0pin" d="M7.201,7.575v-7.2"/>` ✗ —— 拿**终端方块的
+          `x/y`（= 左上角 ✗）当脚点，会**差 0.17mm** ✗ ⇒ Fritzing 里又显示“没接上”✗✗；
+          而按“**离方块中心最近的端点**”取 ✓ ⇒ 实测得 **`(161.328,166.801)`** ✓
+          = 用户在 Fritzing 里亲手连的那根线的端点 ✓✓（`Wire90012781` ✓，逐字节对得上 ✓）。
+        """
+        if tag(el) == "line" and el.get("x1") is not None:
+            return [(float(el.get("x1")), float(el.get("y1"))),
+                    (float(el.get("x2")), float(el.get("y2")))]
+        _d = (el.get("d") or "").strip()
+        _m = re.fullmatch(r"M\s*(-?[\d.]+)\s*,?\s*(-?[\d.]+)\s*[vV]\s*(-?[\d.]+)", _d)
+        if _m:
+            _x, _y, _dy = (float(_m.group(1)), float(_m.group(2)), float(_m.group(3)))
+            return [(_x, _y), (_x, _y + _dy)]
+        _m = re.fullmatch(r"M\s*(-?[\d.]+)\s*,?\s*(-?[\d.]+)\s*[hH]\s*(-?[\d.]+)", _d)
+        if _m:
+            _x, _y, _dx = (float(_m.group(1)), float(_m.group(2)), float(_m.group(3)))
+            return [(_x, _y), (_x + _dx, _y)]
+        return []
 
     def walk(el, m, pid):
         t = el.get("transform")
         m2 = mul(m, parse_tf(t)) if t else m
+        if el.get("id") == "schematic":
+            _grp[0] += 1                 # ★ 每个实例的 `schematic` 组 = 一个实例 ✓
+        _g2 = _grp[0]
         if el.get("partID"):
             pid = el.get("partID")
             ruler.setdefault(pid, {"origin": None, "pins": {}})
@@ -75,13 +124,56 @@ def build_ruler(svg):
             ruler[pid]["origin"] = apply(m2, 0, 0)
         i = el.get("id") or ""
         mm = re.fullmatch(r"connector(.+?)(terminal|pin)", i)
-        if mm and pid in ruler and el.get("x") is not None:
-            ruler[pid]["pins"].setdefault("connector" + mm.group(1),
-                                          apply(m2, float(el.get("x")), float(el.get("y"))))
+        if mm:
+            _cid = "connector" + mm.group(1)
+            _is_term = mm.group(2) == "terminal"
+            _pt = None
+            if _is_term and el.get("x") is not None:
+                _cx2 = float(el.get("x")) + float(el.get("width") or 0) / 2.0
+                _cy2 = float(el.get("y")) + float(el.get("height") or 0) / 2.0
+                term_c[_cid] = apply(m2, _cx2, _cy2)
+                _pt = apply(m2, float(el.get("x")), float(el.get("y")))
+            elif not _is_term:
+                _ends = _segs_of(el)
+                if _ends and _cid in term_c:
+                    _tgt2 = term_c[_cid]
+                    _x2 = [(math.dist(apply(m2, _a2, _b2), _tgt2), _a2, _b2) for _a2, _b2 in _ends]
+                    _sc2 = min(_x2)[1:]
+                    _pt = apply(m2, _sc2[0], _sc2[1])
+                elif _ends:
+                    _pt = apply(m2, _ends[-1][0], _ends[-1][1])
+            if _pt is None:
+                pass
+            elif _is_term:
+                if pid in ruler:
+                    ruler[pid]["pins"].setdefault(_cid, _pt)
+                elif not any(_c3 == _cid and _g3 == _g2 for _c3, _p3, _g3 in orphan):
+                    # ★★ 往池子里放的是**终端方块的中心** ✓ —— ✗ 不是它的左上角 ✗：
+                    #   实测（拿用户手画原图标定 ✓）：地符号真脚点 = **`(161.328,166.801)`** ✓
+                    #   （= 用户在 Fritzing 里亲手连的那根线的端点 ✓）；而方块**左上角**偏 0.47 单位
+                    #   （**0.13mm** ✗）；**中心**只差 **0.036mm** ✓ ⇒ 落在终端的命中矩形里 ✓。
+                    #   ★ 验证点 ✓：认领日志里的距离应当是 **9.02**（= 原点→真脚点 ✓），
+                    #     如果还是 **8.41**（= 原点→方块左上角 ✗）就说明这一段没生效 ✗。
+                    orphan.append((_cid, term_c.get(_cid) or _pt, _g2))
+            else:
+                # ★★ 只填**两个备用池** ✗ —— **绝不覆盖主表** ✗✗（2026-10-04 实测踩的 ✗）：
+                #   ✗ 我第一版顺手写了 `ruler[pid]["pins"][cid] = _pt` ✗ ⇒ **所有元件**的脚位
+                #     都被换成“引脚线端点” ✗ ⇒ 实测导线 49 → **56 根** ✗、总长 612 → **769 mm** ✗✗
+                #     （全图都变了 ✗）—— 正是“**只改点名的那个**”那条规矩的反面教材 ✗。
+                #   ✓ 本步的**唯一目的**是给 core 件（地符号 ✓）补脚位 ✓ ⇒ 只动池子 ✓。
+                if pid and not ruler.get(pid, {}).get("pins"):
+                    soft.setdefault(pid, {})[_cid] = _pt
+                elif not pid:
+                    for _j3, (_c3, _p3, _g3) in enumerate(orphan):
+                        if _c3 == _cid and _g3 == _g2:
+                            orphan[_j3] = (_cid, _pt, _g2)  # ★ 同实例内有 ⇒ **改用引脚线端点** ✓
+                            break
+                    else:
+                        orphan.append((_cid, _pt, _g2))     # ★ 没有 ⇒ **先放进去** ✓（比方块准 ✓）
         for c in el:
             walk(c, m2, pid)
     walk(root, (1, 0, 0, 1, 0, 0), None)
-    return ruler
+    return ruler, orphan, soft
 
 RATIO = 1.25
 CLEAR = 6.0            # 导线离元件本体至少留这么远（sketch 单位；6 ≈ 1.7mm ✓）
@@ -404,7 +496,13 @@ def pm_mul(m, t):
 
 # ─────────────────────────── 几何 ───────────────────────────
 def load_geom(fzz, svg):
-    ruler = build_ruler(svg)
+    ruler, orphan, soft = build_ruler(svg)
+    if soft:
+        print("★ 备用池 `soft`（有 `partID`、但元素没有 `x/y` 的终端 ✓）：%s ✓"
+              % ", ".join("%s×%d" % (k, len(v)) for k, v in sorted(soft.items())))
+    if orphan:
+        print("★ 尺子里**没有 `partID` 的终端** ✓：%d 个（core 件，如地符号 ✓）⇒ 由最近的、"
+              "解析不到脚位的实例**认领** ✓" % len(orphan))
     root = ET.parse(svg).getroot()
     BOX_MISS = []
 
@@ -458,6 +556,20 @@ def load_geom(fzz, svg):
         #     比例由**尺子的单位**定：Fritzing 导出（1/72in）= **1.25** ✓；
         #     本项目 `render_sch.py` 出图（就是 sketch 单位）= **1.0** ✓（`--ratio` ✓）。
         sk = lambda x, y: (RATIO * x, RATIO * y)                     # noqa: E731
+        # ★★★ 2026-10-04 ✓ **先认出「网锚点」**（网标签 / 接地符号 ✓）—— 取脚位之前就要知道 ✓
+        #   ✓ 口径（**照它自己的语义** ✓，不猜 ✗）：
+        #     · `GroundModuleID` ⇒ 网 = **GND** ✓（它就是地符号 ✓）；
+        #     · `NetLabelModuleID` ⇒ 网 = `<property name="label">` ✓（实测：两个 `RC` 标签都写
+        #       `name="label" value="RC"` ✓）—— ★ 标题只是位号 ✗（两个都叫 `RC` ✗
+        #       ⇒ 按标题存会**互相盖掉** ✗，实测就是丢了一个 ✗）。
+        _mid2 = e.get("moduleIdRef") or ""
+        anchor = None
+        if "GroundModuleID" in _mid2:
+            anchor = "GND"
+        elif "NetLabelModuleID" in _mid2:
+            for _pv in e.iter("property"):
+                if (_pv.get("name") or "").lower() == "label":
+                    anchor = (_pv.get("value") or "").strip()
         pins, pins_export = {}, {}
         if pid:
             for cid, (ex, ey) in ruler[pid]["pins"].items():
@@ -467,6 +579,38 @@ def load_geom(fzz, svg):
             for cid, p in PINS_FIX[mi].items():
                 if cid in pins:
                     pins[cid] = p
+        # ★★★ 2026-10-04 ✓ **锚点认领一个没有 `partID` 的终端** ✓（core 件：地符号 ✓）
+        #   ✗ 为什么必须放在这里 ✗：`pins, pins_export = {}, {}` 在**上面** ✗ ——
+        #     我第一版把认领写在了它**前面** ✗ ⇒ 认领到的脚**当场被空字典冲掉** ✗✗
+        #     （症状：还是报「导出里没有 @90012780 的 connector0」✗）—— 必须放在**之后** ✓。
+        #   ★ 判据 = **离实例原点最近** ✓（限 30 单位 ≈ 8.5mm ✓，免得抢了别人的 ✓）；
+        #     认领后**从池子里拿走** ✓（两个地符号各拿一个 ✓，不会共用 ✗）。
+        if anchor:
+            _best2, _bd2 = None, 30.0
+            for _j2, (_c2, _q2, _g2b) in enumerate(orphan):
+                _d2 = math.dist((RATIO * _q2[0], RATIO * _q2[1]), sk(*loc))
+                if _d2 < _bd2:
+                    _best2, _bd2 = _j2, _d2
+            if _best2 is not None:
+                _c2, _q2, _g2c = orphan.pop(_best2)
+                pins_export[_c2] = _q2
+                pins[_c2] = sk(*_q2)
+                print("   ✓ 锚点 **%s**（%s）认领到 %s ✓ 距原点 %.2f 单位 = %.2f mm ✓"
+                      % (title, anchor, _c2, _bd2, _bd2 * 25.4 / 90.0))
+            else:
+                _near = [math.dist((RATIO * _q2[0], RATIO * _q2[1]), sk(*loc))
+                         for _c2, _q2, _g2d in orphan]
+                print("   ⚠ 锚点 **%s**（%s）**没有可认领的终端** ✗（池里剩 %d 个，最近 %s）"
+                      "⇒ 它这次**接不上**（请人看一眼 ✓）"
+                      % (title, anchor, len(_near),
+                         "%.2f 单位" % min(_near) if _near else "—"))
+            # ★★ 备用池兜底 ✓：该件**自己的**终端（只是元素没有 `x/y` ✗，如 `<line>`/`<path>` ✓）
+            if not pins and pid and soft.get(pid):
+                for _sc, _sp in soft.pop(pid).items():
+                    pins_export[_sc] = _sp
+                    pins[_sc] = sk(*_sp)
+                print("   ✓ 锚点 **%s**（%s）从**备用池**取到脚位 ✓：%s ✓（元素没有 `x/y` ✗ ⇒"
+                      "主表取不到 ✓）" % (title, anchor, ", ".join(sorted(pins))))
         # ★★ 本体盒：**只调共享实现** ✓（2026-09-27 ✓）
         #   ✗ 第一版我在这里猜错了取 svg 的写法 ✗ ⇒ 10 件全取不到 ✗ ⇒ 盒子全空 ✗ ⇒ 闸门失效 ✗
         #   ✓ 正解（= 渲染器那一套 ✓，已搬进 `sch_box.part_svg_text` ✓）：
@@ -497,6 +641,26 @@ def load_geom(fzz, svg):
         insts[title] = {"mi": mi, "mid": e.get("moduleIdRef"), "el": e, "sub": sub,
                         "loc": loc, "pins": pins, "box": box, "names": conname,
                         "ox": (ox, oy) if pid else None, "pins_export": pins_export}
+        # ★★★ 2026-10-04 ✓ **网锚点**（网标签 / 接地符号）**也要进它自己的网** ✗（用户报的 bug ✓）
+        #   ✗ 病（实测 ✓，`_work/_dangling.py` ✓）：`RC` ×2 / `Ground1` / `Ground2` **在输入里就悬空** ✗
+        #     （`sch_strip_wires.py` 剥掉原理图导线后，它们**一个连接都没有** ✗），
+        #     而布线器只管网表里那些脚 ✗ ⇒ 它们一路悬空到产出 ✗ ⇒ 用户看到：
+        #       · 「**接地标志没有接入地线网络**」✗；
+        #       · 「**RC 标签没有把中间的线省去**」✗（标签成了摆设 ✗）。
+        #   ✓ 口径（**照它自己的语义** ✓，不猜 ✗）：
+        #     · `GroundModuleID` ⇒ 网 = **GND** ✓（它就是地符号 ✓）；
+        #     · `NetLabelModuleID` ⇒ 网 = `<property name="label">` ✓（实测：两个 `RC` 标签都写
+        #       `name="label" value="RC"` ✓）—— ★ 标题只是位号 ✗（两个都叫 `RC` ✗
+        #       ⇒ 按标题存会**互相盖掉** ✗，实测就是丢了一个 ✗）。
+        #   ★ 所以锚点存**唯一键** `"@<modelIndex>"` ✓（并且**不再用标题键** ✓ ⇒ 不会有两份 ✗）：
+        #     `el`/`mi`/`pins` 指向**同一个 XML 元素** ✓ ⇒ 实例不会写两遍 ✓
+        #     （实例的写出是**按 XML** 走的 ✓，不是遍历 `insts` ✓）。
+        if anchor:
+            del insts[title]
+            insts["@%s" % mi] = {"mi": mi, "mid": _mid2, "el": e, "sub": sub,
+                                 "loc": loc, "pins": pins, "box": box, "names": conname,
+                                 "ox": (ox, oy) if pid else None, "pins_export": pins_export,
+                                 "anchor": anchor, "anchor_title": title}
 
     # ★ 全局映射：拿"同一个脚在 sketch 与在导出 SVG 里的坐标"最小二乘拟合 ✓
     #   （2026-09-26：原以为能用 `导出 = ox − loc/1.25` 逐元件推 ✗ —— 实测离散 22 单位 ✗，
@@ -1618,6 +1782,33 @@ def main(argv):
     print("映射: %d 个脚拟合 ⇒ x: 导出=%.6f·sketch+%.3f（残差 %.4f）✓  y: 导出=%.6f·sketch+%.3f（残差 %.4f）✓"
           % (fit["n"], fit["x"][0], fit["x"][1], fit["x"][2],
              fit["y"][0], fit["y"][1], fit["y"][2]))
+
+    # ★★★ 2026-10-04 ✓ **把网锚点接进各自的网** ✗（用户 2026-10-04 报的两个毛病都指向它 ✓）
+    #   ★ 放在这里的原因 ✓：上面那两条 `print`（实例数 / 映射）保持**原样** ✓
+    #     —— 锚点只是**换了个键**（`@<modelIndex>` ✓），实例数不变 ✓、名字日志也不变 ✓。
+    #   ★ 认不出网名就**如实报出来** ✓（不静默 ✓、也不瞎猜一个网塞进去 ✗）。
+    _anch_add, _anch_bad = [], []
+    for _k, _d in list(insts.items()):
+        if not _k.startswith("@"):
+            continue
+        _net2 = _d.get("anchor")
+        if not _d.get("pins"):
+            # ★★ 取不到脚位 ⇒ **跳过、不崩** ✗（✗ 第一版直接接上去 ⇒ `pin_of` 抛 SystemExit ✗
+            #   ⇒ **整个生成失败** ✗✗ —— 一个件认不出，不该把整张图带下水 ✗）
+            _anch_bad.append("%s（%s ✗ **脚位取不到** ✗）" % (_d.get("anchor_title"), _net2))
+            continue
+        if _net2 in NETS:
+            NETS[_net2].append((_k, "#1"))       # `#1` = 它的第 1 个脚（= connector0 ✓）
+            _anch_add.append("%s→%s" % (_d.get("anchor_title"), _net2))
+        else:
+            _anch_bad.append("%s（网 `%s` ✗ 不在网表里）" % (_d.get("anchor_title"), _net2))
+    if _anch_add:
+        print("★ **网锚点进网** ✓：%d 个（%s ✓）—— 它们原来**在输入里就悬空** ✗"
+              "（剥线后一个连接都没有 ✓）" % (len(_anch_add), ", ".join(_anch_add)))
+    else:
+        print("★ **网锚点进网** ✓：输入里没有悬空的网标签/接地符号 ✓")
+    if _anch_bad:
+        print("   ⚠ 这些锚点**认不出网名** ✗ ⇒ 本次**不接**（请人看一眼 ✓）：%s" % "; ".join(_anch_bad))
 
     chx, chy = set(), set()
     # ★★★ 2026-09-30 ✓ `--snaprails=<网>`：**骑轨件在“布线之前”就先摆到轨上** ✓（结构性 ✓）
