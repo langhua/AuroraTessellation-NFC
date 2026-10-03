@@ -2706,6 +2706,40 @@ def main(argv):
             _m = (insts.get(_d["ref"]) or {}).get("mid") or ""
             return any(_k in _m for _k in _DECO_MID)
 
+        def _place_deco_on_rail(_d, _dy):
+            r"""把装饰件**整个**摆到它那条轨上 ✓（**只动 y** ✓ —— 与 `rail_hug_place` 同一个手法 ✓）
+
+            ★ 为什么 ✗（用户 2026-10-04 ✓ 原话「**好的，干**」✓ = 同意这一步 ✓）：
+              ✗ 不摆的话，接地符号**吊在轨下面** ✓ ⇒ 它那根支线 = 它到轨的距离 ✓
+                （实测 `Ground1` = **28.9 单位 = 8.2 mm** ✗；手画版把它摆到轨上 ⇒ **0.14** ✓）。
+            ★ 只动 y ✓（x 不动 ✓）：接地符号本来就是**竖直挂在轨上**的 ✓；动 x 会把它横着拖 ✗。
+            ★ 摆完**记进 `_sit`** ✓ ⇒ 轨在它那个 x 处**断开** ✓ ⇒ 脚与断点**重合** ✓
+              （端点到端点 ✓）⇒ **不产生任何支线** ✓（0 长度段是垃圾 ✗）。
+            ★ **四处必须一起改** ✗（少一处就会出现“线按新位置画、件按旧位置摆”✗ = “看着接上其实
+              没接”✓）：**XML 几何** ✓ / `loc` ✓ / `pins` ✓ / `PIN_ALL` ✓。
+            """
+            _d9 = insts.get(_d["ref"])
+            if not _d9 or _d9.get("loc") is None:
+                return False
+            _g9 = pm.child(_d9["sub"], "geometry")
+            if _g9 is None or _g9.get("y") is None:
+                return False
+            _oy = float(_g9.get("y"))
+            _g9.set("y", fmt(_oy + _dy))
+            _d9["loc"] = (_d9["loc"][0], _d9["loc"][1] + _dy)
+            _d9["pins"][_d["cid"]] = (_d["p"][0], _d["p"][1] + _dy)
+            for _i9 in range(len(PIN_ALL)):
+                _t9, _c9, _x9, _y9 = PIN_ALL[_i9]
+                if _t9 == _d["ref"] and _c9 == _d["cid"]:
+                    PIN_ALL[_i9] = (_t9, _c9, _x9, _y9 + _dy)
+                    break
+            print("   ★ 装饰件 **%s.%s** ✓ **整个摆到轨上** ✓：y 移 %.1f 单位 = %.1f mm ✓"
+                  "（只动 y ✓；原来那根支线 %.1f 单位 ⇒ **归零** ✓；轨会在该 x 处**断开** ✓"
+                  " = 端点到端点 ✓；XML 几何 / loc / pins / PIN_ALL 四处一起改过了 ✓）"
+                  % (_d["ref"], _d["cid"], _dy, abs(_dy) * 25.4 / 90.0, abs(_dy)))
+            _d["p"] = (_d["p"][0], _d["p"][1] + _dy)
+            return True
+
         if rail_ys and len(pts) >= 3:
             _own0 = {(d["ref"], d["cid"]) for d in pts}
             _xs0 = [d["p"][0] for d in pts]
@@ -2873,6 +2907,7 @@ def main(argv):
                     else:
                         print("   · 装饰件 **%s.%s** ✓ 就近的 y=%.1f **已经有实质落点** ✓ ⇒ 原地 ✓"
                               % (d["ref"], d["cid"], _y))
+                    # ★ 摆不摆**不在这里定** ✗ —— 要等**车道定完**才知道它到底靠谁接 ✓（见下 ✓）。
                 else:
                     _usedr.add(_y)                 # ★ 记下“这条轨有实质落点”✓（见上 ✓）
                 pairs.append({"a": d["p"], "ra": d["ref"], "ca": d["cid"],
@@ -2967,6 +3002,40 @@ def main(argv):
                     print("   ★ **竖直车道** ✓：x=%.3f ✓ 服务 **%d 只脚** ✓（y %.1f → %.1f ✓）"
                           "—— 剩下的照旧走**水平轨** ✓"
                           % (_x, len(_prs), _tr[0][1], _tr[-1][1]))
+            # ★★★ 2026-10-04 ✓ **装饰件（接地/网标/过孔符号）整个摆到它那条轨上** ✓
+            #   （用户 2026-10-04 原话「**好的，干**」✓ = 同意这一步 ✓）
+            #   ★ 为什么 ✗：不摆的话接地符号**吊在轨下面** ✓ ⇒ 支线 = 它到轨的距离 ✓
+            #     （实测 `Ground1` = 28.9 单位 = 8.2mm ✗；手画版把它摆到轨上 ⇒ 0.14 ✓）。
+            #   ✗✗ **实测踩的坑（M1 ✓）**：如果放在“**选轨**”那一步就摆 ✗ ⇒ `Ground2` **被挪了
+            #     **98.1 单位 = 27.7mm** ✗✗ —— 因为那一刻还**不知道**它其实由**竖直车道**服务 ✓
+            #     （车道是**后面**才定的 ✗）⇒ 先把它挪到 −72 轨上 ✓、然后车道又去接它 ✗
+            #     ⇒ **岛从 2 变成 3** ✗（本网末尾的自检当场报出来 ✓ —— 机器守的价值 ✓）。
+            #   ✓ 现在：**等车道定完** ✓ ⇒ 只摆**真的靠轨支线**接的那些装饰件 ✓
+            #     （`vlane` 标记的不动 ✓，走车道的原地不动 ✓）。
+            #   ★ 摆了 ⇒ 那条支线**整条删掉** ✓、并记进 `_sit` ✓ ⇒ 轨在该 x 处**断开** ✓
+            #     （脚与断点重合 = 端点到端点 ✓）⇒ 不留 0 长度段 ✗。
+            _mv = []
+            for _pr in pairs[_n_rail:]:
+                if _pr.get("vlane") or _pr["rb"] is not None:
+                    continue                       # 走车道的 / 已经定了别的东西 ⇒ 不动 ✓
+                if not _is_deco({"ref": _pr["ra"], "cid": _pr["ca"]}):
+                    continue
+                if abs(_pr["rail_b"][1] - _pr["a"][1]) <= MIN_SEG:
+                    continue                       # 已经贴在轨上 ⇒ 不用挪 ✓
+                _mv.append(_pr)
+            _mvd = []
+            for _pr in _mv:
+                _dd = {"ref": _pr["ra"], "cid": _pr["ca"], "p": _pr["a"]}
+                if _place_deco_on_rail(_dd, _pr["rail_b"][1] - _pr["a"][1]):
+                    _sit.append((_dd["p"][0], _dd["ref"], _dd["cid"], _dd["p"][1]))
+                    _mvd.append(_pr)
+            if _mvd:
+                _mids = {id(p) for p in _mvd}
+                pairs = [p for p in pairs if id(p) not in _mids]
+                print("   ★ 装饰件摆到轨上 ✓：**%d 只**，它们的**轨支线整条删掉** ✓"
+                      "⇒ 轨会在那儿**断开** ✓（共 %d 段轨支线 → %d 段 ✓）"
+                      % (len(_mvd), len(_mv) + len(pairs[_n_rail:]),
+                         len(pairs[_n_rail:])))
         elif net in STAR_NETS and len(pts) >= 2:
             hub = pick_hub(pts)
             print("网 %-9s **星形** ✓：汇点 (%.1f,%.1f) ✓（%d 根枝 ✓）" % (net, hub[0], hub[1], len(pts)))
