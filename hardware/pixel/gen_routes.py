@@ -925,6 +925,13 @@ def main(argv):
         #   「这格是**谁**挡的」✓（旧诊断只能说"可达 39 格 ⇒ 堵死了"✗，等于没说 ✓）。
         #   ★ 只在 `--why` 时开 ✗ ⇒ 正常布线的速度与结果**一个字不变** ✗（见 `Grid.OWN` ✓）。
         RT.Grid.OWN = True
+    # ★★ 2026-10-03 ✓：`--via-at-pad` ⇒ 细间距/裸露焊盘**允许盘上打孔** ✗（QFN 扇出标准做法 ✓）
+    #   依据（**量出来的** ✓）：`DATA_IN` 的 39 格死胡同四墙全是 `U1` 邻脚净空 ✗
+    #   ⇒ 铜0 上根本没出口 ✗，只有"盘上打孔、立刻下铜1"才出得去 ✗（嘉立创 QFN 均如此 ✓）。
+    #   ★ 默认关 ✗（2026-09-30 用户定的"过孔不许在起/终点盘上"保持 ✓）；开时**只对** `fine`/`epad` 盘放行 ✓。
+    if "--via-at-pad" in argv:
+        RT.VIA_AT_PAD = True
+        print("   ⚠️ `--via-at-pad` ✓：细间距/裸露焊盘**允许盘上打孔** ✗（QFN 扇出 ✓）")
     if "--nomerge" in argv:
         NO_MERGE.append(1)
     data = projdata.load(netsf, need=("NETS",))

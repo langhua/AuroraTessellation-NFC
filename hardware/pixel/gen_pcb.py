@@ -93,6 +93,8 @@ HOLE_OFF_MM = PP.HOLE_DRAW_OFF_MM
 BOT_FIX_MM = (0.0, 0.0)
 HOLE_SIZE = "2.2mm,0.0mm"                      # ★ 照核心件的原值 ✓（内径 2.2 ✓ / 外径 0 ✓ = 无铜盘 ✓）
 ROTS = (0, 90, 180, 270)       # 其余件的候选朝向 ✓（4 个直角方位 ✓）
+# ★★ 2026-10-03 ✓：可被 `--rot-step=15` 改成 15° 步进 ✓（`main` 里改全局 ✓）
+#   （用户要求“元件可以旋转 15°” ✓；候选变 24 个 ⇒ 搜索 ×6 ✓，慢但值得试 ✓）
 
 # ★★ 件自家框的**基准系** ✓（2026-09-30 立 ✓）：
 #   “件在这个草图上的占位” = `loc + 框` ✓ ⇒ 框必须是**局部 sketch 单位** ✓（与 `loc` 同一系 ✓）。
@@ -335,7 +337,8 @@ def cur_pose(p):
     return (p["loc"], bool(p["bottom"]), th)
 
 
-def place(parts, r, nets_map, verbose=True, hole_exist=None, unlock=(), unpin=(), pin_rot=None):
+def place(parts, r, nets_map, verbose=True, hole_exist=None, unlock=(), unpin=(), pin_rot=None,
+          top_ok=()):
     """⇒ `{位号: 新 loc ✓}`（sketch 单位 ✓；只平移 ✓、不动朝向 ✗）
 
     ★★ **上锁的件（`locked="true"` ✓）一律不动** ✗ ——
@@ -371,6 +374,9 @@ def place(parts, r, nets_map, verbose=True, hole_exist=None, unlock=(), unpin=()
     if _rot:
         print("   ⚠️ **钉住朝向** ✓：%s（其余朝向不试 ✗）"
               % "、".join("%s=%d°" % kv for kv in sorted(_rot.items())))
+    if top_ok:
+        print("   ⚠️ **允许布到顶面** ✓：%s ⇒ 正/背面一起搜（试 0/1/2/3 个上去 ✓，由 cost 定 ✓）"
+              % "、".join(sorted(top_ok)))
     holes_exist = dict(hole_exist or {})
     if LOCKED:
         print("   上锁（`pcbView locked=\"true\"` ✓ = 移动锁 ✓）**一律保持原位** ✗：%s"
@@ -718,6 +724,10 @@ def place(parts, r, nets_map, verbose=True, hole_exist=None, unlock=(), unpin=()
         best, bestc, bestkey, bestwhy = None, None, None, {}
         nc = int(RMAX / GRID)
         keys = [(False, th) for th in ROTS] if t in TOP_SIDE else [(True, th) for th in ROTS]
+        if t in top_ok:
+            # ★★ 2026-10-03 用户 ✓：「允许 R1、C1、D3 尝试 1 个、2 个或 3 个布到顶面」✓
+            #   ⇒ 这几个件**正/背面一起搜** ✓（上去几个由 cost 定 ✓，不强制 ✓）。
+            keys = [(False, th) for th in ROTS] + [(True, th) for th in ROTS]
         if t in _rot:
             # ★★ 2026-10-03 加 ✓：**把件钉在指定朝向** ✗（`--pin-rot=U1:90` ✓）——
             #   为什么需要 ✗：摆位器的 cost 按“对心/面积/间距”算 ✓、**不懂可布线性** ✗
@@ -920,10 +930,16 @@ def main(argv):
         return 2
     base, out = argv[0], argv[1]
     netsf, rest = projdata.strip_argv(argv)
-    global HOLE_OFF_MM
+    global HOLE_OFF_MM, ROTS
     if "--hole-off-mm" in argv:            # ``dx,dy``（mm ✓）＝ `图上环心 − <geometry>` ✓
         HOLE_OFF_MM = tuple(float(v) for v in
                             argv[argv.index("--hole-off-mm") + 1].split(","))
+    # ★★ 2026-10-03 ✓：旋转步进（默认 90° ✓）—— 用户要求“元件可以旋转 15°” ✓
+    if "--rot-step" in argv:
+        _step = int(argv[argv.index("--rot-step") + 1])
+        ROTS = tuple(range(0, 360, _step))
+        print("   ⚠️ 旋转步进 = %d° ✓ ⇒ 每件候选 %d 个朝向（搜索 ×%d ✓，会慢 ✗）"
+              % (_step, len(ROTS), len(ROTS) // 4))
     nets = projdata.load(netsf, need=("NETS",)).NETS
     parts, board = load(base)
     raw_all, _b = PP.read_fzz(base)
@@ -963,12 +979,16 @@ def main(argv):
         if ":" in _it:
             _k, _v = _it.split(":", 1)
             _rot[_k.strip()] = int(_v)
+    # ★★ 2026-10-03 用户 ✓：`--top-ok=R1,C1,D3` ⇒ 这几个件**允许布到顶面** ✓
+    _top_ok = tuple(x.strip() for x in
+                    (next((a.split("=", 1)[1] for a in argv if a.startswith("--top-ok=")),
+                          "") or "").split(",") if x.strip())
     if _unlock or _unpin:
         print("   用户放开的件 ✓：可移/转 = %s ✓｜解除钉心 = %s ✓"
               % ("、".join(_unlock) or "（无 ✓）", "、".join(_unpin) or "（无 ✓）"))
     print("   放置 ✓")
     new, c, holes = place(parts, r, nets, hole_exist=hole_exist,
-                          unlock=_unlock, unpin=_unpin, pin_rot=_rot)
+                          unlock=_unlock, unpin=_unpin, pin_rot=_rot, top_ok=_top_ok)
     # ★ 安装孔：新插两个核心库实例 ✓（`modelIndex` 从现有最大值往后排 ✓，不撞号 ✗）
     used = [int(x) for x in re.findall(r'modelIndex="(\d+)"', PW.read(base)[0])]
     nxt = max(used) + 1 if used else 90000000
