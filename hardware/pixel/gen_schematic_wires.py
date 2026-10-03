@@ -288,6 +288,14 @@ STAR_NETS = set()
 #   ★★ 纪律（与 `--label` / `--ground` 同一条 ✓）：**不给开关 ⇒ 一字节不差** ✓
 #     （只对点名的网生效 ✓，其它网一个像素不动 ✓）。
 VLANES = set()
+# ★★ 2026-10-04 ✓ `VLANE_X`：**用户直接指挥车道 x** ✓（写法 `--vlanes=GND@210.58` ✓）
+#   ★ 为什么要有它 ✗：自动挑只能算**几何距离** ✗ ⇒ 实测挑到了 `x=42.5`（左边那一簇 ✓），
+#     而**用户手画挑的是 `x=210.58`** ✓（右边 `LED2`/`J2` 那一簇 ✓）——
+#     “哪边看着简单”是**审美判断** ✓（§9 B 节 ✓），算法未必算得出 ⇒ **把方向盘给人** ✓。
+#     用户给的数**就是**权威 ✓（不猜 ✗、不换算 ✗ —— 同一个 sketch 坐标空间 ✓）。
+#   ★ 默认仍是自动挑 ✓（不给 `@x` ⇒ `pick_vlane` ✓）；给了 `@x` ⇒ **先用两道门核一遍** ✗，
+#     不合格就**如实报出来**并把理由说清 ✓（不静默地用一条错车道 ✗）。
+VLANE_X = {}
 # ★★ 已证伪并回退（2026-09-27 ✓）——“出脚车道过滤”这一整轴 ✗：
 #   做法：把出脚候选的车道按“**跨度内会贴着别的脚** ⇒ 丢掉”精确过滤 ✓（比全局砍通道准得多 ✓）
 #   ⇒ `_scratch/t17.py` 两档 A/B 实测：① 带过滤 与 ② `--escraw` **一字节不差** ✗ ⇒ **零效果** ✗
@@ -1526,11 +1534,28 @@ def main(argv):
         elif _a == "--vlanes" and _i + 1 < len(argv):
             _vv = argv[_i + 1]
         if _vv is not None:
-            VLANES = set(v.strip() for v in _vv.split(",") if v.strip())
+            VLANES, VLANE_X = set(), {}
+            for _vvx in _vv.split(","):
+                _vvx = _vvx.strip()
+                if not _vvx:
+                    continue
+                if "@" in _vvx:                # ★ `网@x` ✓（用户直接指挥车道位置 ✓）
+                    _n2, _x2 = _vvx.split("@", 1)
+                    VLANES.add(_n2.strip())
+                    try:
+                        VLANE_X[_n2.strip()] = float(_x2)
+                    except ValueError:
+                        print("⚠ `--vlanes=%s` 里的 x 读不出数 ✗ ⇒ 该网退回**自动挑** ✓" % _vvx)
+                else:
+                    VLANES.add(_vvx)
             break
     if VLANES:
-        print("★ **`--vlanes`** ✓：`%s` 网改走**竖直车道** ✓（每只脚一根横支线 ✓ + 一条竖干线 ✓；"
-              "其它网**一字节不动** ✓）" % ",".join(sorted(VLANES)))
+        print("★ **`--vlanes`** ✓：`%s` 网多一条**竖直车道**可选 ✓（哪只脚走它由距离定 ✓；"
+              "其它网**一字节不动** ✓）%s"
+              % (",".join(sorted(VLANES)),
+                 "；**用户指定车道 x** ✓：%s"
+                 % ", ".join("%s@%.3f" % (k, v) for k, v in sorted(VLANE_X.items()))
+                 if VLANE_X else ""))
     if "--hardbody" in argv:                   # 实验 ✓：开启“不许进别人本体”的硬闸门（默认关 ✓）
         global HARD_BODY
         HARD_BODY = True
@@ -2162,6 +2187,23 @@ def main(argv):
         #     （下面在轨支线建完以后逐脚重定 ✓），不是我一句话一刀切 ✗。
         _VL = pick_vlane(pts, {(d["ref"], d["cid"]) for d in pts}, rail_ys) \
             if (net in VLANES and rail_ys) else None
+        if net in VLANE_X:
+            # ★★★ 2026-10-04 ✓ **用户指定的车道 x** ✓ —— 但仍要**过那两道门** ✗（不静默 ✗）
+            _ux = VLANE_X[net]
+            _uys = [d["p"][1] for d in pts]
+            _useg = [(_ux, min(_uys)), (_ux, max(_uys))]
+            _uown = {(d["ref"], d["cid"]) for d in pts}
+            if not rail_ys:
+                print("⚠ 用户指定车道 x=%.3f ✗：该网**没有水平轨** ✗（`--rails` 没开 / 没点名它 ✓）"
+                      "⇒ 车道候选要先有轨才能“逐脚比远近” ✓ ⇒ **本次不用** ✗" % _ux)
+            elif body_hard_bad(_useg, boxes, PIN_ALL):
+                print("⚠ 用户指定车道 x=%.3f ✗：**穿本体** ✗ ⇒ 退回**自动挑** ✓" % _ux)
+            elif pin_hard_bad(_useg, PIN_ALL, _uown):
+                print("⚠ 用户指定车道 x=%.3f ✗：**压别人的脚** ✗ ⇒ 退回**自动挑** ✓" % _ux)
+            else:
+                _VL = _ux
+                print("   ★ 竖直车道 = **用户指定** ✓ x=%.3f ✓（不穿体 ✓、不压别人的脚 ✓）" % _ux)
+
         _vtrunk = None
         # ★★★ 2026-10-03 ✓（用户点名"继续"后加 ✓）：轨的 y **不只有"包围盒外那两条"** ✗
         #   —— 再补**一条"穿中缝"的内部候选** ✓ = 该网**脚行的中位 y** ✓。
