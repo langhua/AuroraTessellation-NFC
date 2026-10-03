@@ -1762,13 +1762,21 @@ def main(argv):
                 _vvx = _vvx.strip()
                 if not _vvx:
                     continue
-                if "@" in _vvx:                # ★ `网@x` ✓（用户直接指挥车道位置 ✓）
+                if "@" in _vvx:                # ★ `网@x1:x2:…` ✓（一个网可以给**多条**车道 ✓）
+                    #   ✗ 实测踩的 ✗：原来车道之间也用 `,` 分隔 ✗ —— 而 `,` 在**外层**是
+                    #     “**多个网**”的分隔符 ✗ ⇒ `GND@210.58,66` 里的 `66` 被当成**网名** ✗
+                    #     （日志里印出 “`66,GND` 网” ✗ ⇒ 车道一条也没多 ✓）。
+                    #   ✓ 现在：网与网之间用 `,` ✓；**同一个网的多条车道用 `:`（也认 `;`）** ✓。
                     _n2, _x2 = _vvx.split("@", 1)
                     VLANES.add(_n2.strip())
-                    try:
-                        VLANE_X[_n2.strip()] = float(_x2)
-                    except ValueError:
-                        print("⚠ `--vlanes=%s` 里的 x 读不出数 ✗ ⇒ 该网退回**自动挑** ✓" % _vvx)
+                    for _t2 in _x2.replace(";", ":").split(":"):
+                        _t2 = _t2.strip()
+                        if not _t2:
+                            continue
+                        try:
+                            VLANE_X.setdefault(_n2.strip(), []).append(float(_t2))
+                        except ValueError:
+                            print("⚠ `--vlanes=%s` 里的 x 读不出数 ✗ ⇒ 跳过这个值 ✓" % _vvx)
                 else:
                     VLANES.add(_vvx)
             break
@@ -1777,7 +1785,8 @@ def main(argv):
               "其它网**一字节不动** ✓）%s"
               % (",".join(sorted(VLANES)),
                  "；**用户指定车道 x** ✓：%s"
-                 % ", ".join("%s@%.3f" % (k, v) for k, v in sorted(VLANE_X.items()))
+                 % ", ".join("%s @ %s" % (k, "/".join("%.3f" % _v for _v in v))
+                             for k, v in sorted(VLANE_X.items()))
                  if VLANE_X else ""))
     if "--hardbody" in argv:                   # 实验 ✓：开启“不许进别人本体”的硬闸门（默认关 ✓）
         global HARD_BODY
@@ -2412,6 +2421,21 @@ def main(argv):
         warn.append("星形汇点：**通道交点上全不合格** ✗ ⇒ 退回几何中心 (%.1f,%.1f) ✓" % (cx0, cy0))
         return (cx0, cy0)
 
+    def _lane_span(_x):
+        r"""这条车道**实际要跑的那一段** ✓ = “**会选它**的那几只脚”的 y 跨度 ✓
+
+        ✗ 实测踩的坑（2026-10-04 ✓）：原来闸门拿**整张网**的 y 跨度验 ✗（`min…max` over all pts ✓）
+          ⇒ GND 跨 `-72…166.8` ✗ ⇒ `x=60/66/72/80` **一律“穿本体”** ✗（撞 `U1` 的身子 ✓）
+          —— 可**车道只服务它自己那一簇** ✓（`D3`/`U1`/`J1` ✓，跨度只有 `-43.2…98` ✓）
+          ⇒ 按簇验 ⇒ **多条车道**才有意义 ✓（用户 2026-10-04 选 B ✓）。
+        ★ 返回 `(y0, y1, 几只脚)` ✓；**一只脚都不选它** ⇒ `None` ✓（那就别建 ✓）。
+        ★ 只读外边作用域的 `pts` / `rail_ys` ✓（调用时已就绑 ✓ ⇒ 快照式闭包 ✓ 不会读到上一张网的 ✗）。
+        """
+        _s = [d["p"][1] for d in pts
+              if abs(d["p"][0] - _x) > 1e-9
+              and abs(d["p"][0] - _x) < min(abs(d["p"][1] - _r) for _r in rail_ys)]
+        return (min(_s), max(_s), len(_s)) if _s else None
+
     def pick_vlane(plist, own_pins, rail_ys):
         r"""竖直车道的 **x** ✓（2026-10-03 ✓ 用户选 A ✓）
 
@@ -2463,7 +2487,10 @@ def main(argv):
 
         _cand = sorted(chx_clean, key=lambda v: (_score(v), v))
         for x in _cand:
-            seg = [(x, ymin), (x, ymax)]
+            _sp2 = _lane_span(x)
+            if _sp2 is None:
+                continue                       # 没有脚会选它 ✓
+            seg = [(x, _sp2[0]), (x, _sp2[1])]   # ★ 按**它自己的簇**验 ✗（不是整张网 ✓）
             if body_hard_bad(seg, boxes, PIN_ALL):
                 continue                       # 穿本体 ✗
             if pin_hard_bad(seg, PIN_ALL, own_pins):
@@ -2527,26 +2554,40 @@ def main(argv):
         #     （`LED2`/`C2`/`J2` ✓），远处那些脚（`D3`/`C1`/`U1` ✓）照旧走**水平轨** ✓。
         #   ★ v2 口径 ✓：**车道与水平轨并存** ✓ ⇒ 哪只脚走哪边**由数据定** ✓
         #     （下面在轨支线建完以后逐脚重定 ✓），不是我一句话一刀切 ✗。
-        _VL = pick_vlane(pts, {(d["ref"], d["cid"]) for d in pts}, rail_ys) \
-            if (net in VLANES and rail_ys) else None
+        _VLX = []                       # ★★★ 2026-10-04 ✓ **车道** x **可以有多条** ✓（用户选 B ✓）
+        #   ★ 为什么要多条 ✗：实测（用户 2026-10-04 问 ✓）GND **两条水平轨**（y=-72 ✓ 与 y=163.8 ✓）
+        #     ⇒ Fritzing 里两条平行线**不会自己通** ✗ ⇒ 必须补一根竖线把它们接起来 ✗
+        #     ⇒ 左边就多出 **235.8 单位 = 66.9mm** ✗（全图 **11.8%** ✗）的一根“纯连线” ✗。
+        #   ✓ 思路：把左边那一簇（`D3`/`U1`/`J1`/`C1` ✓）也交给**它自己的竖直干线** ✓
+        #     ⇒ 底轨可能整个不需要 ✓ ⇒ **互连自然消失** ✓（而不是去删它 ✓）。
         if net in VLANE_X:
-            # ★★★ 2026-10-04 ✓ **用户指定的车道 x** ✓ —— 但仍要**过那两道门** ✗（不静默 ✗）
-            _ux = VLANE_X[net]
-            _uys = [d["p"][1] for d in pts]
-            _useg = [(_ux, min(_uys)), (_ux, max(_uys))]
+            # ★ 用户指定的车道（**可以给多条** ✓）—— 但**每条**都要过那两道门 ✗（不静默 ✗）
             _uown = {(d["ref"], d["cid"]) for d in pts}
-            if not rail_ys:
-                print("⚠ 用户指定车道 x=%.3f ✗：该网**没有水平轨** ✗（`--rails` 没开 / 没点名它 ✓）"
-                      "⇒ 车道候选要先有轨才能“逐脚比远近” ✓ ⇒ **本次不用** ✗" % _ux)
-            elif body_hard_bad(_useg, boxes, PIN_ALL):
-                print("⚠ 用户指定车道 x=%.3f ✗：**穿本体** ✗ ⇒ 退回**自动挑** ✓" % _ux)
-            elif pin_hard_bad(_useg, PIN_ALL, _uown):
-                print("⚠ 用户指定车道 x=%.3f ✗：**压别人的脚** ✗ ⇒ 退回**自动挑** ✓" % _ux)
-            else:
-                _VL = _ux
-                print("   ★ 竖直车道 = **用户指定** ✓ x=%.3f ✓（不穿体 ✓、不压别人的脚 ✓）" % _ux)
+            for _ux in VLANE_X[net]:
+                _sp = _lane_span(_ux)
+                if not rail_ys:
+                    print("⚠ 用户指定车道 x=%.3f ✗：该网**没有水平轨** ✗（`--rails` 没开 / 没点名它 ✓）"
+                          "⇒ 车道要先有轨才能“逐脚比远近” ✓ ⇒ **本条不用** ✗" % _ux)
+                elif _sp is None:
+                    print("⚠ 用户指定车道 x=%.3f ✗：**没有一只脚会选它** ✗（比它自己的轨还远 ✓）"
+                          "⇒ **本条不用** ✓" % _ux)
+                elif body_hard_bad([(_ux, _sp[0]), (_ux, _sp[1])], boxes, PIN_ALL):
+                    print("⚠ 用户指定车道 x=%.3f ✗：**穿本体** ✗（它要跑 y %.1f → %.1f ✓，`%d` 只脚）"
+                          "⇒ **本条不用** ✓" % (_ux, _sp[0], _sp[1], _sp[2]))
+                elif pin_hard_bad([(_ux, _sp[0]), (_ux, _sp[1])], PIN_ALL, _uown):
+                    print("⚠ 用户指定车道 x=%.3f ✗：**压别人的脚** ✗（y %.1f → %.1f ✓）"
+                          "⇒ **本条不用** ✓" % (_ux, _sp[0], _sp[1]))
+                else:
+                    _VLX.append(_ux)
+                    print("   ★ 竖直车道 = **用户指定** ✓ x=%.3f ✓（它要跑 y %.1f → %.1f ✓、`%d` 只脚 ✓；"
+                          "不穿体 ✓、不压别人的脚 ✓）" % (_ux, _sp[0], _sp[1], _sp[2]))
+        elif net in VLANES and rail_ys:
+            _a = pick_vlane(pts, {(d["ref"], d["cid"]) for d in pts}, rail_ys)
+            if _a is not None:
+                _VLX = [_a]
+        _VL = _VLX[0] if _VLX else None      # 下面还有几处只判“有没有车道” ✓
 
-        _vtrunk = None
+        _vtrunks = []
         # ★★★ 2026-10-03 ✓（用户点名"继续"后加 ✓）：轨的 y **不只有"包围盒外那两条"** ✗
         #   —— 再补**一条"穿中缝"的内部候选** ✓ = 该网**脚行的中位 y** ✓。
         #   · 动机（实测 ✓）：用户手画的 GND 主干是**穿中缝**的 ✓、脚**坐在干线上** ✓
@@ -2636,28 +2677,36 @@ def main(argv):
             #   ★ 标准 ✓：`|Δx 到车道| < |Δy 到最近轨|` ✓（就是 `pick_vlane` 打分用的那个式子 ✓，
             #     同一口径 ✓）；并且**至少 2 只脚**选中才值得单画一条干线 ✗（1 只不值 ✗）。
             #   ★ 先占 `used` ✓ ⇒ 支线不会“沿着车道跑” ✗（那会与干线重叠 ✗）。
-            if _VL is not None:
-                _vys, _npick = set(), 0
+            if _VLX:
+                # ★★ 两步走 ✓：先算“每条车道分到几只脚” ✓ ⇒ **不足 2 只的不建** ✓
+                #   （✗ 一步到位会把那几只脚改成指向一条**不存在的干线** ✗ ⇒ 又变成“一根线都没有” ✗✗）
+                _bys = {_x: [] for _x in _VLX}
                 for _pr in pairs[_n_rail:]:
                     _px, _py = _pr["a"]
-                    if abs(_px - _VL) > 1e-9 and abs(_px - _VL) < min(abs(_py - _r) for _r in rail_ys):
-                        _pr["b"] = (_VL, _py)
+                    _near = min(_VLX, key=lambda _x: abs(_px - _x))
+                    if abs(_px - _near) > 1e-9 and abs(_px - _near) < min(abs(_py - _r) for _r in rail_ys):
+                        _bys[_near].append(_pr)
+                for _x in sorted(_bys):
+                    _prs = _bys[_x]
+                    if len(_prs) < 2:
+                        if _prs:
+                            print("   ⊘ 车道 x=%.3f **不用** ✓：只有 %d 只脚更近 ✗（< 2 ⇒ 不值得单画一条 ✓）"
+                                  "⇒ 那几只照旧走**水平轨** ✓" % (_x, len(_prs)))
+                        continue
+                    _vys = sorted({round(_pr["a"][1], 4) for _pr in _prs})
+                    _tr = [(_x, _y) for _y in _vys]
+                    for _pr in _prs:
+                        _pr["b"] = (_x, _pr["a"][1])
                         _pr["rb"], _pr["cb"] = None, None
                         _pr["vlane"] = True      # ★★ 必须打这个标记 ✗ —— 否则下面的支线会掉回
                         #   “轨专用”那套形状 ✗ ⇒ 造出**两端同点的退化段** ✗ ⇒ 收尾被丢 ✗
                         #   ⇒ 那只脚**一根线都没有** ✗✗（实测：`LED2.connector1` ✓）。
-                        _vys.add(round(_py, 4))
-                        _npick += 1
-                if _npick >= 2:
-                    _vtrunk = [(_VL, _y) for _y in sorted(_vys)]
-                    for _k in range(len(_vtrunk) - 1):
-                        used.append((_vtrunk[_k], _vtrunk[_k + 1], net))
-                    print("   ★ **竖直车道** ✓：%d / %d 只脚改走它 ✓（x=%.3f ✓，y %.1f → %.1f ✓）"
+                    for _k in range(len(_tr) - 1):
+                        used.append((_tr[_k], _tr[_k + 1], net))
+                    _vtrunks.append(_tr)
+                    print("   ★ **竖直车道** ✓：x=%.3f ✓ 服务 **%d 只脚** ✓（y %.1f → %.1f ✓）"
                           "—— 剩下的照旧走**水平轨** ✓"
-                          % (_npick, len(pts), _VL, _vtrunk[0][1], _vtrunk[-1][1]))
-                elif _npick:
-                    print("   ⊘ 竖直车道 **不用** ✓：只有 %d 只脚更近 ✗（< 2 ⇒ 不值得单画一条干线 ✗）"
-                          % _npick)
+                          % (_x, len(_prs), _tr[0][1], _tr[-1][1]))
         elif net in STAR_NETS and len(pts) >= 2:
             hub = pick_hub(pts)
             print("网 %-9s **星形** ✓：汇点 (%.1f,%.1f) ✓（%d 根枝 ✓）" % (net, hub[0], hub[1], len(pts)))
@@ -3368,13 +3417,13 @@ def main(argv):
                 print("   ★ 同网两条轨**互连** ✓：竖线 x=%.3f ✓（y %.1f → %.1f ✓）"
                       "—— 不连就是**两个网** ✗（Fritzing 底部**看不出** ✗）"
                       % (_vx, min(_drawn), max(_drawn)))
-        if _vtrunk is not None and len(_vtrunk) >= 2:
-            segs.append({"a": _vtrunk[0], "b": _vtrunk[-1], "path": list(_vtrunk),
+        for _tr2 in _vtrunks:
+            segs.append({"a": _tr2[0], "b": _tr2[-1], "path": list(_tr2),
                          "from": None, "to": None, "mine": set(), "own_pins": set(),
                          "net": net, "key": None, "fixed": True})
             print("   ★ **竖直干线** ✓：x=%.3f ✓，y %.1f → %.1f ✓（%d 段 ✓；端点在落点上 ✓ "
                   "⇒ 支线与它**端点对端点** ✓；就算支线拐过了头，收尾那条「压中段」也会补上接头 ✓）"
-                  % (_VL, _vtrunk[0][1], _vtrunk[-1][1], len(_vtrunk) - 1))
+                  % (_tr2[0][0], _tr2[0][1], _tr2[-1][1], len(_tr2) - 1))
         nets_segs[net] = segs
         print("网 %-9s %d 个脚 → %d 段（弯 %d）"
               % (net, len(pts), len(segs), sum(bends(s["path"]) for s in segs)))
