@@ -3246,6 +3246,13 @@ def main(argv):
             #   ★ 交界点 = **那条支线的脚行 y** ✓ ⇒ 精确正交 ✓（手改版在这里有 0.1 单位的斜量 ✗）。
             _lane = min(_allx)
             _split_ys, _mg = [], []
+            # ★ 2026-10-04 ✓ **把“轨 x 范围的原料”报出来** ✓（用户问“右边那段多余的地线哪来的” ✓）——
+            #   轨的 x 范围 = `min/max(_allx)` ✓，所以这几个数**就是**病根 ✓；
+            #   ✗ 不报数就只能猜 ✗（本仓规矩：判据要能被独立复核 ✓）。
+            print("   · 轨 x 范围原料 ✓：min/max(_allx) = %.3f / %.3f ✓（%d 个落点 ✓：%s%s ✓）"
+                  % (min(_allx), max(_allx), len(_allx),
+                     " ".join("%.1f" % v for v in sorted(_allx)[:12]),
+                     " …" if len(_allx) > 12 else ""))
             for _s in segs:
                 if _s.get("fixed") or _s.get("to") is not None:
                     continue
@@ -3333,13 +3340,35 @@ def main(argv):
                                   for _k4 in range(len(_vp_pre) - 1))
                         print("            ↳ 连它太近 ✗：%s.%s (%.3f,%.3f) 距离 %.3f 单位"
                               % (_r4, _c4n, _x4, _y4, _d4))
+            # ★★★ 2026-10-04 ✓ **分岛 ⇒ 每段轨只看自己的落点** ✓（用户点名 ✓「**把底部右侧的
+            #   多余的地线删除**」✓）——
+            #   ✗ 病：`_x0/_x1` 用的是**整张网**的 min/max ✗（那是为了给"轨间互连竖线"找一个
+            #     **共同 x** ✓，见上面那段注释 ✓）；可**分岛之后那根竖线不画了** ✗ ⇒ 这个范围
+            #     就**只剩副作用** ✗：下轨被拉到 x -6.222…180.000 ✓ 而它自己的落点只有
+            #     37.728…161.328 ✓ ⇒ **左右各挂一截悬空线头** ✗✗（实测 43.95 + 18.67 = 62.6
+            #     单位 = **17.7 mm** ✗）；上轨左端同样白挂 28.8 = 8.1 mm ✗。
+            #   ✓ 现在：点名的岛网**且本网有 ≥2 段活轨**（= 确实"故意不连"✓）时，
+            #     每段轨只取**自己落点**的首尾 ✓ ⇒ 端点落在落点上 ✓ ⇒ **悬空线头归零** ✓。
+            #   ★ 只在这一种情形下收紧 ✓：别的网、以及不画岛的时候，`_x0/_x1` 照旧 ✗
+            #     （那根互连竖线要靠"两轨端点对齐"才不悬空 ✓）。
+            def _landings(_yy):
+                r"""落在轨 y=`_yy` 上的 x ✓（**唯一实现** ✓：轨循环与"有几段活轨"共用 ✓，不抄两份 ✗）"""
+                return sorted({round(s["b"][0], 4) for s in segs
+                               if not s.get("fixed") and s.get("to") is None
+                               and abs(s["b"][1] - _yy) < 1e-6}
+                              | {round(_x7, 4) for (_x7, _r7, _c7, _y7) in _sit
+                                 if abs(_y7 - _yy) < 0.6})
+
+            _n_live = sum(1 for _yy in rail_ys if _landings(_yy))
+            _tight = (net in ISLAND_NETS and _n_live > 1)
+            if _tight:
+                print("   ★ **轨按自己的落点收紧** ✓（岛网 `%s` ✓，本网 %d 段活轨 ✓）："
+                      "轨两端**不再外伸到“整张网的 min/max”** ✗ ⇒ 悬空线头归零 ✓"
+                      % (net, _n_live))
+
             _drawn = []
             for _y in rail_ys:
-                _xs = sorted({round(s["b"][0], 4) for s in segs
-                              if not s.get("fixed") and s.get("to") is None
-                              and abs(s["b"][1] - _y) < 1e-6}
-                             | {round(_x7, 4) for (_x7, _r7, _c7, _y7) in _sit
-                                if abs(_y7 - _y) < 0.6})
+                _xs = _landings(_y)
                 if not _xs:
                     continue                      # 这条轨上一条支线、一只坐脚都没有 ⇒ 不必画 ✗
                 # ★★ 2026-09-28 ✓ **轨的两端不许“看着接在别的网上”** ✗（= “跨网假接头” ✗✗，用户点名 ✓）
@@ -3355,7 +3384,8 @@ def main(argv):
                 #     ③ 不许退过最外侧落点（否则路径会回头成锯齿 ✗）；
                 #     ④ 四步都让不开 ⇒ 退到**最小让开量** `2 × MIN_SEG` + **告警** ✓；
                 #     ⑤ 这一端**接了东西** ⇒ **不动** ✓ + 告警 ✓（不许悄悄拆掉真接头 ✗）。
-                _x0r, _x1r = _x0, _x1
+                _x0r, _x1r = ((_xs[0], _xs[-1]) if (_tight and len(_xs) >= 2)
+                              else (_x0, _x1))
                 for _sgn7, _nm7 in ((1.0, "左"), (-1.0, "右")):
                     _e7 = (_x0r, _y) if _sgn7 > 0 else (_x1r, _y)
                     if not fj_too_close(_e7, net, used):
@@ -3393,7 +3423,18 @@ def main(argv):
                         warn.append("%s 的 %s端 (%.3f,%.1f) 离**别的网**的线不到 %.1f 单位 ✗，"
                                     "但四步都让不开 ⇒ 只退到最小让开量 %.2f 单位 ✗（请人看一眼 ✓）"
                                     % (net, _nm7, _e7[0], _y, FJ_GAP, 2 * MIN_SEG))
-                _path = ([(_x0r, _y)] + [(v, _y) for v in _xs] + [(_x1r, _y)])
+                # ★ 端点去重 ✓（收紧后 `_x0r` 就是 `_xs[0]` ✓ ⇒ 老写法会生成**零长段** ✗）
+                _path = [(_x0r, _y)]
+                for _v9 in list(_xs) + [_x1r]:
+                    if abs(_v9 - _path[-1][0]) > 1e-6:
+                        _path.append((_v9, _y))
+                if len(_path) < 2:
+                    continue                       # 只剩一个点 ⇒ 没有轨可画（支线自己就落在轨上 ✓）
+                print("   · 轨 y=%.1f ✓：x %.3f → %.3f ✓（%d 个落点 ✓，长 %.1f 单位 = %.1f mm ✓%s）"
+                      % (_y, _path[0][0], _path[-1][0], len(_xs),
+                         abs(_path[-1][0] - _path[0][0]),
+                         abs(_path[-1][0] - _path[0][0]) * 25.4 / 90.0,
+                         " ★按落点收紧 ✓" if (_tight and len(_xs) >= 2) else ""))
                 for _k in range(len(_path) - 1):
                     used.append((_path[_k], _path[_k + 1], net))
                 # ★★★ 2026-09-30 ✓ **把轨在“坐脚点”处切成两段，并记上那只脚** ✓✗（实测踩的 ✓）：
