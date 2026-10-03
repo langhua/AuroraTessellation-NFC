@@ -870,6 +870,53 @@ def candidates(a, b, chx, chy):
     return [dedup_path(pp) for pp in out]
 
 
+def island_count(segs, tol=0.05):
+    r"""本网**真正**有几个连通的岛 ✓（端点相接 ✓ 或**端点压在别人中段上** ✓ 都算连通 ✓）
+
+    ★ 为什么必须独立数 ✗（2026-10-04 ✓，用户点名 ✓：「**左上的 GND 网是孤立的，与另外两个
+      地线网没有连接在一起**」✗）：`--islands` 那句日志数的是**轨的段数** ✗ —— 它**看不见**
+      “靠**竖直车道**接起来的那一簇”✗ ⇒ 实测明明 **3 个**岛 ✓，它却报「2 个」✗✗。
+      ⇒ 机器守必须数**连通分量** ✓（不然它证明不了自己跑过什么 ✓）。
+    ★ 容差 `tol` = 全仓那个“碰到”的量 ✓（`0.05` 单位 = 0.014mm ✓，与 `dedup_path` 同一个数 ✓）。
+    """
+    par = {}
+
+    def find(x):
+        par.setdefault(x, x)
+        while par[x] != x:
+            par[x] = par[par[x]]
+            x = par[x]
+        return x
+
+    def uni(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            par[rb] = ra
+
+    def _rk(q):
+        return (round(q[0], 4), round(q[1], 4))
+
+    ends = []
+    for s in segs:
+        _p = s.get("path") or []
+        if len(_p) < 2:
+            continue
+        for _k in range(len(_p) - 1):
+            uni(_rk(_p[_k]), _rk(_p[_k + 1]))
+        ends.append((_rk(_p[0]), _p))
+        ends.append((_rk(_p[-1]), _p))
+    for _e, _p in ends:                        # ★ 端点压在别人中段上 ⇒ 也算连通 ✓
+        for s2 in segs:
+            _q = s2.get("path") or []
+            if _q is _p or len(_q) < 2:
+                continue
+            for _k in range(len(_q) - 1):
+                if SG.p2seg(_e, _q[_k], _q[_k + 1]) <= tol:
+                    uni(_e, _rk(_q[_k]))
+                    break
+    return len({find(_k) for _k in par})
+
+
 def dedup_path(p):
     r"""去掉重合点 ✓ + 合并共线段 ✓（否否则“弯”会被算多 ✗：
 
@@ -2637,6 +2684,7 @@ def main(argv):
         _VL = _VLX[0] if _VLX else None      # 下面还有几处只判“有没有车道” ✓
 
         _vtrunks = []
+        _vfeet = []                     # ★ 竖直干线的**落点** ✓（`(x, 轨 y)` ✓）——轨的 x 范围要用 ✓
         # ★★★ 2026-10-03 ✓（用户点名"继续"后加 ✓）：轨的 y **不只有"包围盒外那两条"** ✗
         #   —— 再补**一条"穿中缝"的内部候选** ✓ = 该网**脚行的中位 y** ✓。
         #   · 动机（实测 ✓）：用户手画的 GND 主干是**穿中缝**的 ✓、脚**坐在干线上** ✓
@@ -2869,6 +2917,52 @@ def main(argv):
                         #   ⇒ 那只脚**一根线都没有** ✗✗（实测：`LED2.connector1` ✓）。
                     for _k in range(len(_tr) - 1):
                         used.append((_tr[_k], _tr[_k + 1], net))
+                    # ★★★ 2026-10-04 ✓ **车道必须落到轨上** ✗（用户点名 ✓：「**左上的 GND 网是孤立的，
+                    #   与另外两个地线网没有连接在一起**」✗）——
+                    #   ✗ 病（实测 K4 ✓）：`--vlanes` 的竖直干线只跨**它服务的那几只脚的 y** ✗
+                    #     （右边一簇 = 9 / 17 / 26.127 ✓）⇒ 它**够不到** `-72` 那条轨 ✗
+                    #     ⇒ 右边那一簇（`LED2.1` / `Ground2` / `J2.1` ✓）**整个成了孤岛** ✗✗
+                    #     —— 而日志还写着「分成 2 个岛」✗（那数的是**轨的段数** ✗，不是**连通分量** ✗）。
+                    #   ✓ 用户手画版就是**一根竖线直接到 -72** ✓
+                    #     （`Wire90014004 (210.580,9.000)…(210.580,-72.000)` ✓）。
+                    #   ⇒ 干线**延长到最近的轨** ✓（过三闸门：不穿体 ✓ 不压脚 ✓ 不重叠 ✗）；
+                    #     过不了 ⇒ **不延长** ✓ + 如实报 ✗（绝不硬来 ✓）。
+                    #   ★ 落点要记下来 ✓（`_vfeet` ✓）⇒ **轨的 x 范围必须包含它** ✗
+                    #     （否则干线的脚**悬在轨外** ✗ ⇒ 又是“看着接上其实没接”✗）。
+                    _ups = [(_ry, 'up') for _ry in rail_ys if _ry < _tr[0][1] - 1e-6]
+                    _downs = [(_ry, 'down') for _ry in rail_ys if _ry > _tr[-1][1] + 1e-6]
+                    _ext = None
+                    if _ups and _downs:
+                        _ext = min([(_tr[0][1] - _ry, _ry, 'up') for _ry, _ in _ups]
+                                   + [(_ry - _tr[-1][1], _ry, 'down') for _ry, _ in _downs])[1:]
+                    elif _ups:
+                        _ext = (min(_ups)[0], 'up')
+                    elif _downs:
+                        _ext = (min(_downs)[0], 'down')
+                    if _ext:
+                        _ry2, _dir2 = _ext
+                        _end2 = _tr[0] if _dir2 == 'up' else _tr[-1]
+                        _seg2 = [(_x, _ry2), _end2]
+                        if (not body_hard_bad(_seg2, boxes, PIN_ALL)
+                                and pin_intr(_seg2, set(), PIN_ALL) == 0
+                                and not ovl_hard_bad(_seg2, used)):
+                            if _dir2 == 'up':
+                                _tr = [(_x, _ry2)] + _tr
+                            else:
+                                _tr = _tr + [(_x, _ry2)]
+                            used.append((_seg2[0], _seg2[1], net))
+                            _vfeet.append((_x, _ry2))    # ★ 落点 ✓ ⇒ 轨的 x 范围要**包含它** ✓
+                            print("   ★ 干线**延长去接轨** ✓：x=%.3f ✓，y %.1f → %.1f ✓"
+                                  "（%.1f 单位 = %.1f mm ✓；三闸门全过 ✓）"
+                                  "—— 那一簇与那条轨合成**一个岛** ✓（学用户手画 ✓）"
+                                  % (_x, _tr[0][1], _tr[-1][1],
+                                     abs(_seg2[1][1] - _seg2[0][1]),
+                                     abs(_seg2[1][1] - _seg2[0][1]) * 25.4 / 90.0))
+                        else:
+                            print("   ⚠⚠ 干线**接不上轨** ✗（最近轨 y=%.1f ✓，过不了闸门 ✗）"
+                                  "⇒ 那一簇**留在孤岛**上 ✓（请人看一眼 ✓）" % _ry2)
+                    else:
+                        print("   ⚠⚠ 干线**够不到任何轨** ✗ ⇒ 那一簇**留在孤岛**上 ✓（请人看一眼 ✓）")
                     _vtrunks.append(_tr)
                     print("   ★ **竖直车道** ✓：x=%.3f ✓ 服务 **%d 只脚** ✓（y %.1f → %.1f ✓）"
                           "—— 剩下的照旧走**水平轨** ✓"
@@ -3357,7 +3451,8 @@ def main(argv):
         _allx = sorted({round(s["b"][0], 4) for s in segs
                         if not s.get("fixed") and s.get("to") is None
                         and any(abs(s["b"][1] - _yy) < 1e-6 for _yy in rail_ys)}
-                       | {round(_x7, 4) for (_x7, _r7, _c7, _y7) in _sit})
+                       | {round(_x7, 4) for (_x7, _r7, _c7, _y7) in _sit}
+                       | {round(_x9, 4) for (_x9, _y9) in _vfeet})
         _rx = {}
         if _allx:
             # ★ **左端再外伸一格**（= 7.2 = `CLEAR_PIN` ✓），**右端不外伸** ✓ —— 为什么 ✗：
@@ -3493,7 +3588,9 @@ def main(argv):
                                if not s.get("fixed") and s.get("to") is None
                                and abs(s["b"][1] - _yy) < 1e-6}
                               | {round(_x7, 4) for (_x7, _r7, _c7, _y7) in _sit
-                                 if abs(_y7 - _yy) < 0.6})
+                                 if abs(_y7 - _yy) < 0.6}
+                              | {round(_x9, 4) for (_x9, _y9) in _vfeet
+                                 if abs(_y9 - _yy) < 1e-6})      # ★ 车道的落点 ✓
 
             _n_live = sum(1 for _yy in rail_ys if _landings(_yy))
             _tight = (net in ISLAND_NETS and _n_live > 1)
@@ -3628,9 +3725,13 @@ def main(argv):
                 #     ⇒ 于是被迫画那根 235.8 单位（66.9mm ✗）的互连 ✗（用户：**逻辑太僵硬** ✓）。
                 #   ✓ 而 **Fritzing 的网是跨视图算的** ✓（本仓早先实测 ✓）⇒ 岛的连续性由
                 #     **面包板 GND 轨 / PCB** 提供 ✓ ⇒ 原理图里**允许分岛** ✓。
-                #   ★ 如实报数 ✓（不静默 ✗）：本网原理图里有几段轨 ⇒ 就是几个岛 ✓。
-                print("   ⊘ **`--islands`** ✓：网 `%s` **不画轨间互连** ✗ ⇒ 原理图里分成 **%d 个岛** ✓"
-                      "（各段轨 y %s ✓）—— 连续性由**别的视图**（面包板/PCB ✓）提供 ✓"
+                #   ★ 只说**本步做了什么** ✓（“不画互连”✓ + 有几段活轨 ✓）——
+                #     ✗ **不报岛数** ✗：那一刻段还没建完 ✗（竖直干线是**后面**才追加的 ✗），
+                #     早先那句「分成 N 个岛」数的是**轨的段数** ✗ ⇒ 实测明明 3 个岛却报 2 个 ✗✗
+                #     （用户 2026-10-04 当场看出来 ✓：「左上的 GND 网是孤立的」✓）。
+                #   ✓ 真正的岛数由本网末尾的 `island_count()` 自检行报 ✓（独立算法 ✓）。
+                print("   ⊘ **`--islands`** ✓：网 `%s` **不画轨间互连** ✗（本网有 **%d 段活轨** ✓"
+                      "，y %s ✓）—— 岛数看本网末尾的「自检」行 ✓"
                       % (net, len(_drawn), "/".join("%.1f" % _y for _y in sorted(_drawn))))
             elif len(_drawn) > 1:
                 # ★ 合并时**在每条被截支线的脚行处打断** ✓ ⇒ 支线端点与它**端点对端点**对上 ✓
@@ -3653,6 +3754,20 @@ def main(argv):
         nets_segs[net] = segs
         print("网 %-9s %d 个脚 → %d 段（弯 %d）"
               % (net, len(pts), len(segs), sum(bends(s["path"]) for s in segs)))
+        # ★★★ 2026-10-04 ✓ **自检：本网真正有几个连通的岛** ✓（独立算法 ✓ —— `island_count()` ✓
+        #   数的是**连通分量** ✓，不比“轨的段数”✗）。
+        #   ★ 为什么加它 ✗：用户当场指出「**左上的 GND 网是孤立的，与另外两个地线网没有连接
+        #     在一起**」✗ —— 而当时日志写着「分成 2 个岛」✗（错的 ✓）：右边那一簇是靠
+        #     **竖直车道**接的 ✓，车道的追加在**后面** ✓ ⇒ 数轨段根本看不见它 ✗✗。
+        #   ★ 没点名 `--islands` 的网**本该是 1 个** ✗ ⇒ 多于 1 就报警 ✓（这是硬规矩 ✓）。
+        _nis = island_count(segs)
+        if _nis > 1:
+            if net in ISLAND_NETS:
+                print("   ★ **自检**：网 `%s` 原理图里 **%d 个连通岛** ✓（`--islands` 已点名 ✓ "
+                      "⇒ 允许 ✓；连续性由**别的视图**✓面包板/PCB ✓ 提供 ✓）" % (net, _nis))
+            else:
+                print("   ⚠⚠ **自检报警**：网 `%s` 原理图里 **%d 个连通岛** ✗ —— 它**不在** "
+                      "`--islands` 名单里 ✗ ⇒ 本该是 **1 个** ✗（请人看一眼 ✓）" % (net, _nis))
 
     # ── ★★ 抽出重排 ✓（2026-09-27 ✓，面包板验证过的那一步 ✓）──
     #   ★ 要治的病 ✓：贪婪布线下**先布的线占住了走廊** ✗，后布的看不见“未来的线” ✗ ⇒
