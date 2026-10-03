@@ -807,6 +807,12 @@ FREECORR_K = 3
 #     · 轨的 y 在**零件总包围盒之外** ✓（上/下各两条 ✓）⇒ 不压任何元件 ✓、也不在引脚行列上 ✓。
 #   `--rails` 打开 ✓（默认关 ✓ ⇒ v18 一字不变 ✓、可逐项复现 ✓）。
 RAILS = False
+# ★★ 2026-10-04 ✓ `RAIL_ONLY`：**只让点名的网**走水平轨 ✓（`--rails=5V` ✓）
+#   ★ 为什么要这个 ✗：用户 2026-10-04 要对比 **B 方案**（GND 走分岛 + 接地符号 ✓）
+#     ⇒ 需要“5V 照旧用轨 ✓、GND 不用 ✗”才能**隔离**出 B 的效果 ✓；
+#     ✗ 否则一去掉 `--rails`，5V 也一起改 ✗ ⇒ 两个变化混在一起、量不出 B 到底好不好 ✗。
+#   ★ 空集 = 全部（原行为 ✓，一字不差 ✓）。
+RAIL_ONLY = set()
 # ★★ `RAIL_MARGIN`：轨离零件总包围盒多远 ✓
 #   ✗ 原来 **7.2**（1 格）**是个 bug** ✗✗ —— 2026-09-28 实测抓住 ✓（`t56_0` 跑出退出码 1 ✓）：
 #     5V 上轨落在 `y = -50.4` ✓，而 **U1 上边那 6 只脚在 `y = -43.2`** ✓ ⇒ 两者**正好差 7.2**
@@ -1483,10 +1489,25 @@ def main(argv):
         global FREECORR_K
         FREECORR_K = int(argv[argv.index("--freecorr-k") + 1])
         print("空地走廊条数 FREECORR_K = %d ✓（每个空档里按 (i+1)/(k+1) 分位放 ✓）" % FREECORR_K)
-    if "--rails" in argv:                      # ★★ 电源轨 ✓（用户 2026-09-28 提的架构 ✓）
-        global RAILS
-        RAILS = True
-        print("电源轨 RAILS：**开** ✓（GND/5V 每脚就近接上/下轨 ✓，不再走链 ✗）")
+    for _i, _a in enumerate(argv):            # ★★ 2026-10-04 ✓ `--rails` / `--rails=<网,…>`
+        #   ★ 为什么要能**点名** ✗：用户 2026-10-04 要对比 **B 方案**（GND 改走**分岛 + 接地符号** ✓）
+        #     ⇒ 必须能“**只让 5V 用水平轨** ✓、GND 不用 ✗”才能**隔离**出 B 的效果 ✓
+        #     —— ✗ 否则一去掉 `--rails` 就连 5V 也一起改了 ✗ ⇒ 两个变化混在一起，量不出 B 到底好不好 ✗
+        #     （实测：不带 `--rails` 的 B1 = 48 根 / 644.1mm / 交叉 **35** ✗ —— 但那 35 里混了 5V 的账 ✗）。
+        #   ★ 不给 `=` ⇒ 行为**与原来一字不差** ✓（全部有轨的网都走轨 ✓）。
+        _rv2 = None
+        if _a.startswith("--rails="):
+            _rv2 = _a.split("=", 1)[1]
+        elif _a == "--rails" and _i + 1 < len(argv) and not argv[_i + 1].startswith("-"):
+            _rv2 = argv[_i + 1]
+        if _a == "--rails" or _a.startswith("--rails="):
+            global RAILS, RAIL_ONLY
+            RAILS = True
+            RAIL_ONLY = set(v.strip() for v in (_rv2 or "").split(",") if v.strip())
+            print("电源轨 RAILS：**开** ✓（%s 每脚就近接上/下轨 ✓，不再走链 ✗）"
+                  % ("`%s` 这几个网" % ",".join(sorted(RAIL_ONLY)) if RAIL_ONLY
+                     else "GND/5V"))
+            break
     if "--ring" in argv:                       # 实验 ✓：开“元件外圈环廊”（默认关 ✓）
         global OUTER_RING
         OUTER_RING = True
@@ -2130,6 +2151,8 @@ def main(argv):
         #   ★★ `RAILS` 里的 = 每脚 → **就近的上/下电源轨** ✓（2026-09-28 ✓ 用户提的架构 ✓）
         pairs = []
         rail_ys = RAIL_Y.get(net, []) if RAILS else []
+        if RAIL_ONLY and net not in RAIL_ONLY:
+            rail_ys = []            # ★ 点名的网以外 ⇒ **不用水平轨** ✓（`--rails=5V` 用 ✓）
         # ★★★ 2026-10-03 ✓ **`--vlanes=<网>`** ✓：点名的网**多一条竖直车道可选** ✓（用户选 A ✓）
         #   ★★ v1 已实测否证 ✗（记下来 ✗）：v1 把 `rail_ys` **清空**、让**所有脚**都走车道 ✗
         #     ⇒ 实测车道被逼到 `x=42.528` ✗（`Σ|Δx| = 676.4` ✗）、并多出 **1 对导线重叠** ✗
