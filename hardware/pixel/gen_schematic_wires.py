@@ -5311,6 +5311,51 @@ def emit(sroot, insts, z, nets_segs, orig_path, out_path, PIN_ALL=(), boxes=None
     print("   ★ 同点即连 ✓：补 %d 对（点重合、同网、**且至少一侧是裸端点** ✓）；"
           "**跨网重合 %d 对不连** ✓（不连才是对的 ✓）" % (_add, _skip))
 
+    # ★★★ 2026-10-03 ✓ **「端点压在**同网**另一根线的中段上」也要连** ✓（用户报的 bug ✓）
+    #   病灶（实测 ✓，`_work/_all_wires.py` 逐根打印 ✓）：
+    #     `Wire90013960  (180.378,-11.000)…(180.378,-45.000)  connector0→[LED2.connector3]
+    #                                                        connector1→[ ]` ✗✗
+    #     —— 那是 `LED2.VDD` 的支线 ✓，它的**远端落在 5V 轨的中段**上 ✓
+    #     （`(180.378,-45.0)` 落在 `(180.000,-45.0)→(230.178,-45.0)` 上 ✓，只差 **0.378 单位
+    #      = 0.107 mm** ✗ —— 因为 `LED2.VDD` 的脚列 x=180.378 与 `C2.c0` 的脚列 x=180.000
+    #      **本来就差 0.378** ✗）；而轨的断点表里**没有**这个 x ✗（断点取自"落在轨上的支线
+    #     落点" ✓，这一条不知为何没进去 —— 不管为什么 ✓，**判据本身就不该依赖它** ✓）
+    #     ⇒ 上面那遍"同点即连"只认**端点重合** ✗ ⇒ 判不出来 ✗ ⇒ 这条支线 `connector1`
+    #     **一条连接都没有** ✗ ⇒ **Fritzing 里 VDD 根本不在 5V 网里** ✗（用户截图 ✓）。
+    #   ★ 口径依据（§13 ✓ **与 Fritzing 同源** ✓）：Fritzing **自己另存时就会补写**
+    #     "几何上真碰上的 `Wire↔Wire` 接头" ✓ ⇒ 「端点压在另一根线的段上」= 一个 **T 形接头** ✓
+    #     （它也会在那儿画接点圆点 ✓）⇒ 补这条连接是**对齐它** ✓，不是自造语义 ✓。
+    #   ★ 只连**同网** ✓（跨网重合仍**不连** ✓，与上一遍同一个口径 ✓）。
+    _add2 = 0
+    _seg_of = [(w, w["p"], w["q"], w.get("net")) for w in wires
+               if math.dist(w["p"], w["q"]) > 1e-9]
+    for _w in wires:
+        for _cid, _pt, _tk in (("connector0", _w["p"], _w["start_tgt"]),
+                               ("connector1", _w["q"], _w["end_tgt"])):
+            if _tk is not None and _tk[1] is not None:
+                continue                      # 已经有归属 ⇒ 不动 ✓（不许多嘴 ✓）
+            for (_o, _a, _b, _net) in _seg_of:
+                if _o is _w or _net != _w.get("net"):
+                    continue
+                if SG.p2seg(_pt, _a, _b) > 0.05:
+                    continue                  # 不在它的段上 ✗
+                _d0, _d1 = math.dist(_pt, _a), math.dist(_pt, _b)
+                if min(_d0, _d1) < 0.05:
+                    continue                  # 就是它的**端点** ⇒ 上一遍已经管了 ✓
+                _oc = "connector0" if _d0 <= _d1 else "connector1"
+                links.append((_w["mi"], _cid, "schematicTrace",
+                              _o["mi"], _oc, "schematicTrace"))
+                _add2 += 1
+                print("   ★ **端点压在别人中段上** ✓ ⇒ 补接头 ✓：`%s.%s` (%.3f,%.3f) 压在 "
+                      "`%s` (%.3f,%.3f)→(%.3f,%.3f) 上（离段 %.4f 单位 = %.4f mm ✓，网 %s ✓）"
+                      % (_w["mi"], _cid, _pt[0], _pt[1], _o["mi"], _a[0], _a[1], _b[0], _b[1],
+                         SG.p2seg(_pt, _a, _b), SG.p2seg(_pt, _a, _b) * 25.4 / 90.0, _net))
+    if _add2:
+        print("   ★ 「压中段」补接头 ✓：**%d 条** ✓（✗ 它们原来**一条连接都没有** ✗ ⇒ "
+              "Fritzing 里就是断的 ✗）" % _add2)
+    else:
+        print("   ★ 「压中段」补接头 ✓：0 条 ✓（没有端点压在别人中段上 ✓）")
+
     # ★ 去重（2026-09-26）：链上同一对"导线↔导线"会从两头各收集一次 ✗ ⇒
     #   不去重就会写出两条一模一样的 <connect> ✗（实测 Wire…connector1 里出现两条 ✓）
     seen, uniq = set(), []
