@@ -965,6 +965,30 @@ def main(argv):
     #     ⇒ 对它罚“不要进中间”是**反作用** ✗ ⇒ `mid_keep` **只留 `GND`** ✓。
     #   ⚠️ “留路”那条规律（仓规 §5b ⑩ ✓）并未废 ✗ —— 只是对**必须进中间**的那个网不适用 ✓。
     mid_keep_nets = tuple(n for n in power if n != "5V")
+    # ★★ 2026-10-03 「甲」✓（用户选定 ✓）：**信号先布、电源/地最后布** ✓ —— `--signals-first`
+    #   依据（**诊断量出来的** ✓，不是感觉 ✗）：`GND`/`5V` **先布**就把待接的信号脚**围成小口袋** ✗
+    #     —— `DATA_IN` 起点只剩 **39 格** ✓、`DATA_OUT` **44 格** ✗（全板可走 ≈2.7 万 ✓）、
+    #     `BR+` 终点只剩 **1321 格** ✓；而围住它们的正是 `线:GND`/`线:5V`/`过孔:5V` ✓
+    #     （见 `pcb-tool-findings.md` 末节 ✓）。
+    #   ⇒ 反过来：让**信号先走** ✓；电源/地**脚最多** ✓、同网铜相碰又合法 ✓
+    #     ⇒ 最会“找绕法”的恰恰是它们 ✓（残局留给它们收拾 ✓）。
+    #   ★ “要不要先钉 `5V`”是**另一件事** ✓（`[留走廊]` 那段 ✓）⇒ 由 `--no-lock` 单独管 ✓。
+    #   ✗✗ 2026-10-03 实测（2×2 ✓，两件事**分开量** ✗ —— 第一次我一起翻 ✓ ⇒ 4/9 ✗ 分不清是谁的错 ✓）：
+    #     | 组 | 次序    | 先钉 5V | 连通 | 过孔 | 失败网            |
+    #     | A  | 电源先  | ✓      | 5/9 ✓ |  8  | 那 4 张（基线 ✓） |
+    #     | B1 | 信号先  | ✓      | 5/9 ✓ |  8  | **同样 4 张** ✓   |
+    #     | B2 | 电源先  | ✗      | **4/9** ✗ | 6 | 5 张（多丢 `COIL_B` ✗）|
+    #     | B3 | 信号先  | ✗      | **4/9** ✗ | 6 | 5 张 ✗           |
+    #   ⇒ 三条结论 ✓：
+    #     ① **甲（次序翻转）是中性的** ✗ —— 连通不变 ✓、失败网**一模一样** ✓
+    #        ⇒ 按仓规「只在变好时接受」✓ ⇒ **默认不启用** ✗（开关留着 ✓，与 `PITCH_MIN_MM` 同理 ✓）；
+    #     ② “电源先布占掉走廊”这个假设**被推翻** ✗ —— 真正有用的是**先给 `5V` 预留走廊** ✓
+    #        （去掉它 **5/9 → 4/9** ✗）⇒ 那条“留路”机制**是帮手** ✓，不是病因 ✓；
+    #     ③ 于是病因重新定位 ✓：不在“布的先后” ✓，而在**同层拥挤** ✗ ——
+    #        `U1` 是**背面件** ⇒ 它的脚**全在 `copper0`** ✓ ⇒ 9 张网的 `pref` 都往 `copper0` 挤 ✗
+    #        （平手时取 `copper0` ✓）而我方缺的正是**另一层**的空间 ✓（下一个待验假设 ✓）。
+    signals_first = "--signals-first" in argv
+    _last = tuple(power) if signals_first else ()
     RT.TRACE_MM = max(mil_sig, mil_pow) * RT.MIL_MM
     # ★ 两项代价旋钮（2026-09-30 用户要"图能看懂能改" ✓）—— **可以分别调** ✓，
     #   因为实测它们各管一头 ✓：
@@ -1106,7 +1130,7 @@ def main(argv):
     #     ⇒ 静态上"各自都通"✓ **不等于**"钉住就更好" ✗：钉住 = 把**布局自由度**先花掉 ✗，
     #       于是别人的通道被挤没 ✓ —— 这块板的"总容量"才是硬约束 ✓。
     #   ⇒ 回到**只钉 `5V`** ✓（用户选 A 时定的那一条 ✓）。
-    prio_list = [p for p in ("5V",) if p in net_pads]
+    prio_list = [p for p in ("5V",) if p in net_pads]      # ★ 钉不钉由 `--no-lock` 管 ✓
     locked = {}
     for prio in (() if "--no-lock" in argv else prio_list):
         _one = RT.route(items, r, {prio: net_pads[prio]}, pads, cell, via_cost,
@@ -1122,7 +1146,7 @@ def main(argv):
             print("   [留走廊] `%s` 单独布都**没通** ✗ ⇒ 不钉 ✓（说明堵它的不是别人占位 ✗）"
                   % prio)
     res = RT.route_ripup(items, r, net_pads, pads, cell, via_cost, tries=tries, passes=passes,
-                         width_of=width_of, first=power, mid_keep=mid_keep_nets,
+                         width_of=width_of, first=power, last=_last, mid_keep=mid_keep_nets,
                          copper_keep=[b for _l, b in copper_keep], pre=locked,
                          labels=_labels)
 
@@ -1326,7 +1350,7 @@ def main(argv):
                 for dy in range(-n, n + 1):
                     cand.append((px + dx * RT.U(cell), py + dy * RT.U(cell)))
         trial = RT.route_ripup(items, r, net_pads, pads, cell, via_cost, tries=tries,
-                               passes=passes, width_of=width_of, first=power,
+                               passes=passes, width_of=width_of, first=power, last=_last,
                                mid_keep=mid_keep_nets, ban_via=cand, pre=locked,
                                copper_keep=[b for _l, b in copper_keep], verbose=False,
                                labels=_labels)
