@@ -2428,10 +2428,38 @@ def main(argv):
         """
         ymin = min(d["p"][1] for d in plist)
         ymax = max(d["p"][1] for d in plist)
+        # ★★★ 2026-10-04 ✓ **加「过线惩罚」** ✓（用户点名的那一手 ✓，现在**有标尺了** ✓）
+        #   ✗ 病（实测 ✓）：原来只算**距离** ✗ ⇒ 自动挑到 `x=42.528` ✗（左边那一簇 ✓），
+        #     而**用户手画挑的是 `x=210.58`** ✓（右边 `LED2`/`J2` 那一簇 ✓）——
+        #     同一套其它参数下 **交叉 32 ✗ vs 24 ✓** ⇒ 差别全在车道位置 ✓。
+        #   ✓ 代理判据（不用等别的网布完 ✓，**现在就能算** ✓）：
+        #     某只脚要**横着走到车道** ✓ ⇒ 这条路**穿过的“别的网的脚”越多，越可能撞上别的线** ✗
+        #     ⇒ 每数到一只，按 `K_INTER`（= **35.4 单位 = 10mm** ✓，与本仓目标函数同一个 K ✓）罚 ✓。
+        #   ★ 为什么这条代理**够用** ✓：实测 `x=42.5` 那一带挤着 `U1`/`J1` 的一排脚 ✗（罚重 ✗），
+        #     而 `x=210.58` 右侧那一条**只有 0 只挡路脚** ✓ ⇒ 两项一加，210.58 胜出 ✓
+        #     —— 这就是“**用 210.58 当标尺**” ✓（挑不出这一带就不算对 ✓）。
+        _NEAR2 = 15.0            # 别的网的脚离“将要画的支线”多近算挡路 ✓（15 单位 ≈ 4.3mm ✓）
+
+        def _pen(x):
+            r"""挡路脚清点 ✓（返回 `(条数, 名单)` ✓）"""
+            _n2, _who = 0, []
+            for d in plist:
+                _px, _py = d["p"]
+                if abs(_px - x) >= min(abs(_py - _r) for _r in rail_ys):
+                    continue                 # 这只脚**不会**走车道 ⇒ 不算它 ✓
+                for (_t4, _c4, _qx, _qy) in PIN_ALL:
+                    if (_t4, _c4) in own_pins:
+                        continue
+                    if (min(_px, x) - 1e-9 <= _qx <= max(_px, x) + 1e-9
+                            and abs(_qy - _py) < _NEAR2):
+                        _n2 += 1
+                        _who.append("%s.%s" % (_t4, _c4))
+            return _n2, _who
 
         def _score(x):
-            return sum(min(abs(d["p"][0] - x),
-                           min(abs(d["p"][1] - r) for r in rail_ys)) for d in plist)
+            return (sum(min(abs(d["p"][0] - x),
+                            min(abs(d["p"][1] - r) for r in rail_ys)) for d in plist)
+                    + K_INTER * _pen(x)[0])
 
         _cand = sorted(chx_clean, key=lambda v: (_score(v), v))
         for x in _cand:
@@ -2440,10 +2468,15 @@ def main(argv):
                 continue                       # 穿本体 ✗
             if pin_hard_bad(seg, PIN_ALL, own_pins):
                 continue                       # 压**别的网**的脚 ✗
-            _b = sum(abs(d["p"][0] - x) for d in plist)
-            print("   ★ 竖直车道候选 ✓：x=%.3f ✓（逐脚“车道 vs 水平轨”取小 = %.1f 单位 = %.1f mm ✓；"
-                  "纯走车道的话 Σ|Δx| = %.1f ✓；跨度 %.1f ✓；候选 %d 条里第一条过门的 ✓）"
-                  % (x, _score(x), _score(x) * 25.4 / 90.0, _b, ymax - ymin, len(_cand)))
+            _b = sum(min(abs(d["p"][0] - x),
+                         min(abs(d["p"][1] - _r) for _r in rail_ys)) for d in plist)
+            _n3, _w3 = _pen(x)
+            print("   ★ 竖直车道候选 ✓：x=%.3f ✓（距离项 %.1f ＋ 挡路脚 %d × %.1f = %.1f "
+                  "⇒ **总分 %.1f** 单位 = %.1f mm ✓；%d 条候选里总分最低、且过两道门的 ✓）%s"
+                  "（★ 距离项 = 逐脚“走车道 vs 走最近轨”**取小** ✓ —— 与 `_score` 同一个式子 ✓）"
+                  % (x, _b, _n3, K_INTER, K_INTER * _n3, _score(x), _score(x) * 25.4 / 90.0,
+                     len(_cand),
+                     "；挡路：%s ✓" % ", ".join(_w3[:6]) if _w3 else "（**没人挡路** ✓）"))
             return x
         warn.append("竖直车道：**%d 条候选全不合格** ✗（穿本体 / 压别人的脚 ✗）"
                     "⇒ 该网**照旧用水平轨** ✓" % len(_cand))
