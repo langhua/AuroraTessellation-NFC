@@ -564,9 +564,11 @@ def load_geom(fzz, svg):
         #       ⇒ 按标题存会**互相盖掉** ✗，实测就是丢了一个 ✗）。
         _mid2 = e.get("moduleIdRef") or ""
         anchor = None
+        _akind = None
         if "GroundModuleID" in _mid2:
-            anchor = "GND"
+            anchor, _akind = "GND", "ground"
         elif "NetLabelModuleID" in _mid2:
+            anchor, _akind = None, "netlabel"
             for _pv in e.iter("property"):
                 if (_pv.get("name") or "").lower() == "label":
                     anchor = (_pv.get("value") or "").strip()
@@ -660,7 +662,7 @@ def load_geom(fzz, svg):
             insts["@%s" % mi] = {"mi": mi, "mid": _mid2, "el": e, "sub": sub,
                                  "loc": loc, "pins": pins, "box": box, "names": conname,
                                  "ox": (ox, oy) if pid else None, "pins_export": pins_export,
-                                 "anchor": anchor, "anchor_title": title}
+                                 "anchor": anchor, "anchor_title": title, "anchor_kind": _akind}
 
     # ★ 全局映射：拿"同一个脚在 sketch 与在导出 SVG 里的坐标"最小二乘拟合 ✓
     #   （2026-09-26：原以为能用 `导出 = ox − loc/1.25` 逐元件推 ✗ —— 实测离散 22 单位 ✗，
@@ -685,6 +687,63 @@ def load_geom(fzz, svg):
         print("⚠ 本体盒算不出的件 %d 个 ✗（那些件闸门拦不住 ✓）：%s"
               % (len(BOX_MISS), "；".join(BOX_MISS)))
     return sroot, insts, z, fit
+
+
+def anchor_pins_from_orig(orig_path, want):
+    r"""从**用户手画原图**里取「网标签 / 接地符号」的**真脚点** ✓
+
+    ★ 判据（可验证 ✓）：该锚点接的**导线端点**里，**离它自己实例原点最近**的那个 ✓。
+      实测（用户原图 ✓）：`RC#1` 原点 (148.935,65.0999) ⇒ 取到 **(161.462,69.604)** ✓；
+      `RC#2` 原点 (32.9771,-19.6917) ⇒ 取到 **(39.178,-9.000)** ✓
+      —— 另一个端点都是**别的元件的脚** ✓（离得更远 ✓）。
+    ★ 为什么必须从**原图**取 ✗：core `netlabel.fzp` 的原理图 svg **不画终端** ✗
+      （只有一个 `<polygon>` + `<text>` ✓）⇒ 尺子里根本没有它的脚位 ✗；
+      而它的连接点**也不在实例原点** ✗（实测偏 (12.5, 4.5) ✓）。
+    ★ 返回 `{modelIndex: (x, y)}` ✓（sketch 坐标 ✓，与实例几何同一空间 ✓）。
+    """
+    out = {}
+    try:
+        z = zipfile.ZipFile(orig_path)
+        sroot = ET.fromstring(z.read([n for n in z.namelist() if n.endswith(".fz")][0]))
+    except Exception as ex:                       # ★ 读不了要**吭声** ✓ 不静默 ✗
+        print("   ⚠ 原图读不了 ✗（%s）⇒ 锚点脚位只能算了 ✗" % ex)
+        return out
+    org, con = {}, {}
+    for e in sroot.iter("instance"):
+        mi = e.get("modelIndex")
+        for v in e.iter():
+            if v.tag.split("}")[-1] != "schematicView":
+                continue
+            for g in v:
+                if g.tag.split("}")[-1] == "geometry" and g.get("x") is not None:
+                    org[mi] = (float(g.get("x")), float(g.get("y")))
+            break
+        for x in e.iter():
+            if x.tag.split("}")[-1] == "connect":
+                con.setdefault(str(x.get("modelIndex")), []).append(e)
+    for mi in want:
+        if mi not in org:
+            continue
+        ox, oy = org[mi]
+        best = None
+        for e in con.get(str(mi), []):
+            for v in e.iter():
+                if v.tag.split("}")[-1] != "schematicView":
+                    continue
+                for g in v:
+                    if g.tag.split("}")[-1] != "geometry" or g.get("x") is None:
+                        continue
+                    gx, gy = float(g.get("x")), float(g.get("y"))
+                    for _e2 in ((float(g.get("x1") or 0), float(g.get("y1") or 0)),
+                                (float(g.get("x2") or 0), float(g.get("y2") or 0))):
+                        p = (gx + _e2[0], gy + _e2[1])
+                        d = math.dist(p, (ox, oy))
+                        if best is None or d < best[0]:
+                            best = (d, p)
+                break
+        if best is not None:
+            out[mi] = best[1]
+    return out
 
 
 def pin_of(insts, ref, name):
@@ -1788,6 +1847,21 @@ def main(argv):
     #     —— 锚点只是**换了个键**（`@<modelIndex>` ✓），实例数不变 ✓、名字日志也不变 ✓。
     #   ★ 认不出网名就**如实报出来** ✓（不静默 ✓、也不瞎猜一个网塞进去 ✗）。
     _anch_add, _anch_bad = [], []
+    # ★★ 先给「取不到脚位」的锚点补一遍 ✓ —— 从**用户手画原图**里取它接的那根线的端点 ✓
+    #   （= 它在 Fritzing 里的真脚点 ✓）。✗ 为什么尺子取不到 ✗：core `netlabel.fzp` 的原理图 svg
+    #   **根本不画终端** ✗（只有一个 `<polygon>` + `<text>` ✓）⇒ 尺子里没有它的脚位 ✗；
+    #   而它的连接点**也不在实例原点** ✗（实测偏 (12.5,4.5) ✓）。
+    _noPin = [(k, d) for k, d in insts.items() if k.startswith("@") and not d.get("pins")]
+    if _noPin and orig[0]:
+        _op = anchor_pins_from_orig(orig[0], [str(d["mi"]) for _, d in _noPin])
+        for _k2, _d2 in _noPin:
+            _p2 = _op.get(str(_d2["mi"]))
+            if _p2:
+                _d2["pins"] = {"connector0": _p2}     # ★ 原图坐标与实例几何**同一空间** ✓（都是 .fz ✓）
+                #   ⇒ 直接当 sketch 坐标用 ✓；**不动 `pins_export`** ✗（那是导出空间 ✓，
+                #     塞错会让后面的全局拟合跟着偏 ✗）
+                print("   ✓ 锚点 **%s**（%s）从**原图**取到真脚点 ✓ (%.3f,%.3f) ✓（离它接的线端点最近 ✓）"
+                      % (_d2.get("anchor_title"), _d2.get("anchor"), _p2[0], _p2[1]))
     for _k, _d in list(insts.items()):
         if not _k.startswith("@"):
             continue
@@ -1808,7 +1882,51 @@ def main(argv):
     else:
         print("★ **网锚点进网** ✓：输入里没有悬空的网标签/接地符号 ✓")
     if _anch_bad:
-        print("   ⚠ 这些锚点**认不出网名** ✗ ⇒ 本次**不接**（请人看一眼 ✓）：%s" % "; ".join(_anch_bad))
+        print("   ⚠ 这些锚点**认不出网名** ✗ ⇒ 本次**不接**（请人看一瞩 ✓）：%s" % "; ".join(_anch_bad))
+
+    # ★★★ 2026-10-04 ✓ **「省线」= 带 ≥2 个标签的网按标签分岛** ✓（用户报的毛病① ✓）
+    #   ✗ 病（用户原话 ✓）：「**RC 标签没有把中间的线省去**」✗ —— 标签贴在那儿 ✓，
+    #     可整张网还是一条长线连到底 ✗ ⇒ 标签成了摆设 ✗。
+    #   ✓ 口径（就是网标签的本来含义 ✓）：**同名即连通** ✓ ⇒ 每个岛各自接到**自己的那个标签** ✓
+    #     即可 ✓ ⇒ **岛与岛之间那一段线根本不画** ✓✓。
+    #   ★ 怎么分（数据决定 ✓，不猜 ✗）：每只**非标签**的脚 ⇒ 归**离它最近的那个标签** ✓。
+    #   ★ 实现：把 `NETS["RC"]` 换成 `NETS["RC-1"]` / `NETS["RC-2"]` ✓ ⇒ 后面整套机器
+    #     （布线 / 自检 / 上色）**照旧跑** ✓，只是它们各自是一个“小网” ✓；颜色跟着原名 ✓。
+    #   ★ 只在**真有 ≥2 个标签**且**两边都分到脚**时才动 ✓ ⇒ 否则一字不改 ✓。
+    _lbl_of = {}
+    for _k, _d in insts.items():
+        # ★★ 只收**真网标签**（`NetLabelModuleID`）✗ —— ✗ **地符号不能当分岛点** ✗：
+        #   它不靠“同名”连通 ✓、靠**导线** ✓ ⇒ 拿它分岛 ⇒ 实测交叉 26 → **32** ✗✗、
+        #   还多 1 对重叠 ✗（GND 被切成 4+7 两只小网、各算各的轨 ✓）。
+        if (_k.startswith("@") and _d.get("pins") and _d.get("anchor")
+                and _d.get("anchor_kind") == "netlabel"):
+            _lbl_of.setdefault(_d["anchor"], []).append(_k)
+    for _net3 in sorted(_lbl_of):
+        _ks = sorted(_lbl_of[_net3])
+        if len(_ks) < 2 or _net3 not in NETS:
+            continue
+        _others = [x for x in NETS[_net3] if x[0] not in _ks]
+        if not _others:
+            continue
+        _pos = {k: insts[k]["pins"]["connector0"] for k in _ks}
+        _isl = {k: [] for k in _ks}
+        for _r3, _n3 in _others:
+            _p3 = pin_of(insts, _r3, _n3)[1]
+            _isl[min(_ks, key=lambda k: math.dist(_pos[k], _p3))].append((_r3, _n3))
+        _new = {}
+        for _i3, _k3 in enumerate(_ks, 1):
+            if not _isl[_k3]:
+                continue
+            _nm3 = "%s-%d" % (_net3, _i3)
+            _new[_nm3] = _isl[_k3] + [(_k3, "#1")]
+            NET_COLOR[_nm3] = NET_COLOR.get(_net3, "#404040")
+        if len(_new) >= 2:
+            del NETS[_net3]
+            NETS.update(_new)
+            print("   ★ 网 **%s** 按**已有的 %d 个标签**分岛 ✓ ⇒ %s ✓（同名即连通 ✓ ⇒ "
+                  "**中间那段线不画了** ✓ = 用户要的「省线」✓）"
+                  % (_net3, len(_ks), " / ".join("%s（%d 只脚 ✓）" % (n, len(v))
+                                                 for n, v in sorted(_new.items()))))
 
     chx, chy = set(), set()
     # ★★★ 2026-09-30 ✓ `--snaprails=<网>`：**骑轨件在“布线之前”就先摆到轨上** ✓（结构性 ✓）
