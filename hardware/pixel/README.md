@@ -2928,10 +2928,16 @@ py -3.13 ..\fritzing-parts-langhua\tools\sch_metrics.py     pixel-schematic-v40.
 ★ 负面结果照实记 ✓（本节就是账 ✓）：这一轮**没有**找到既干净又 < 7 交叉的配置 ✓；
 **v40 不动** ✓（没有新版交付件 ✓）。
 
-### 第四十六手 ✅：**PCB 换上新原理图 ＋ 第一版自动布线** ⇒ `pixel-pcb-v63.fzz`（2026-10-05 ✓ 用户定 ✓）
+### 第四十六手 ✅：**PCB 换上新原理图 ＋ 第一版自动布线** ⇒ `pixel-pcb-v65.fzz`（2026-10-05 ✓ 用户定 ✓）
 
 用户 2026-10-05：「把 `pixel-pcb-v51_byHand.fzz` 的原理图，**替换为 v40 原理图**，开始 pcb 布线，
 **我再手工修改，你再继续改进 pcb 布线**」✓ ⇒ 从此进入 **PCB 改进循环** ✓。
+
+★ **编号踩坑（我自己犯的 ✗，照实记 ✓）**：我一开始把这份交付件命名成 `pixel-pcb-v63.fzz` ✗ ——
+而 **v63 早在 `98be419`（方案 A：挪开短路的那颗过孔）就已入库** ✗、v64 也在 ✓
+⇒ 我**覆盖**了已入库的 v63 ✗（`git status` 里那三行是 `M` 不是 `??` ✗，我却在「将要提交」时没核 ✗）。
+⇒ 纠正：**已入库的 v63 三个文件从 `98be419` 取回** ✓；本轮交付件改名 **`pixel-pcb-v65.fzz`** ✓
+（**PCB 系列已到 v64 ⇒ 下一个空号是 v65** ✓ ✗ **不能凭记忆挑号** ✗ —— 先 `git ls-files` 查空位 ✓）。
 
 **三步 ✓，每步都能独立复核 ✓**：
 
@@ -2946,7 +2952,7 @@ py -3.13 ..\fritzing-parts-langhua\tools\sch_metrics.py     pixel-schematic-v40.
 3. **布线** ✓（照本仓既有做法 ✓）：**保留用户的 24 mil 电力线** ✓、**只布 7 张信号网** ✓
    （`_work/bh_nets.py` = `pixel_nets.py` 去掉 `5V`/`GND` ✓ —— **派生**不手抄 ✓，手抄就是两套实现 ✗）。
 
-[![v63 预览](pixel-pcb-v63_preview.png)](pixel-pcb-v63_preview.png)
+[![v65 预览](pixel-pcb-v65_preview.png)](pixel-pcb-v65_preview.png)
 
 | 独立复核（`pcb_check.py` **重读交付件** ✓） | 结果 |
 |---|---|
@@ -2956,7 +2962,7 @@ py -3.13 ..\fritzing-parts-langhua\tools\sch_metrics.py     pixel-schematic-v40.
 | ⑩ 逐条核对 Fritzing 的 `<connect>` 声明 | 134 条 ⇒ 不合格 **0** ✓ |
 | ⚠ 未连通 | **只有 2 张电力网** ✗：`5V`（3 块铜 ✓）、`GND`（6 块铜 ✓）—— **用户自己拉的长线，收尾是他的活** ✓ |
 
-**★ 交给用户收尾的清单** ✓（`_work/power_list.py` 从 v63 **重新量**的 ✓，含坐标与层 ✓）：
+**★ 交给用户收尾的清单** ✓（`_work/power_list.py` 从 v65 **重新量**的 ✓，含坐标与层 ✓）：
 
 | 网 | 块 | 脚（板坐标 mm ✓ ｜ 层 ✓） |
 |---|---|---|
@@ -2976,9 +2982,13 @@ py -3.13 ..\fritzing-parts-langhua\tools\sch_metrics.py     pixel-schematic-v40.
 ```bash
 py -3.13 _work\_mergesch2.py pixel-pcb-v51_byHand.fzz pixel-schematic-v40.fzz _work\P0.fzz
 py -3.13 _work\run_gen.py _work\P0.fzz _work\R0.fzz --nets=_work\bh_nets.py --via=10 --tries=6 --partial --check
-py -3.13 ..\fritzing-parts-langhua\tools\pcb_check.py  pixel-pcb-v63.fzz --nets=pixel_nets.py
-py -3.13 _work\power_list.py pixel-pcb-v63.fzz                     # ⇒ 上面那张“还差什么”的表 ✓
-py -3.13 ..\fritzing-parts-langhua\tools\render_pcb.py pixel-pcb-v63.fzz pixel-pcb-v63_preview.svg --png
+py -3.13 ..\fritzing-parts-langhua\tools\pcb_check.py  pixel-pcb-v65.fzz --nets=pixel_nets.py
+py -3.13 _work\power_list.py pixel-pcb-v65.fzz                     # ⇒ 上面那张“还差什么”的表 ✓
+py -3.13 ..\fritzing-parts-langhua\tools\render_pcb.py pixel-pcb-v65.fzz pixel-pcb-v65_preview.svg --png
+```
+```bash
+# 交付件编号前先查空位 ✓（别凭记忆挑号 ✗ —— 我这次就撞了已入库的 v63 ✗）
+git -C f:\git\AuroraTessellation-NFC ls-files hardware/pixel | Select-String 'pixel-pcb-v\d+\.fzz'
 ```
 
 ## 1. 定位
