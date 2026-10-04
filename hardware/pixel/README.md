@@ -2731,6 +2731,73 @@ py -3.13 hardware\pixel\fz_via_dup.py pixel-pcb-v62.fzz                         
 py -3.13 hardware\pixel\fz_exact.py pixel-pcb-v62.fzz                               # ⇒ 9 of 9 - 0 ✓
 ```
 
+### 第四十二手 ✅：**按用户手画的底图重布原理图** ⇒ **`pixel-schematic-v39.fzz`** 交付 ✓（2026-10-04 ✓）
+
+★ 这一手换的是**底图** ✓（不是又改一版旧图 ✗）：旧系列一直在 `pixel-schematic` 那张草图上迭代 ✗，
+本版拿**用户自己手画布线的那份**（`_work/u270b_routed_sch_byHand.fzz` ✓ = 用户文件 ✓ **不入库** ✓）
+**只换导线** ✓ —— 零件摆位 / 位号位置 / 接地符号位置一律**照用户的原样** ✓。
+
+**做法（三步 ✓，工具都在元件库仓 ✓）**：`sch_strip_wires`（剥掉**原理图**导线 ✓、**不删实例** ✗，
+因为那些导线实例同时带面包板/PCB 视图 ✗）⇒ `gen_schematic_wires.py`
+（`--rails --socket=4 --vlanes=GND --islands=GND` ✓）⇒ `render_sch.py` 出预览 ✓。
+
+| 项 | 用户手画版（底图 ✓ 权威 ✓） | **v39（本版 ✓）** |
+|---|---|---|
+| 导线 | 43 | **42** ✓ |
+| 总长 | 487.7 mm | **483.3 mm** ✓ |
+| 十字交叉 | **7** ✓ | 10 ✗ ★**本项手画版更好 ✓ 如实记 ✓** |
+| 正交度 | 0.9512 | **0.9756** ✓ |
+| 最歪的一处 | 0.1066 mm | **0.0378 mm** ✓ |
+| 连通岛 | 12 | **11** ✓ |
+| `check_netlist` | ✗ **4 条跨视图连接**（layer 不属于本视图 ⇒ 会把两张网**粘住** ✗） | **✓ 9 个网全对** ✓ |
+| `check_fake_wires` | ✓ | ✓ **(A)=0 (B)=0** ✓ |
+| `check_grounds` | ✓ 0/2 | ✓ **0/2** ✓ |
+| `check_flags` / `check_junctions` / `sch_style_check` | — | **✓ 0/2 旗标被穿 ✓ ／ ✓ 无共线切分 ✓ ／ ✓ 通过 ✓** |
+
+[![v39 预览](pixel-schematic-v39_preview.png)](pixel-schematic-v39_preview.png)
+
+**交付前跑闸门，查出并修掉三条** ✓（每条都**先量、后改、再独立复核** ✓）：
+
+1. **接地符号的脚位差 0.1269 单位 = 0.036 mm** ✗（本批改动引进来的**回归** ✗）：产出落在
+   「原点 + (9.001, **0.7229**)」✗，而**四份 Fritzing 自己的文件**（用户手画版 ×2 ✓、`v33` ✓、
+   `v35` ✓、`v38` ✓）与共享工具 `sch_net.GROUND_PIN_DX/DY` ✓ **全是 +0.5960** ✓
+   ⇒ ①不再采信"认领画出来的那个终端"✗，改用**唯一口径** `sch_net.ground_pin` ✓。
+2. **"脚正好落在竖直车道上"不算车道服务** ✗（旧闸门 `abs(_px - _near) > 1e-9` ✓）：脚位修准之后
+   `Ground2` 的 x **正好** = 车道 x ⇒ 它掉回"就近水平轨"那套 ✗ ⇒ 被**整个拖走 98 单位 = 27.7 mm** ✗
+   ⇒ 它的图形正好**罩住**竖直车道 ✗（`check_grounds` ② 当场抓到 ✓、渲图也看得见 ✓）⇒ 去掉那半句 ✓。
+3. **车道上的"坐脚"没有声明** ✗：竖干线写成 `from/to = None` ✗ ⇒ `Ground2` 的脚**几何上**贴着线端 ✓，
+   可 `<connects>` 里**一个字都没有** ✗（= 典型的"看着接上、其实没接"✗）
+   ⇒ 照**水平轨**那一套 ✓（在坐脚处**断开** ＋ 记 `from`/`to` ✓）⇒ 现在**两边都写明** ✓，
+   与 Fritzing 自己写的**完全一致** ✓（`_work/_decl.py` 逐边打印核对 ✓）。
+
+**判据也修了一条** ✓（元件库仓 `tools/check_grounds.py` ✓）：② 原来按**矩形盒**判"线穿过图形"✗
+⇒ **水平轨要够到脚，就必然从盒子里横向穿进来** ✗（脚本来就在盒内 ✓）⇒ 把"对的那版"误报 ✗。
+改成按**墨迹**判 ✓（竖杆 ＋ 三根横线 ✓，各按素材自己的 `stroke-width` 取半宽 ✓）。
+★ **负例自检** ✓（判据改了必须重验 ✗）：错版 `M6`（竖线从符号身上**穿下去** ✗）⇒ **1/2 ✗ 照样抓到** ✓；
+横向到脚（`Ground1` ✓）／竖支线到脚（用户手画版 ✓）⇒ **都过** ✓。
+
+★ ⚠ **一处已知例外** ✓（如实记 ✓，**不是**本版新出的 ✗）：`check_label_touch` 报 `RC` 标签
+"脚离线 **0.134 单位 = 0.038 mm**"✗ —— **用户手画版一模一样** ✗（同一条数值 ✓）
+⇒ 是共享工具 `sch_net.label_pin` 的**模型**比 Fritzing 的真脚位少 0.134 ✗
+（那份文件里的线是 Fritzing 自己**吸附**到真脚上的 ✓），**不是"看着接上其实没接"** ✓
+（渲染器同时报的那条「`Wire90013996` 蹭到 `RC.connector0` 0.13 单位 ✓」是**同一个模型偏差** ✓）。
+⇒ 留给下一手 ✓：把 `label_pin` 的 x 修准 ✓（照用户手画版两处反推 ✓ ＋ 造一个"**真浮空**"的负例 ✓）。
+
+复现 ✓：
+```bash
+# 输入：用户手画原图剥掉原理图导线的那份（= 用户文件 ✓ 不入库 ✓）
+py -3.13 hardware\pixel\gen_schematic_wires.py _work\bh_layout.fzz _work\bh_layoutr.svg pixel-schematic-v39.fzz ^
+    --orig _work\u270b_routed_sch_byHand.fzz --ratio 1.0 --rails --socket=4 --vlanes=GND --islands=GND
+py -3.13 ..\fritzing-parts-langhua\tools\check_netlist.py    pixel-schematic-v39.fzz    # ⇒ ✓ 9 个网全对
+py -3.13 ..\fritzing-parts-langhua\tools\check_fake_wires.py pixel-schematic-v39.fzz    # ⇒ (A)=0 (B)=0 ✓
+py -3.13 ..\fritzing-parts-langhua\tools\check_flags.py      pixel-schematic-v39.fzz    # ⇒ 被穿旗标 0/2 ✓
+py -3.13 ..\fritzing-parts-langhua\tools\check_grounds.py    pixel-schematic-v39.fzz    # ⇒ 不合规 0/2 ✓
+py -3.13 ..\fritzing-parts-langhua\tools\check_junctions.py  pixel-schematic-v39.fzz    # ⇒ 无共线切分 ✓
+py -3.13 ..\fritzing-parts-langhua\tools\sch_style_check.py  pixel-schematic-v39.fzz    # ⇒ 通过 ✓（FAIL 0）
+py -3.13 ..\fritzing-parts-langhua\tools\sch_metrics.py      pixel-schematic-v39.fzz    # ⇒ 42 根 / 483.3 mm / 交叉 10 ✓
+py -3.13 ..\fritzing-parts-langhua\tools\render_sch.py       pixel-schematic-v39.fzz pixel-schematic-v39_preview.png
+```
+
 ## 1. 定位
 
 - **单卖**：一片小方板 + 5 V 输入，线圈朝向被测物体 → 板载 LED 的亮度/颜色表示 13.56 MHz 近场场强。

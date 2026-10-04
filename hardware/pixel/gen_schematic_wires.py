@@ -635,6 +635,33 @@ def load_geom(fzz, svg):
                       "⇒ 它这次**接不上**（请人看一眼 ✓）"
                       % (title, anchor, len(_near),
                          "%.2f 单位" % min(_near) if _near else "—"))
+            # ★★★ 2026-10-04 ✓ **接地符号的脚位改用唯一口径** ✗✗（这是**修 bug** ✓，不是审美 ✓）
+            #   ✗ 病（实测 ✓）：产出里接地符号的线端落在「原点 + (9.001, **0.7229**)」✗，
+            #     而 Fritzing 认定的脚是「原点 + (9.001, **0.596**)」✓ ⇒ 差
+            #     **0.1269 单位 = 0.036 mm** ✗ ⇒ `check_grounds.py` 报 **2 / 2 不合规** ✗
+            #     （① 接上的线“没有”✗ ＋ ② 连它自己那条轨都被算成“穿图形”✗ —— **同一个根因** ✓）。
+            #   ★ 为什么判它是真 bug ✗ 而不是“尺子太严”✗ —— **四个独立样本** ✓ 全指 0.596 ✓：
+            #     · **用户手画版**（Fritzing 自己存的 ✓ 权威 ✓）：`Ground1` +0.5959 ✓、`Ground2` +0.5956 ✓；
+            #     · 前几版交付件 `v33` / `v35` / `v38` ✓（都过闸门 ✓）：全部 **0.5960** ✓；
+            #     · 共享工具 **`sch_net.GROUND_PIN_DX/DY`** ✓（两个样本实测反推 ✓）= **(9.001, 0.596)** ✓。
+            #   ★ 根因 ✗：core 件（地符号）在导出/渲染里**没有 `partID`** ✗ ⇒ 本函数只能
+            #     “认领最近的一个无主终端” ✓ ⇒ 认到的是**画出来的那个终端**的位置 ✗，
+            #     不是**部件定义里的脚** ✗（两者差 0.1269 单位 ✓）。
+            #   ★ 做法 ✓：**照旧认领**（把那个终端从池子里**拿走** ✓ —— ✗ 不拿会被别的锚点抢 ✗），
+            #     但**值以 `sch_net.ground_pin` 为准** ✓（脚位**一份实现** ✓，不再“另一把尺子”✗）；
+            #     同时**撤掉 `pins_export` 里那一条** ✗ —— 全局拟合吃的是
+            #     `pins_export ↔ pins` **两两配对** ✓，只改一边 ⇒ 喂进去一对**不自洽**的坐标 ✗
+            #     ⇒ 把整张图的拟合带偏 ✗（这是“只改一边”的隐蔽代价 ✓，必须一起办 ✓）。
+            #   ★ 有 `transform`（旋转 ✓）时**不套用** ✗ —— 那份口径只核过**不旋转**的 ✓
+            #     （`check_grounds.py` 同一条限制 ✓）。
+            if _akind == "ground" and not (sub.get("transform") or g.get("transform")):
+                _gp = sch_net.ground_pin(loc)
+                pins["connector0"] = _gp
+                pins_export.clear()
+                print("   ★ 接地符号 **%s** ✓ 脚位**改用唯一口径** ✓ `sch_net.ground_pin` ⇒ "
+                      "(%.3f,%.3f) ✓（= 原点 + (%.3f, %.3f) ✓；✗ 认领到的那个位置只用来"
+                      "把它从池子里拿走 ✗）" % (title, _gp[0], _gp[1],
+                                                sch_net.GROUND_PIN_DX, sch_net.GROUND_PIN_DY))
             # ★★ 备用池兜底 ✓：该件**自己的**终端（只是元素没有 `x/y` ✗，如 `<line>`/`<path>` ✓）
             if not pins and pid and soft.get(pid):
                 for _sc, _sp in soft.pop(pid).items():
@@ -2933,7 +2960,20 @@ def main(argv):
                 for _pr in pairs[_n_rail:]:
                     _px, _py = _pr["a"]
                     _near = min(_VLX, key=lambda _x: abs(_px - _x))
-                    if abs(_px - _near) > 1e-9 and abs(_px - _near) < min(abs(_py - _r) for _r in rail_ys):
+                    # ★★★ 2026-10-04 ✓ **“脚正好落在车道那条 x 上”也要算车道服务** ✗✗（修 bug ✓）
+                    #   ✗ 原来这里还写着 `abs(_px - _near) > 1e-9` ✗ ⇒ **正好在车道上**的脚
+                    #     **不算车道服务** ✗ ⇒ 它掉回“就近水平轨”那套 ✗ ⇒ 被**整个拖走 98 单位
+                    #     = 27.7 mm** ✗✗（实测 M6 ✓：`Ground2` 从车道下端被拖到顶轨 y=-72 ✗
+                    #     ⇒ 它的图形正好**罩住竖直车道** ✗ ⇒ 车道从它身上穿过去 ✗
+                    #     —— `check_grounds` ② 立刻抓到 ✓、渲图也看得见 ✓）。
+                    #   ★ 为什么以前没暴露 ✗：那时接地符号的脚位模型差 **0.1269 单位** ✗
+                    #     （0.7229 vs 真的 0.596 ✓）⇒ 它的 x 是 `210.5774` ✗ **差一点点** ⇒
+                    #     `> 1e-9` 成立 ✓ ⇒ 蒙对了 ✓。**把脚位修准之后**，x 正好 = 车道 x
+                    #     ⇒ 这道旧闸门立刻反咬一口 ✗（= “修准了别的、它反而露出来” ✓）。
+                    #   ✓ 语义：脚**正好在车道上** ⇒ 它**本来就在干线里** ✓（它的 y 会进
+                    #     `_vys` ✓）⇒ 只需要**打上 `vlane` 标记** ✓（下面会给 ✓）⇒
+                    #     ① 不会被拖到别处 ✗ ② 也不产生支线 ✓（`b` 与 `a` 同点 ⇒ 0 长度 ✓ 收尾丢掉 ✓）。
+                    if abs(_px - _near) < min(abs(_py - _r) for _r in rail_ys):
                         _bys[_near].append(_pr)
                 for _x in sorted(_bys):
                     _prs = _bys[_x]
@@ -3814,12 +3854,42 @@ def main(argv):
                       "—— 不连就是**两个网** ✗（Fritzing 底部**看不出** ✗）"
                       % (_vx, min(_drawn), max(_drawn)))
         for _tr2 in _vtrunks:
-            segs.append({"a": _tr2[0], "b": _tr2[-1], "path": list(_tr2),
-                         "from": None, "to": None, "mine": set(), "own_pins": set(),
-                         "net": net, "key": None, "fixed": True})
+            # ★★★ 2026-10-04 ✓ **“坐在干线上”的脚也要显式声明** ✗✗（修 bug ✓）
+            #   ✗ 病（实测 M7 ✓）：`Ground2` 的脚正好落在干线的**末端** ✓，可干线段写的是
+            #     `"from": None, "to": None` ✗ ⇒ **没人写声明** ✗ ⇒ `check_fake_wires` 报
+            #     「端点看着接上 `Ground2.connector0` … **表里声明 = ['（空 ✗）']**」✗✗
+            #     （= 典型的“看着接上、其实没接”✗）。对照 **Fritzing 自己那份手画版** ✓：
+            #     脚 → 线 ✓ **和** 线 → 脚 ✓ **两边都写了** ✓（`_work/_decl.py` 逐边打印 ✓）。
+            #   ✓ 做法：**照水平轨那一套** ✓（`_sit` ＋ 在坐脚处断开 ✓，见上面那段注释 ✓）——
+            #     ① 先挑出**正好坐在干线上**的脚 ✓（`x` 与车道 x 重合 ✓）；
+            #       ✗ 靠**支线**接上来的脚**不在内** ✗（它们由自己的支线段声明 ✓）。
+            #     ② 干线在它们的 y 处**断开** ✓ ⇒ 每段的两端各记 `from` / `to` ✓ ⇒ 显式 ✓。
+            #   ★ 为什么不能只补一句声明就算 ✗：Fritzing 的链是**逐段**走的 ✓
+            #     （`Wire::collectChained` ✓）；端点与脚**重合但无声明** ⇒ 也算接得上 ✓，
+            #     可**我们的判据**（以及用户"线端落在脚上"那类核对 ✓）看的就是声明 ✓ ⇒
+            #     两边必须**同一句话** ✓（`AGENTS §13` ✓）。
+            _tx = _tr2[0][0]
+            _sits_lane = {round(_pr9["a"][1], 4): (_pr9["ra"], _pr9["ca"])
+                          for _pr9 in _bys.get(_tx, [])
+                          if abs(_pr9["a"][0] - _tx) < 1e-9}
+            _idx2 = ([0] + [_k9 for _k9 in range(1, len(_tr2) - 1)
+                            if round(_tr2[_k9][1], 4) in _sits_lane]
+                     + [len(_tr2) - 1])
+            for _i9 in range(len(_idx2) - 1):
+                _q9 = _tr2[_idx2[_i9]:_idx2[_i9 + 1] + 1]
+                if len(_q9) < 2:
+                    continue
+                _sn9 = _sits_lane.get(round(_q9[0][1], 4))
+                _en9 = _sits_lane.get(round(_q9[-1][1], 4))
+                segs.append({"a": _q9[0], "b": _q9[-1], "path": _q9,
+                             "from": ({"ref": _sn9[0], "cid": _sn9[1]} if _sn9 else None),
+                             "to": ({"ref": _en9[0], "cid": _en9[1]} if _en9 else None),
+                             "mine": set(), "own_pins": set(),
+                             "net": net, "key": None, "fixed": True})
             print("   ★ **竖直干线** ✓：x=%.3f ✓，y %.1f → %.1f ✓（%d 段 ✓；端点在落点上 ✓ "
-                  "⇒ 支线与它**端点对端点** ✓；就算支线拐过了头，收尾那条「压中段」也会补上接头 ✓）"
-                  % (_tr2[0][0], _tr2[0][1], _tr2[-1][1], len(_tr2) - 1))
+                  "⇒ 支线与它**端点对端点** ✓；就算支线拐过了头，收尾那条「压中段」也会补上接头 ✓"
+                  "；★ 坐在干线上的脚 %d 只 ⇒ **已显式声明** ✓）"
+                  % (_tr2[0][0], _tr2[0][1], _tr2[-1][1], len(_idx2) - 1, len(_sits_lane)))
         nets_segs[net] = segs
         print("网 %-9s %d 个脚 → %d 段（弯 %d）"
               % (net, len(pts), len(segs), sum(bends(s["path"]) for s in segs)))
