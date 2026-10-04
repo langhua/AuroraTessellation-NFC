@@ -388,6 +388,17 @@ VLANES = set()
 #   ★ 默认仍是自动挑 ✓（不给 `@x` ⇒ `pick_vlane` ✓）；给了 `@x` ⇒ **先用两道门核一遍** ✗，
 #     不合格就**如实报出来**并把理由说清 ✓（不静默地用一条错车道 ✗）。
 VLANE_X = {}
+# ★★★ 2026-10-05 ✓ **`RAILYS`：用户直接指挥某条网络的轨 y** ✓（写法 `--railys=5V@-86.4` ✓）
+#   ★ 为什么要有它 ✗（与 `VLANE_X` 同一个理由 ✓）：内部候选轨的挑法只会算
+#     “**该行有几只本网的脚**” ✓ ⇒ 它**看不见交叉** ✗ —— 实测（2026-10-05 ✓）：`5V` 的轨
+#     落到 `y=-45` ✓（因为 `C2.0` 正好坐在那一行 ✓），而 `GND` 的轨在 `y=-72` ✓
+#     = **在 5V 轨的上方** ✗ ⇒ 凡是往下够 GND 的竖线，**都要穿过 5V 轨** ✗
+#     （实测交叉清单第 2/3 条 ✓）。
+#   ★ “哪一行看着干净”是**几何 + 审美**判断 ✓（`AGENTS §9` B 节 ✓），算法未必算得出
+#     ⇒ **把方向盘给人** ✓（与 `--vlanes` 同一条 ✓）。
+#   ★ 纪律 ✓：**不给这个开关 ⇒ 一字节不差** ✓（只对点名的网生效 ✓）。
+#   ★ 用户给的数**就是**权威 ✓（同一个 sketch 坐标空间 ✓，不猜、不换算 ✓）。
+RAILYS = {}
 # ★★★ 2026-10-04 ✓ **`ISLAND_NETS`：允许这些网在原理图里“分岛”** ✓（用户 2026-10-04 定 ✓）
 #   起因（用户自己画了一版 ✓ `_work/D_210_58_161_3_154_170_byHand.fzz` ✓，并说：
 #     「**左边的地线轨删除了，补上右边轨就行了，逻辑太僵硬了**」✓）——
@@ -1911,6 +1922,34 @@ def main(argv):
         print("★ **`--islands`** ✓：`%s` 网**允许在原理图里分岛** ✓（不画“轨间互连”✗）——"
               "依据：**Fritzing 的网是跨视图算的** ✓ ⇒ 岛的连续性由**面包板/PCB** 提供 ✓"
               % ",".join(sorted(ISLAND_NETS)))
+    # ★★★ 2026-10-05 ✓ `--railys=<网>@<y>[,<网>@<y>…]`：把点名的网的轨**追加**到某一行 ✓
+    #   （见 `RAILYS` 定义处的理由 ✓；两种写法都认 ✓ —— `--label` 那条教训 ✓）
+    global RAILYS
+    for _i, _a in enumerate(argv):
+        _rv3 = None
+        if _a.startswith("--railys="):
+            _rv3 = _a.split("=", 1)[1]
+        elif _a == "--railys" and _i + 1 < len(argv):
+            _rv3 = argv[_i + 1]
+        if _rv3 is None:
+            continue
+        for _item in _rv3.split(","):
+            _item = _item.strip()
+            if not _item:
+                continue
+            if "@" not in _item:
+                print("⚠ `--railys=%s` 少 `@y` ✗ ⇒ 跳过这一项 ✓" % _item)
+                continue
+            _rn3, _ry3 = _item.split("@", 1)
+            try:
+                RAILYS.setdefault(_rn3.strip(), []).append(float(_ry3))
+            except ValueError:
+                print("⚠ `--railys=%s` 里的 y 读不出数 ✗ ⇒ 跳过这个值 ✓" % _item)
+        break
+    if RAILYS:
+        print("★ **`--railys`** ✓：用户指定轨行 —— %s ✓（只对点名的网生效 ✓；其它网一字节不动 ✓）"
+              % "；".join("%s @ %s" % (k, "/".join("%.3f" % _v for _v in v))
+                          for k, v in sorted(RAILYS.items())))
     if "--hardbody" in argv:                   # 实验 ✓：开启“不许进别人本体”的硬闸门（默认关 ✓）
         global HARD_BODY
         HARD_BODY = True
@@ -2179,6 +2218,17 @@ def main(argv):
               % (RAIL_Y["GND"][0], RAIL_Y["5V"][0], RAIL_Y["5V"][1], RAIL_Y["GND"][1],
                  _ub[1], _ub[3],
                  "；**锚在“其它件”上** ✓" if HUG_UBOX else ""))
+        # ★★★ 2026-10-05 ✓ `--railys=<网>@<y>`：把点名的网**追加**一条轨行 ✓
+        #   ★ 为什么是“追加”而不是“改” ✗：包围盒外那两条（上/下 ✓）是**出区通道** ✓
+        #     删掉它们会让某些脚无路可走 ✗；追加一条让那条网**多一个选择** ✓
+        #     —— 与 `--vlanes` “多一条车道可选”**同一个手法** ✓。
+        for _rn, _rys in RAILYS.items():
+            for _ry in _rys:
+                if any(abs(_ry - _w) < 1e-6 for _w in RAIL_Y.get(_rn, [])):
+                    continue
+                RAIL_Y.setdefault(_rn, []).append(_ry)
+                print("   ★ 轨 y **用户指定** ✓：网 `%s` 追加 y=%.3f ✓"
+                      "（该网现在有 %d 条轨行 ✓）" % (_rn, _ry, len(RAIL_Y[_rn])))
 
     # ★★ 空地走廊 ✓（`--freecorr` ✓，2026-09-28 ✓ **换机制** ✓）—— 走廊位置由**空档中央**定 ✓
     #   ① 元件盒在各轴上的投影 ⇒ ② 空档（gap）✓ ⇒ ③ 每个空档里按 `(i+1)/(k+1)` 分位放走廊 ✓
@@ -2770,7 +2820,17 @@ def main(argv):
             _d["p"] = (_d["p"][0], _d["p"][1] + _dy)
             return True
 
-        if rail_ys and len(pts) >= 3:
+        if rail_ys and len(pts) >= 3 and net in RAILYS:
+            # ★★★ 2026-10-05 ✓ **用户指定了轨行 ⇒ 不加“内部候选”** ✗✓（修 `--railys` 的语义 ✓）
+            #   ✗ 第一版只把用户给的 y **追加**进候选 ✗ ⇒ 实测**一点效果都没有** ✗
+            #     （`RB0` 与 `RB1` 逐项相同 ✓）：因为 5V 的**包围盒上轨 y=-86.4 早就在列** ✓，
+            #     而“内部候选”又按“**该行有几只本网的脚**”挑了 `y=-45`（`C2.0` 正坐在那行 ✓）
+            #     ⇒ 每只脚都挑**最近的那些行** ✓ ⇒ 追加一条没人走 ✗（= 白改 ✓）。
+            #   ✓ 正解 ✓：“用户点名的网”**不要内部候选** ✓ ⇒ 就用 {包围盒上/下} ∪ {他给的} ✓
+            #     —— 这才是“我说了算” ✓（与 `--vlanes` 那条“方向盘给人”一致 ✓）。
+            print("网 %-9s 轨行由**用户指定** ✓ ⇒ **不加内部候选** ✗（现有：%s ✓）"
+                  % (net, ", ".join("%.1f" % v for v in sorted(rail_ys))))
+        elif rail_ys and len(pts) >= 3:
             _own0 = {(d["ref"], d["cid"]) for d in pts}
             _xs0 = [d["p"][0] for d in pts]
             _mid = sorted(d["p"][1] for d in pts)[len(pts) // 2]
