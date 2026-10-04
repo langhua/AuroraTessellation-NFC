@@ -2798,6 +2798,59 @@ py -3.13 ..\fritzing-parts-langhua\tools\sch_metrics.py      pixel-schematic-v39
 py -3.13 ..\fritzing-parts-langhua\tools\render_sch.py       pixel-schematic-v39.fzz pixel-schematic-v39_preview.png
 ```
 
+### 第四十三手 ✅：**给 5V 也开一条竖直车道** ⇒ **`pixel-schematic-v40.fzz`** 交付 ✓（2026-10-04 ✓）
+
+★ 上一手交付时**如实记下的那条差距**是：交叉数 **我 10 ✗ vs 手画版 7** ✓。这一手把它**追平** ✓
+（并且顺手撞出一个**真 bug** ✓ —— 见下 ✓）。
+
+**做法** ✓：**一个字生成器代码都没改** ✗ —— 只是命令行多给 5V 一条车道 ✓：
+`--vlanes=GND` ⇒ `--vlanes=GND,5V@**29.78**` ✓（x 是**扫出来的** ✓，不是拍的 ✓）。
+
+| 项 | 手画版（权威 ✓） | v39 | **v40** |
+|---|---|---|---|
+| 导线 / 总长 | 43 / 487.7 mm | 42 / 483.3 mm | **41 / 471.1 mm** ✓ |
+| 十字交叉 | 7 ✓ | 10 ✗ | **7** ✓（**追平** ✓） |
+| 正交度 / 最歪 | 0.9512 / 0.1066 mm | 0.9756 / 0.0378 mm | **0.9750 / 0.0378 mm** ✓ |
+| 连通岛 | 12 | 11 | **11** ✓ |
+
+[![v40 预览](pixel-schematic-v40_preview.png)](pixel-schematic-v40_preview.png)
+
+**x 扫描** ✓（一次只动一个变量 ✓，数一律来自独立尺子 ✓）：
+`27.4 / 29.8 / 36 / 45.8` ⇒ **交叉 7** ✓ 全干净；`40 / 50` ⇒ 8；**≥58 ⇒ 10**（车道根本没被用上 ✗）；
+`auto / 20.03 / 54.38` ⇒ **被新闸门拒收** ✗（连 L 形绕行都过不去 ✓ ⇒ 不再假装通过 ✓）。
+
+#### ✗✗ 扫的过程中撞出一个**真 bug** ✓ —— 而且差点又把**假的数**当成果 ✓
+
+- ✗ 病：`5V` 被**拆成两段** ✗（`{C2.0, J2.0, LED2.3}` 与 `{J1.0, U1.5}` 之间**没有导线** ✓）；
+  而生成器自己只打了一句 `⚠⚠ 干线接不上轨 ✗` ⇒ **退出码还是 0** ✗ ⇒ `check_netlist` 一跑就报 ✗✗
+  —— 与 v36 那次“核对器是橡皮图章”**同一族** ✓：**告警不阻断 = 没守** ✗。
+- ★★ 更要紧的一条 ✓：那几个“**交叉 4**”的配置之所以好看 ✓，正是因为**少画了那段连接** ✗
+  ⇒ **数字是假的** ✗（= v36 “它短的那 29.8 单位正是**没连上**的那截” **同一个形状** ✓）。
+  ⇒ 把守补上之后，它们**当场被判退出码 1** ✓ —— 这类“少东西换来的漂亮数”以后骗不过闸门 ✓。
+- ✓ 两处修法（都入库 ✓）：
+  1. **报警必须阻断** ✓：报出**卡在哪一道闸门**（实测 = “**压别人的脚 1 处**” ✓），
+     且**名单外的网被断 ⇒ 退出码 1** ✓（`--islands` 里点过名的网分岛仍算合法 ✓）；
+  2. **直着走不通就拐 L 形** ✓：车道可经 `x2` 绕到它那条轨 ✓（两段过**同样那三道硬闸门** ✓
+     —— **一条判据都不放松** ✗；实测 `45.83 → 27.38 → 轨 −45` ✓）。
+     ★ 为什么不是“放宽闸门” ✗：压别人的脚 / 穿体 / 重叠是**硬规则** ✓ ⇒ 只能**换路** ✓。
+
+**机器守** ✓：闸门 **7 / 8 exit 0** ✓（`check_netlist` ✓ 9/9｜`check_fake_wires` ✓ (A)=0 (B)=0｜
+`check_flags` ✓｜`check_grounds` ✓ 0/2｜`check_junctions` ✓｜`sch_style_check` ✓｜`file_sanity` ✓）；
+第 8 道 `check_label_touch` ✗ = **已知那条模型偏差** ✓（`RC` 标签 0.134 单位 —— 与**用户手画版一模一样** ✗）。
+★ **复现性** ✓：交付件与验证件**逐根导线 0 差异** ✓（同一条命令行重出即得 ✓）。
+
+★ 仍有账（下一手 ✓）：交叉 **7 = 追平**、还没**超过** ✓ —— 下一批变量是**轨的 y**
+（v40 的 5V 只用 `y=-45` 一条 ✓；手画版用了 `y=51` ✓）、**GND 车道 x**、`--star`、`--socket` 的组合 ✓。
+
+复现 ✓：
+```bash
+py -3.13 hardware\pixel\gen_schematic_wires.py _work\bh_layout.fzz _work\bh_layoutr.svg pixel-schematic-v40.fzz ^
+    --orig _work\u270b_routed_sch_byHand.fzz --ratio 1.0 --rails --socket=4 --vlanes=GND,5V@29.78 --islands=GND
+py -3.13 ..\fritzing-parts-langhua\tools\check_netlist.py   pixel-schematic-v40.fzz   # ⇒ ✓ 9 个网全对
+py -3.13 ..\fritzing-parts-langhua\tools\check_fake_wires.py pixel-schematic-v40.fzz  # ⇒ (A)=0 (B)=0 ✓
+py -3.13 ..\fritzing-parts-langhua\tools\sch_metrics.py     pixel-schematic-v40.fzz   # ⇒ 41 根 / 471.1 mm / 交叉 7 ✓
+```
+
 ## 1. 定位
 
 - **单卖**：一片小方板 + 5 V 输入，线圈朝向被测物体 → 板载 LED 的亮度/颜色表示 13.56 MHz 近场场强。

@@ -2226,6 +2226,9 @@ def main(argv):
         print("外圈环廊 ✓：UBOX 外各加 %d 条通道（x %d / y %d ✓）"
               % (len(RING_OFFS), len(chx), len(chy)))
     used, nets_segs, warn = [], {}, []
+    _orph = []                      # ★★★ 2026-10-04 ✓ “车道接不上轨”的簇 ✓（(网, x, 轨 y, 卡在哪) ✓）
+    #   ★ 为什么单开一个表 ✗：它发生在**很深的网内循环**里 ✓，而退出码在 `main` 末尾算 ✓
+    #     ⇒ 必须有个东西把它带出来 ✓（✗ 只 print 一句 ⇒ 跑完退出码还是 0 ✗，实测踩过 ✓）。
     # ★ 全图的**引脚点表** ✓（安全距离规则用 ✓）：绝对 sketch 坐标 ✓
     PIN_ALL = [(t, cid, p[0], p[1]) for t, d in insts.items() if t not in _BB
                for cid, p in d["pins"].items()]
@@ -3034,8 +3037,71 @@ def main(argv):
                                      abs(_seg2[1][1] - _seg2[0][1]),
                                      abs(_seg2[1][1] - _seg2[0][1]) * 25.4 / 90.0))
                         else:
-                            print("   ⚠⚠ 干线**接不上轨** ✗（最近轨 y=%.1f ✓，过不了闸门 ✗）"
-                                  "⇒ 那一簇**留在孤岛**上 ✓（请人看一眼 ✓）" % _ry2)
+                            # ★★★ 2026-10-04 ✓ **警报要说出“卡在哪道闸门”** ✗（修 bug ✓）
+                            #   ✗ 原来只写“过不了闸门 ✗” ⇒ 一共三道 ✓，到底是哪一道**看不见** ✗
+                            #     ⇒ 每修一次都得猜一次 ✗（本仓规矩：闸门必须报出理由 ✓）。
+                            _gts = []
+                            if body_hard_bad(_seg2, boxes, PIN_ALL):
+                                _gts.append("穿**别人**本体")
+                            _npi = pin_intr(_seg2, set(), PIN_ALL)
+                            if _npi:
+                                _gts.append("压别人的脚 %d 处" % _npi)
+                            if ovl_hard_bad(_seg2, used):
+                                _gts.append("与已布线**重叠**")
+                            _why = "、".join(_gts) if _gts else "？（三道都没报 ⇒ 看下面的明细 ✓）"
+                            # ★★★ 2026-10-04 ✓ **直着走不通 ⇒ 试 L 形绕过去** ✗✓（修 bug ✓）
+                            #   ✗ 病（实测 ✓，`--vlanes=GND,5V@45.83` ✓）：车道下端 y=43.2
+                            #     直落到 5V 轨 y=-45.0 ⇒ **压别人的脚 1 处** ✗ ⇒ 整簇留在孤岛上 ✓
+                            #     ⇒ `5V` 被**断成两段** ✗（`check_netlist` 当场报 ✓）。
+                            #   ✓ 做法：**同一个“干净通道”x 集合**里另挑一个 x ✓（离车道越近越先试 ✓），
+                            #     走 `车道端 → (x2, 车道端 y) → (x2, 轨 y)` ✓（两段**都**过**同样那三道
+                            #     闸门** ✗ —— 一条判据都不放松 ✓）。
+                            #   ★ 为什么不是“放宽闸门”✗：压别人的脚 / 穿体 / 重叠是**硬规则** ✓
+                            #     （用户定 ✓）⇒ 只能**换路** ✓，不能降标准 ✓。
+                            _ok = None
+                            for _x2 in sorted(chx_clean | {_x}, key=lambda _v: abs(_v - _x)):
+                                _dx2 = abs(_x2 - _x)
+                                if _dx2 < 1e-9 or _dx2 < 7.19:
+                                    continue              # ★ 离车道太近 ⇒ 拐了个看不出名堂的弯 ✗
+                                if _dir2 == 'down':
+                                    _s2a = [(_end2[0], _end2[1]), (_x2, _end2[1])]
+                                    _s2b = [(_x2, _end2[1]), (_x2, _ry2)]
+                                else:
+                                    _s2a = [(_x2, _ry2), (_x2, _end2[1])]
+                                    _s2b = [(_x2, _end2[1]), (_end2[0], _end2[1])]
+                                if any(body_hard_bad(_s9, boxes, PIN_ALL) for _s9 in (_s2a, _s2b)):
+                                    continue
+                                if any(pin_intr(_s9, set(), PIN_ALL) for _s9 in (_s2a, _s2b)):
+                                    continue
+                                if any(ovl_hard_bad(_s9, used) for _s9 in (_s2a, _s2b)):
+                                    continue
+                                _ok = _x2
+                                break
+                            if _ok is not None:
+                                if _dir2 == 'down':
+                                    _tr = _tr + [(_ok, _end2[1]), (_ok, _ry2)]
+                                else:
+                                    _tr = [(_ok, _ry2), (_ok, _end2[1])] + _tr
+                                used.append((_end2, (_ok, _end2[1]), net))
+                                used.append(((_ok, _end2[1]), (_ok, _ry2), net))
+                                _vfeet.append((_ok, _ry2))
+                                print("   ★ 干线**拐个 L 形接上轨** ✓：x=%.3f → **%.3f** → 轨 y=%.1f ✓"
+                                      "（直着走会%s ✗ ⇒ 绕开 ✓；两段都过了同三道闸门 ✓）"
+                                      "—— 那一簇与那条轨合成**一个岛** ✓"
+                                      % (_x, _ok, _ry2, _why))
+                                _vtrunks.append(_tr)
+                                print("   ★ **竖直干线** ✓：x=%.3f ✓ 服务 **%d 只脚** ✓（y %.1f → %.1f ✓）"
+                                      "—— 剩下的照旧走**水平轨** ✓"
+                                      % (_x, len(_prs), _tr[0][1], _tr[-1][1]))
+                                continue
+                            print("   ⚠⚠ 干线**接不上轨** ✗（最近轨 y=%.1f ✓）—— **卡在：%s** ✓"
+                                  "（L 形绕行也试过了 ✗ 同样过不了 ✓）" % (_ry2, _why))
+                            _orph.append((net, _x, _ry2, _why))
+                            if net not in ISLAND_NETS:
+                                print("       ✗✗ 而网 `%s` **不在 `--islands` 名单里** ✗ ⇒ 它会被"
+                                      "**断成两段** ✗ ⇒ **本次退出码 = 1** ✓（不许静默通过 ✗）" % net)
+                            else:
+                                print("       （网 `%s` 已被 `--islands` 允许分岛 ✓ ⇒ 不算错 ✓）" % net)
                     else:
                         print("   ⚠⚠ 干线**够不到任何轨** ✗ ⇒ 那一簇**留在孤岛**上 ✓（请人看一眼 ✓）")
                     _vtrunks.append(_tr)
@@ -4035,6 +4101,26 @@ def main(argv):
     ov_fail = 1 if ov_pairs else 0
     if ov_fail:
         print("── ★★ ⇒ **退出码 1** ✓（“不同的导线重叠”必须 0 ✓；文件已照常写出 ✓ 供你打开看哪儿压了 ✓）")
+
+    # ── ★★★ 2026-10-04 ✓ **“车道接不上轨 ⇒ 网被断成两段”也必须是闸门** ✗✗（修 bug ✓）──
+    #   ✗ 病（实测 ✓）：它只打了一句 `⚠⚠` ✗ ⇒ 跑完**退出码 0** ✗ ⇒ 我拿着它当合格版 ✓，
+    #     而 `check_netlist.py` 一跑就报「`5V` 网**被拆成 2 段**」✗✗ ——
+    #     与 v36 那次“核对器是橡皮图章”**同一族** ✓：**告警不阻断 = 没守** ✗（`AGENTS §0`）。
+    #   ★ 判据只对**不在 `--islands` 名单里的网**算错 ✗ —— 名单里的网分岛是**用户允许的** ✓
+    #     （`GND` 的两段靠面包板/PCB 连通 ✓）。
+    #   ★ 文件**照常写出** ✓（要能打开看是哪儿断的 ✓；口径与“重叠”那条一致 ✓）。
+    if _orph:
+        _bad = [o for o in _orph if o[0] not in ISLAND_NETS]
+        print("── ★★ 干线接不上轨：**%d 处** ✓（其中 `--islands` 名单外的（= 真断网 ✗）**%d 处** ✗）"
+              % (len(_orph), len(_bad)))
+        for _o in _orph:
+            print("      [%s] x=%.3f ⇒ 轨 y=%.1f ｜ 卡在：%s ｜ %s"
+                  % (_o[0], _o[1], _o[2], _o[3],
+                     "✗ 该网未被允许分岛 ⇒ **会断**" if _o[0] not in ISLAND_NETS
+                     else "（该网已允许分岛 ✓）"))
+        if _bad:
+            ov_fail = 1
+            print("── ★★ ⇒ **退出码 1** ✓（`--islands` 名单外的网**不许**被断 ✗；文件已写出 ✓ 供你打开看 ✓）")
 
     # ── ★ 布完线再重摆位号 ✓（2026-09-27 用户定 ✓）──
     relabel(insts, boxes, used)
