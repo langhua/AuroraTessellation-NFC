@@ -4898,6 +4898,9 @@ def relabel(insts, boxes, used, extra=False):
         for t2, box in boxes.items():
             if t2 != t and box and _ov2(b, box):
                 sc += 10
+        for _b3 in _deco_boxes:              # ★ 压**装饰件**（接地符号 …）与压别的元件**同罚** ✓
+            if _ov2(b, _b3):
+                sc += 10
         for _u in used:
             if _seg_in_box(_u[0], _u[1], b):
                 sc += 5
@@ -4906,14 +4909,35 @@ def relabel(insts, boxes, used, extra=False):
                 sc += 5
         return sc
 
+    # ★★★ 2026-10-04 ✓ **装饰件（接地/网标/过孔符号）也要被位号“看得见”** ✗✗
+    #   ✗ 病（用户 2026-10-04 截图点名 ✓）：`C1` 的位号**压在接地符号上** ✗ ——
+    #     根因：接地符号的**本体盒算不出** ✗（核心件的 svg **不在 `.fzz` 包里** ✓）
+    #     ⇒ `boxes` 里**没有它** ✗ ⇒ `score()` 看不见 ✗ ⇒ 候选位里“压在它上面”的那个**得 0 分** ✗
+    #     ⇒ 被选中 ✗（同一个“没盒子”的坑，今晚第三次 ✗：骑轨摆位 ✗ / 装饰件当障碍 ✗ / 位号避让 ✗）。
+    #   ✓ 现在：给接地符号一个**量出来的** keep-out ✓（**不是编的** ✗ —— 本仓规矩 ✓）。
+    #   ★★ 数字来源 ✓（`_work/_deco_box.py` ✓）：在**画布**（`bh_layout.fzz` ✓ **还没布线** ✓
+    #     ⇒ 窗口里只有那个符号 ✓、没有导线干扰 ✓）上，围着它的**引脚点**量暗像素 bbox
+    #     ⇒ 接地符号占（单位 ✓，**相对引脚点** ✓）：**左 −9.04 ｜ 右 +8.81 ｜ 上 −0.64 ｜ 下 +16.36** ✓
+    #     ⇒ 直接取**实测值** ✓（不四舍五入成“好看”的数 ✗）。
+    #   ★ 只给**接地符号** ✓（它是唯一量过的 ✓）；网标/过孔的画法不同 ✗ ⇒ **没盖** ✓
+    #     （要与不要由用户定 ✓，不自己估 ✗）。
+    _deco_boxes = []
+    for _t8, _d8 in insts.items():
+        if "GroundModuleID" not in (_d8.get("mid") or ""):
+            continue
+        for _p8 in (_d8.get("pins") or {}).values():
+            _deco_boxes.append((_p8[0] - 9.04, _p8[1] - 0.64,
+                                _p8[0] + 8.81, _p8[1] + 16.36))
+
     # 长位号先放（大的先占位 ✓，与摆位脚本同一策略 ✓）
     items.sort(key=lambda z: -z[5])
-    placed, moved, before, after = [], 0, [0, 0, 0], [0, 0, 0]
+    placed, moved, before, after = [], 0, [0, 0, 0, 0], [0, 0, 0, 0]
     for t, d, tg, ln, fs, w, h in items:                     # 先量"现状" ✓
         b = ST.label_bbox(pm.num(tg.get("x")), pm.num(tg.get("y")), fs, ln)
         before[0] += sum(1 for t2, box in boxes.items() if t2 != t and box and _ov2(b, box))
         before[1] += sum(1 for _u in used if _seg_in_box(_u[0], _u[1], b))
         before[2] += sum(1 for _t2, b2 in placed if _ov2(b, b2))
+        before[3] += sum(1 for _b3 in _deco_boxes if _ov2(b, _b3))      # ★ 压**装饰符号** ✓
         placed.append((t, b))
     placed = []
     for t, d, tg, ln, fs, w, h in items:
@@ -4932,6 +4956,24 @@ def relabel(insts, boxes, used, extra=False):
                      ((bx[0] + bx[2] - w) / 2.0, bx[3] + g2),
                      (bx[0] - g3 - w, bx[1]), (bx[2] + g3, bx[1])]
         old = ST.label_bbox(pm.num(tg.get("x")), pm.num(tg.get("y")), fs, ln)
+        # ★★★ 2026-10-04 ✓ **原位干净 ⇒ 就**不动** ✗（用户 2026-10-04 定 ✓：「位号…**尽量靠近
+        #   元件本体**」✓）——
+        #   ✗ 病：原来**总是**从 7 个候选位里挑一个 ✓ ⇒ 只要“下方那个候选位”也干净 ✓
+        #     就把位号从**画布上的原位**（贴着元件 ✓ 用户自己摆的 ✓）挪到下方 ✗
+        #     —— 实测 `C1` 正是这么被挪到**接地符号上**的 ✓（而原位本来干干净净 ✓）。
+        #   ✓ 现在：**先给原位打分** ✓ —— 0 分（不压任何东西 ✓）就**原地不动** ✓ ⇒
+        #     ① 位号**留在用户摆的地方** ✓（离本体最近 ✓）
+        #     ② 不引入新的重叠 ✓（原位干净 ⇒ 一定不重叠 ✓）
+        #     ③ 输出更**稳定** ✓（不再“换个位置也一样干净”就乱动 ✓）。
+        #   ★ 原位**脏**（压导线/压件/压别的位号 ✓）⇒ 照旧挑最优候选位 ✓（行为不变 ✓）。
+        if score(old, t) == 0:
+            placed.append((t, old))
+            after[0] += sum(1 for t2, box in boxes.items()
+                            if t2 != t and box and _ov2(old, box))
+            after[1] += sum(1 for _u in used if _seg_in_box(_u[0], _u[1], old))
+            after[2] += sum(1 for _t2, b2 in placed[:-1] if _ov2(old, b2))
+            after[3] += sum(1 for _b3 in _deco_boxes if _ov2(old, _b3))
+            continue
         best, bk = None, None
         for x, y in cand:
             b = (x, y, x + w, y + h)
@@ -4951,9 +4993,12 @@ def relabel(insts, boxes, used, extra=False):
         after[0] += sum(1 for t2, box in boxes.items() if t2 != t and box and _ov2(best, box))
         after[1] += sum(1 for _u in used if _seg_in_box(_u[0], _u[1], best))
         after[2] += sum(1 for _t2, b2 in placed[:-1] if _ov2(best, b2))
+        after[3] += sum(1 for _b3 in _deco_boxes if _ov2(best, _b3))
     print("── ★ 位号**布完线重摆** ✓：动 %d 个 ✓ ｜ 压元件 %d→%d ✓ ｜ 压导线 %d→%d ✓"
-          " ｜ 压位号 %d→%d ✓" % (moved, before[0], after[0], before[1], after[1],
-                                  before[2], after[2]))
+          " ｜ 压位号 %d→%d ✓ ｜ 压**装饰符号**（接地 …）%d→%d ✓"
+          "（**四项都必须全 0** ✗ —— 用户 2026-10-04 定：「位号不许与任何符号重叠 ✓」）"
+          % (moved, before[0], after[0], before[1], after[1],
+             before[2], after[2], before[3], after[3]))
 
 
 def _ov2(a, b):
