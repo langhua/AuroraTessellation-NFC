@@ -1037,6 +1037,17 @@ def main(argv):
     #                   ⇒ 所以默认**先关掉** ✓（`--layer-pen=0` ✓），只用拐弯代价 ✓。
     RT.TURN_COST = RT.opt(argv, "--turn", RT.TURN_COST, float)
     RT.LAYER_PEN = RT.opt(argv, "--layer-pen", 0.0, float)
+    # ★★ `--escape-cost=<mm>` / `--escape-r=<mm>` ✓（2026-10-06 加 ✓）——
+    #   库里的"**逐路径脚口代价**" ✓（走别人脚口附近加价 ✓，实测是**第一条真正涨连通数**的规则 ✓：
+    #   `7/9 → 8/9` ✓）。✗ 驱动这边原先**没有这个口子** ✗ ⇒ 量出来的好档出不了图 ✓。
+    _ec = next((a.split("=", 1)[1] for a in argv if a.startswith("--escape-cost=")), None)
+    if _ec is not None:
+        RT.ESCAPE_COST_MM = float(_ec)
+        print("   [脚口代价] 每格 %.2f mm ✓（影子半径 %.2f mm ✓）"
+              % (RT.ESCAPE_COST_MM, RT.ESCAPE_R_MM))
+    _er = next((a.split("=", 1)[1] for a in argv if a.startswith("--escape-r=")), None)
+    if _er is not None:
+        RT.ESCAPE_R_MM = float(_er)
 
     def width_of(net):
         return (mil_pow if net in power else mil_sig) * RT.MIL_MM
@@ -1142,6 +1153,10 @@ def main(argv):
                      "、".join(kd.REPS[_net])))
         print("      ⇒ 网表里去掉已连到的脚 %d 个 ✓（甲：不动他连好的 ✗）" % n_cut)
     passes = RT.opt(argv, "--passes", 4, int)
+    # ★ `--blockers=<n>` ✓（2026-10-06 加 ✓）：拆线重布时**最多试几个"对手网"** ✓
+    #   （库默认 8 ✓）。实测：同一块板、只改这一项（8 → 16 ✓，即"所有已布通的网都试一遍" ✓）
+    #   拆线才走得动 —— 旧尺子下是零影响 ✗，换了尺子（还差几条连接优先 ✓）后才有用 ✓。
+    blockers = RT.opt(argv, "--blockers", 8, int)
     # ★★ 元件**画出来的铜**（含 NFC 线圈的螺旋 ✓）⇒ 过孔禁落区 ✓
     #   2026-10-01 用户定 ✗：「通孔不能在元件内，并与有安全距离」✓
     #   （校验器第 ⑦ 条 = 独立实现 ✓；这边是布线时**躲开** ✓）
@@ -1193,6 +1208,7 @@ def main(argv):
     _first = (tuple(x.strip() for x in _fs.split(",") if x.strip())
               if _fs is not None else power)
     res = RT.route_ripup(items, r, net_pads, pads, cell, via_cost, tries=tries, passes=passes,
+                         blockers=blockers,
                          width_of=width_of, first=_first, last=_last, mid_keep=mid_keep_nets,
                          copper_keep=[b for _l, b in copper_keep], pre=locked,
                          labels=_labels)
