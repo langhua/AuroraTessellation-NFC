@@ -3342,7 +3342,41 @@ py -3.13 gen_routes.py _work\v69_bare.fzz _work\v70_auto.fzz --nets=pixel_nets.p
 
 ⇒ **非单调** ✗ ⇒ 格宽不是解 ✓（源码 2026-10-03 就写过「✗ 别用 `--cell` 修」✓）。
 
-**四、下一步（要加的规则 ✓）**
+**四、第二轮实验（2026-10-05 ✓，一次一改 ✓，全部实测 ✓）**
+
+```bash
+py -3.13 gen_routes.py _work\v69_bare.fzz _work\v70_nolock.fzz --nets=pixel_nets.py --no-lock
+py -3.13 gen_routes.py _work\v69_bare.fzz _work\v70_bare9.fzz  --nets=pixel_nets.py --no-lock --keep=_work\keep_empty.py
+py -3.13 ..\fritzing-parts-langhua\tools\pcb_route.py _work\v69_bare.fzz --nets=pixel_nets.py --mil=8
+```
+
+| 配置 | 连通 | 说明 |
+|---|---|---|
+| `gen_routes` 默认（5V 先布好并**钉住** ✗ ＋ 真保线） | **4/9** ✗ | = 基线 ✓ |
+| `--no-lock` ✓（不把 5V 钉死） | **6/9** ✓ | 一次一改 ① ⇒ **主要失血点就在这** ✗ |
+| `--no-lock --keep=_work/keep_empty.py` ✓ | **6/9** ✓ | 与上一行**同一组数** ⇒ **保线这次无影响** ✓ |
+| `pcb_route.py --mil=8`（**独立对照** ✓ 无保线、无走廊锁定 ✓） | **7/9** ✓ | **核心布线器比驱动端强一档** ✓ ⇒ 差距在 `gen_routes` 的驱动参数 ✗ |
+| `--cell=0.25` ✗ | 3/9 ✗ | 粗格更差 ✓ |
+
+★ **我自己错了一次** ✗（当场被源码+数据推翻 ✓）：曾断言"盘障碍按 24 mil 挡 ✗、而实际写 8 mil ✗"
+⇒ 查源码 **`gen_routes.py` L1034 早就设了** `RT.TRACE_MM = max(mil_sig, mil_pow) * MIL_MM` ✓
+⇒ **解释不成立** ✗。教训（同类第二次 ✗）：**先看源码/先量，再下结论** ✗；
+"能解释数据" ≠ "已被证实" ✗。
+
+**五、剩下的 3 张 ✗（下一次攻 ✓，`_work\route_bare9.txt` 有全文 ✓）**
+
+| 网 | 卡在哪 | 症状 |
+|---|---|---|
+| `BR+` | `D3.connector4 → R1.connector0` | **起点格空** ✗ |
+| `GND` | `C1.connector1 → LED2.connector1` | A* 找到的路**会压 `D3.connector2` 的盘** ✗ ⇒ 被否 ✓ |
+| （第 3 张） | 见日志全文 ✓ | |
+
+★ **一个真发现（工作模式冲突 ✓）**：`gen_routes` 默认读**保线清单**（`fz_keep_set.py` ✓ 从某个
+`.fzz` 里读出"用户自己画的铜" ✓），并把 `REPS`/`DONE` 当成"**已经连好的脚**" ✗ ——
+那是「**只补没布的网**」的模式 ✓；而目标是「**从光板整布全部 9 张**」✗ ⇒ 两者**不能混** ✓
+（本次实测保线不影响连通数 ✓，但语义冲突要记下 ✓：光板上那些铜已经不存在了 ✗）。
+
+**六、下一步（要加的规则 ✓）**
 
 1. **逃逸 / 扇出（escape）一趟** ✓：细脚距封装（`U1` QFN20 0.4mm ✓、`D3` SOT363 ✓）
    每只脚先朝**径向外**铺一小段存根 ✓，再从存根起布 ✓ —— 这是"脚口"的正解 ✓；
