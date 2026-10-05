@@ -3069,6 +3069,64 @@ py -3.13 fz_keep_set.py <手改件.fzz> _work\keep.py    # 保线清单（带每
 py -3.13 ..\fritzing-parts-langhua\tools\render_pcb.py pixel-pcb-v66.fzz pixel-pcb-v66_preview.svg --png
 ```
 
+### 第四十八手 ✅：**接了 `LED_DIN` 后的检查 ＋ 回到 v40 的原理图** ⇒ `pixel-pcb-v67.fzz`（2026-10-05 ✓）
+
+用户 2026-10-05：「`pixel-pcb-v66_byHand.fzz`，我把 LED_DIN 的线接上了，请检查」✓
+＋「Fritzing 仍报**两个**接插件没接上 —— 从接线角度看线都接上了，**我猜是文件格式问题**」✓。
+
+**一、检查结果：他的 `LED_DIN` 真的接上了** ✓（三条独立证据 ✓，都是量出来的 ✓）
+
+| 证据 | 结果 |
+|---|---|
+| 声明（Fritzing 口径 ✓） | `#92` 端0 → `LED2.connector2`(copper1) ✓；`#91` 端1 → `U1.connector12`(copper0) ✓ |
+| 铜的几何（我的口径 ✓） | **9 张网各 1 块铜** ✓（`LED_DIN` 也 1 块 ✓）｜跨网接触 **0** ✓ ｜ 重号 **0** ✓ |
+| 互指完整性 ✓ | 本层 `<connect>` **缺回指 0 条** ✓（不是"只写一边" ✓） |
+
+**二、只剩一处真的** ✗（在他这轮新加的孔上 ✓）：
+新过孔 `Via5` 真铜心 (45.000, 15.000) mm ✓ 离**空脚** `U1.connector15` 的盘只有 **0.131 mm** ✗
+（规则要 ≥ **0.25** ✓）。**电气上没事** ✓（那只脚没网 ✓、也没压到它 ✓）⇒ 是**制板余量** ✗。
+★ 修法（交给他，5 秒 ✓）：把这颗孔朝**远离 `U1.connector15`** 的方向挪 ≈ **0.12 mm**
+（方向 ≈ (−0.92, −0.39) ⇒ 大约 **x −0.11、y −0.05 mm** ✓）。
+★ 我试过自己在文件里挪 ✗（`_work/move_via2.py` ✓）—— 认孔、认线端都对了 ✓，但改端点时
+**把 XML 写坏** ✗（`<geometry>` 属性插错位置 ✓）⇒ 按本仓「**不许为小问题叠加修补**」的规矩
+**停手** ✓，交给他点一下更稳 ✓。
+
+**三、他那版把原理图那根歪线又带回来了** ✗ ⇒ 已按 v40 复值 ✓（`Wire90013958` 的
+`x2` `-0.37805` → `0` ✓、`y2` `-34.0004` → `-34` ✓ —— 第二处 0.0004 单位 = 0.1 µm ✗
+但会让**交叉数** 7 → 8 ✗，实测 ✓）⇒ 指标**逐项回到 v40** ✓：
+41 根 / 471.1 mm / **交叉 7** / 正交度 **0.9750** / 最歪 **0.0378 mm** ✓。
+
+**四、状态栏那句「5 of 7 / 2 个接插件」到底怎么算的** ✓（**读源码** ✓，出处逐条可核 ✓）
+
+- 句子 = `mainwindow/mainwindow.cpp:2298` ✓；计数 = `sketch/sketchwidget.cpp:7013`
+  调 `GraphUtils::scoreOneNet` ✓；分组 = `connectors/connectoritem.cpp::collectEqualPotential` ✓。
+- 关键三条（都写在源码里 ✓）：
+  1. **只认导线**：`if (!(wire->getViewGeometry().wireFlags() & myTrace)) continue;`
+     （`graphutils.cpp:550` ✓）—— PCB 视图 `myTrace = PCBTraceFlag = 4` ✓（`viewgeometry.h` ✓）。
+     ★ 顺带核出：**`Via` 不是 `Wire`** ✗（`class Via : public Hole` ✓，`items/via.h:26` ✓）
+     ⇒ 过孔**不直接**让两只脚相通 ✗，它靠「同脚跨层」那一条 ✓（`isCrossLayerConnectorItem` ✓）。
+  2. **按「脚」计数** ✓：一只脚哪怕同时缺好几条也只算 1 ✓（源码注释原话 ✓）。
+  3. **「N 个网」只数"有两支不同零件、且本视图里 ≥2 只脚"的组** ✓
+     ⇒ ✗ 它**不是**"你的网表有几张网" ✗：本视图里没连起来的网会碎成**单脚组**，而那些组
+     **直接跳过** ✓ ⇒ 它既可能**少报**（碎裂的网不计数 ✓）也可能**多报** ✗
+     ⇒ **这句话本身不是"线接没接上"的判据** ✗。
+- ⇒ 所以「2 个接插件」**未必**是少两根线 ✗；它也可能来自计数口径 ✓。**但**我**不能**凭这句话
+  断定他对不对 ✗ —— 我按源码写了一份同样的算法（`_work/fz_status.py` ✓），
+  它**复现不了**那个 2 ✗（Fritzing 运行时还有一层**几何命中**在文件里看不到 ✓）
+  ⇒ **按 §13「一个声音」的规矩**：请他看**真正的判据** = **鼠线（ratsnest）虚线** ✓
+  （视图里未布线的连接会画成虚线 ✓）＋**重开文件后**的状态句 ✓，
+  把「哪两只脚之间还有虚线」告诉我 ✓ ⇒ 我这边就能定位到底是谁 ✓。
+
+复现 ✓：
+```bash
+py -3.13 ..\fritzing-parts-langhua\tools\pcb_check.py  pixel-pcb-v67.fzz --nets=pixel_nets.py
+py -3.13 ..\fritzing-parts-langhua\tools\sch_metrics.py pixel-pcb-v67.fzz
+py -3.13 _work\diag_hand2.py pixel-pcb-v67.fzz pixel-pcb-v66.fzz   # 逐张网第几块 / 与上一版逐项对照
+py -3.13 _work\fz_status.py  pixel-pcb-v67.fzz pcb                 # 照抄 scoreOneNet 算一遍
+py -3.13 _work\sym.py        pixel-pcb-v67.fzz                     # `<connect>` 互指检查
+py -3.13 ..\fritzing-parts-langhua\tools\render_pcb.py pixel-pcb-v67.fzz pixel-pcb-v67_preview.svg --png
+```
+
 ## 1. 定位
 
 - **单卖**：一片小方板 + 5 V 输入，线圈朝向被测物体 → 板载 LED 的亮度/颜色表示 13.56 MHz 近场场强。
