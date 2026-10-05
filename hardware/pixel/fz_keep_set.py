@@ -124,16 +124,22 @@ def main(argv):
                 #   ✗ 旧写法只存两端 ⇒ 布线器把弯铜当**直线**框 ✗ ⇒ 障碍框落在错的格上 ✗
                 #     （很可能就是“起点格空”的元凶 ✓）。
                 pts = PW.curve_pts(t["geo"], t.get("bezier"), 16)
-                KEEP.append((net, lay, [(p[0], p[1]) for p in pts]))
+                # ★★ 2026-10-05 补**线宽** ✓（用户点名「布线器留距要按线半宽算」✓）：
+                #   ✗ 旧写法只存形状 ✓ ⇒ 消费方只能用**全局 24 mil 代理** ✗
+                #     ⇒ 一条 **8 mil** 的线被按 24 mil 算 ✗ ⇒ 多封锁 0.2 mm/边 ✗
+                #     （实测：`LED2.connector2` 的起步格就是被这样「保线:5V」封死的 ✗）。
+                #   `mils` 不在就按 Fritzing 默认 **12 mil** ✓（写清来源 ✓，不猜 ✗）。
+                KEEP.append((net, lay, [(p[0], p[1]) for p in pts],
+                             t.get("mils") or 12.0))
         got = [p for p in pads if p in PAD2NET and PAD2NET[p] == net]
         if got:
             REPS.setdefault(net, []).append(got[0])
             DONE.setdefault(net, []).extend(got)
 
     print("== 保线清单 ✓（%s）==" % os.path.basename(argv[0]))
-    for net in sorted(set(n for n, _l, _p in KEEP) | set(n for n, _q in KEEP_V)):
-        w = sum(1 for n, _l, _p in KEEP if n == net)
-        seg = sum(len(p) - 1 for n, _l, p in KEEP if n == net)
+    for net in sorted(set(n for n, _l, _p, _m in KEEP) | set(n for n, _q in KEEP_V)):
+        w = sum(1 for n, _l, _p, _m in KEEP if n == net)
+        seg = sum(len(p) - 1 for n, _l, p, _m in KEEP if n == net)
         v = sum(1 for n, _p in KEEP_V if n == net)
         print("  %-5s 走线 %2d ✓｜过孔 %d ✓｜代表脚 %s ✓"
               % (net, w, v, "、".join(REPS.get(net, [])) or "✗ 无"))

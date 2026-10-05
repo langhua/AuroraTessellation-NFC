@@ -1100,19 +1100,19 @@ def main(argv):
         KEEP_GROW = RT.SK * (KEEP_W_MM / 2.0 + RT.CLEAR_MM)      # 他线**中点**→新线心的下限 ✓
         KEEP_V_GROW = RT.SK * (RT.VIA_CLEAR_MM + RT.VIA_SAFE_MM)  # 他孔心→新线心的下限 ✓
         n_kw = n_kv = 0
-        for (_net, lay, pts0) in kd.KEEP:
-            # ★★ 保留的线可能是**曲线** ✓ ⇒ `fz_keep_set` 已把它采成折线 ✓ ⇒
-            #   这里**逐段各生成一个障碍框** ✓（弯铜才框得住 ✗ —— 只框两端会漏掉中段 ✓）。
-            for i in range(len(pts0) - 1):
-                (ax, ay), (bx, by) = pts0[i], pts0[i + 1]
-                items.append((lay, (min(ax, bx), min(ay, by),
-                                     max(ax, bx), max(ay, by)), KEEP_GROW, "__keep__"))
-                _labels.append("保线:%s" % _net)      # ★ 同步追加 ✓（两张表必须等长 ✗）
-                n_kw += 1
-        for (_net, p) in kd.KEEP_V:
-            items.append(("both", (p[0], p[1], p[0], p[1]), KEEP_V_GROW, "__keep__"))
-            _labels.append("保线过孔:%s" % _net)
-            n_kv += 1
+        _kitems, _klabels = RT.keep_obstacles(kd.KEEP, kd.KEEP_V)
+        # ★★ 2026-10-05 改 ✓：这份逻辑挪进库里成 **唯一实现** ✓（`pcb_route.keep_obstacles` ✓）
+        #   —— 诊断工具要**同一份**口径 ✓（否则两边对不上、又回到“自证” ✗）。
+        #   修的两处 ✗：① 宽度用**每条线自己的** `mils` ✓（旧版一律 24 mil ✗）；
+        #              ② 每段切 ≤ 0.2 mm 小框 ✓（旧版整段外接框 ✗ ⇒ 斜线过度封锁 ✗）。
+        for _it in _kitems:
+            items.append(_it)
+            if str(_it[3]).startswith("__keep"):
+                if _it[1][0] == _it[1][2] and _it[1][1] == _it[1][3]:
+                    n_kv += 1
+                else:
+                    n_kw += 1
+        _labels.extend(_klabels)
         # ④ 网表瘦身 ✓（甲 ✓）：链上已连到的脚 ⇒ **从网表里去掉** ✗；每条链留一个代表脚 ✓
         done_keys = {("%s.%s" % (k.split(".", 1)[0], k.split(".", 1)[1]))
                      for _n, lst in kd.DONE.items() for k in lst}
@@ -1134,7 +1134,8 @@ def main(argv):
                     n_cut += 1
             net_pads[_net] = newl
         print("   [保线] 用户画的铜 ✓：走线 %d 段 ＋ 过孔 %d 个 ⇒ **当既有铜** ✓"
-              "（绕开它 ✗、不重画 ✗）" % (n_kw, n_kv))
+              "（绕开它 ✗、不重画 ✗；**按各线自己的半宽** ✓、斜线切小段 ✓）"
+              % (n_kw, n_kv))
         for _net in sorted(kd.REPS):
             print("      · %-5s 链上已连到 %s ✓ ⇒ **不再布线** ✗；从代表脚 %s ✓ 往外接剩下的脚 ✓"
                   % (_net, "、".join(sorted(kd.DONE.get(_net, []))),
