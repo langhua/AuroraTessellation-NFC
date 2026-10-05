@@ -1577,21 +1577,37 @@ def main(argv):
     n = write(base, out, xml, edits)
     print("   ✓ 已写出 %s（插入 %d 字符 ✓）" % (os.path.basename(out), n))
 
-    if "--check" in argv:
-        print("\n== 独立复核（**重新读刚写的文件** ✓）==")
-        m2 = PC.collect(out)
-        # ★ 复核器的 `expect` 要 **dict：网名 → [`"位号.connectorN"`, …] 字符串** ✓
-        #   （✗ 我先前直接把 `net_pads` 的元组喂进去 ⇒ 33 条假报把真问题淹了 ✗ —— 2026-10-01 实测 ✓）
-        expect = {n: ["%s.%s" % (t, c) for (t, c) in lst]
-                  for n, lst in (net_pads or {}).items()}
-        probs, notes, _g = PC.check(m2, expect=expect or None)
-        for s in notes:
-            print("   · %s" % s)
-        for s in probs:
-            print("   ✗ %s" % s)
-        print("   ⇒ %s（走线/过孔几何 ✓）" % ("**0 问题** ✓" if not probs else "**有 %d 处问题 ✗**" % len(probs)))
-        return 0 if not probs else 1
-    return 0
+    # ★★ 独立复核 ✓（**总是跑** ✗✓ —— 2026-10-06 改 ✓）：重新读**刚写出来的文件** ✓，
+    #   用 `pcb_check` 的**几何判据**核一遍 ✓。
+    #   ✗ 以前它挂在 `--check` 底下（选做 ✓）⇒ 我出 `pixel-pcb-v70.fzz` 时**没加** ✗
+    #     ⇒ 交付报告里的数字**全来自布线器自己的模型** ✗ ⇒ 出了「**幽灵连接**」✓：
+    #     文件里 `RC` 三只脚**一条线都没有** ✗，而 Fritzing **照样显示「布线完成」** ✗
+    #     —— 因为它的连通图是顺着**文件里的 `<connect>` 声明**走的 ✓
+    #     （`utils/graphutils.cpp` ✓：`Wire::collectChained` ✓），而写回器**沿用了旧声明** ✗。
+    #   ★★ 规矩 ✓（仓规 §13）：「Fritzing 说完成」**不等于**「铜真的连上」✗ ——
+    #     **文件是我们生成的时候**，必须用**几何**再核一遍 ✓，并把**几何**的数字当交付依据 ✓。
+    print("\n== 独立复核（**重新读刚写的文件** ✓｜几何判据 ✓）==")
+    m2 = PC.collect(out)
+    # ★ 复核器的 `expect` 要 **dict：网名 → [`"位号.connectorN"`, …] 字符串** ✓
+    #   （✗ 我先前直接把 `net_pads` 的元组喂进去 ⇒ 33 条假报把真问题淹了 ✗ —— 2026-10-01 实测 ✓）
+    expect = {n2: ["%s.%s" % (t, c) for (t, c) in lst]
+              for n2, lst in (net_pads or {}).items()}
+    probs, notes, _g = PC.check(m2, expect=expect or None)
+    for s in notes:
+        print("   · %s" % s)
+    for s in probs:
+        print("   ✗ %s" % s)
+    bad = [s for s in probs if s.startswith("⑤ 网 ")]
+    if bad:
+        print("\n   ⚠ **这份文件不是全通** ✗：%d 张网里有 %d 张断着 ✗" % (len(expect), len(bad)))
+        print("      ⚠ 而 **Fritzing 状态栏很可能照样显示「布线完成」** ✗ —— 它顺着文件里的")
+        print("        `<connect>` 声明走 ✓（`graphutils.cpp` ✓）；**旧声明**会让它误判 ✗")
+        print("      ⇒ **别信状态栏，信这一行** ✓（§13：文件是我们生成的，就必须用几何再核 ✓）")
+    else:
+        print("\n   ✓ **几何核对：%d 张网全部连通** ✓（**这一行**才是交付依据 ✓）" % len(expect))
+    print("   ⇒ %s（走线/过孔几何 ✓）"
+          % ("**0 问题** ✓" if not probs else "**有 %d 处问题 ✗**" % len(probs)))
+    return 0 if not probs else 1
 
 
 if __name__ == "__main__":
