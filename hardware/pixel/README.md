@@ -3127,6 +3127,84 @@ py -3.13 _work\sym.py        pixel-pcb-v67.fzz                     # `<connect>`
 py -3.13 ..\fritzing-parts-langhua\tools\render_pcb.py pixel-pcb-v67.fzz pixel-pcb-v67_preview.svg --png
 ```
 
+### 第四十九手 ✅：**面包板在偷偷并网** ✗（不是文件格式 ✗）⇒ `pixel-pcb-v68.fzz`（2026-10-05 ✓ 用户实测确认 ✓）
+
+[![v68 预览](pixel-pcb-v68_preview.png)](pixel-pcb-v68_preview.png)
+
+**先更正上一手的一个结论** ✗：我把那句「还剩 2 个接插件」归给「Fritzing 运行时还有一层
+**几何命中**在文件里看不到」✗ —— **那是错的** ✗。真正的通道就是文件里的 `<connect>` 记录 ✓，
+只是它**按视图**恢复 ✓（下面第 ② 条 ✓）。**这一手是用户读三个视图确认的** ✓：
+
+> 用户 2026-10-05：「`hardware\pixel\_work\v67_exp_nobbviews.fzz`，确认，**三个视图都正确**」✓
+
+**一、机理（读源码 ✓，逐条可核 ✓）**
+
+| 步 | 事实 | 出处 |
+|---|---|---|
+| ① | 核心面包板件给**每个孔**都声明了 `<pcbView><p layer="breadboardbreadboard" svgId="pin1A"/></pcbView>`（实测 **831 条** ✓）⇒ **面包板的孔在 PCB 视图里也有连接器项** ✗ —— **看不见** ✗（`breadboardbreadboard` 层在 PCB 视图里不画 ✓）但**在网表里** ✓ | `core/breadboard2.fzp` ✓ |
+| ② | 恢复 `<connect>` 的目标项走 `ItemBase::findConnectorItemWithSharedID()` = `connector->connectorItem(m_viewID)` ⇒ **只在"当前视图"里找** ✓ | `items/itembase.cpp:559` ✓，调用点 `sketch/sketchwidget.cpp:615` ✓ |
+| ③ | ⇒ 面包板 `pcbView` 段里那 55 条 `pin14F → U1(…) layer=copper0` 在 **PCB 视图里是"真"连接** ✗（`layer=copper0` ✗ 看着像铜 ✓）⇒ 面包板内部 **130 条 bus**（5 孔一列 ✓）把 PCB 的网**并掉** ✗ | 实测 `_work/pcb_glue.py` ✓ |
+| ④ | ⇒ `GraphUtils::scoreOneNet()` 判出「还有 N 个连接件没布线」✗ ＋ 画鼠线虚线 ✗ | `utils/graphutils.cpp:447` ✓ |
+
+**二、修法（稳的 ✓）** —— `sketch/sketchwidget.cpp:278`：
+`QDomElement view = views.firstChildElement(viewName); if (view.isNull()) continue;`
+⇒ **该视图没有段落 ⇒ 该视图里根本不创建这个元件** ✓ ⇒ 干了俩事 ✓：
+
+1. 面包板类实例：**整段删掉** `<pcbView>` / `<schematicView>`（连 `geometry` 一起 ✓）；
+2. 别的实例：在这两段里删掉**跨视图记录** ✓（目标层不属于本视图 ✓｜指向面包板的 ✓｜
+   源层是 `breadboardbreadboard` 的 ✓）。
+
+**★ 只删记录不稳** ✗，两条都踩过 ✓：
+- 连接报在 **Connector 级** ✓（`Connector::connectTo()` → `m_toConnectors` ✓）⇒
+  下次 Fritzing 另存会把各视图的记录**再写回来** ✗；
+- 记录是**双向**的 ✓ ⇒ 我第一版 `deglue2` 只删了"零件 → 面包板"那一半 ✗ ⇒
+  **一点用都没有** ✗（仍报 2 个 ✓ —— 这就是用户那次实测的结果 ✓）。
+
+**三、实测对照** ✓
+
+| 项 | 改前 | 改后 |
+|---|---|---|
+| PCB 视图里「**能生效的非铜记录**」（独立复核 ✓） | 110 条 ✗ | **0 条** ✓ |
+| 面包板视图：内部 bus / 插件 / 跳线 | 130 / 44 / 37 ✓ | **130 / 44 / 37** ✓（段**逐字节相同** ✓） |
+| Fritzing 状态栏（用户读 ✓） | PCB 报「还剩 2 个」✗ | **三视图都正确** ✓ |
+
+**四、我这边核的（都**独立**复核 ✓，不是"跑过就算" ✓）**
+
+```bash
+py -3.13 ..\fritzing-parts-langhua\tools\fz_deglue_views.py pixel-pcb-v68.fzz --check   # 0 条 ✓（改前 86 ✗）
+py -3.13 ..\fritzing-parts-langhua\tools\pcb_check.py        pixel-pcb-v68.fzz --nets=pixel_nets.py  # ✓ 全过
+py -3.13 ..\fritzing-parts-langhua\tools\sch_metrics.py      pixel-pcb-v68.fzz   # 41 / 471.1mm / 交叉 7 / 0.9750 / 0.0378mm ✓ 不变
+py -3.13 _work\bb_nets.py pixel-pcb-v68.fzz                                      # bus 130 ✓ 插件 44 ✓ 跳线 37 ✓
+py -3.13 _work\cmp_inner.py pixel-pcb-v68.fzz _work\v67_exp_nobbviews.fzz        # **内层逐字节相同** ✓（528977 字节 ✓）
+```
+★ 最后那条是"**交付件 == 用户确认过的那份**"的证据 ✓（只有内层文件名不同 ✓：
+`pixel-pcb-v68.fz` ✓）—— 这比"我觉得一样"硬 ✓。
+
+**五、已知残留** ✗（下一轮清 ✓，都不并网 ✓）：
+via / 导线在**面包板段、原理图段**里还留着 **77 条**"源层写成 `copper0`"的同族记录 ✗
+（`_work/why21.py` 量的 ✓）⇒ 于是 `_work/sym.py`（互指完整性）报 **21 条单向残缺** ✗
+（改前 0 ✗ 是我这次删掉了一侧 ✓）。**功能上无影响** ✓（两端本来就同一张网 ✓，
+三视图也都被用户确认过 ✓）⇒ 单独一轮办 ✓，不在这版里叠加 ✗。
+
+**六、用户的一个设计问题（记下来 ✓，下一步一起定）**
+
+用户 2026-10-05：「Fritzing 这么设计是**故意**为之：三个 View **彻底独立**的好处是设计上
+互不干扰、更适合高手和你来用；三个 View **紧密耦合**更适合新手 —— 一个视图变了，
+另一个视图里就会提示出来。」
+
+⇒ 本轮取证支持这个判断 ✓，而且能说得更准 ✓：**Fritzing 的耦合不止"提示"，它是"一个网表"** ✓
+（连接记在 Connector 级 ✓、另存时按视图各写一份 ✓）。**提示本身是好的** ✓（新手该有 ✓）；
+**坏在"面包板这个底板也被当成板上元件"** ✗ —— 它一进 PCB 视图就把 130 条 bus 塞进网表 ✗，
+而且**看不见** ✗ ⇒ 就成了"两个声音" ✗。
+⇒ 下一步找**原生兼容**方案（用户 2026-10-05 定 ✓）：① 最省事 = **面包板单独一个草图** ✓；
+② **改我们自己的面包板件**（做一份 `.fzp` 里**不给孔声明 `pcbView`/`schematicView`** 的
+面包板 ✓ ⇒ 桥根本不存在 ✓、也不怕另存 ✗、且**不动任何文件** ✓）；
+③ 先做个便宜实验定方向 ✓：把 `v67_exp_nobbviews.fzz` 在 Fritzing 里**另存一次**，
+再看 PCB/原理图段里那 55+8 条记录**会不会自己回来** ✗ —— 会回来 ⇒ ② 必做 ✓；
+不回来 ⇒ ①/③ 也够用 ✓。
+
+其余"手"的编号继续往后排 ✓（本手 = 第四十九手 ✓）。
+
 ## 1. 定位
 
 - **单卖**：一片小方板 + 5 V 输入，线圈朝向被测物体 → 板载 LED 的亮度/颜色表示 13.56 MHz 近场场强。
