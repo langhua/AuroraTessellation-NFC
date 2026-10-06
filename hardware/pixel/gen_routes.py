@@ -1447,6 +1447,25 @@ def main(argv):
              for d in res.values() for s in d["segs"])
     print("\n   连通 %d/%d ✓｜线长 %.1f mm｜过孔 %d 个"
           % (n_ok, len(res), MM(ln), sum(len(d["vias"]) for d in res.values())))
+    # ★★ `--measure-only` ✓（2026-10-06 加 ✓）：**只量不写** ✓ —— 打一行**机器可读**
+    #   的结论 ✓ 后立刻退出 ✓（✗ 不碰输出文件 ✗，`out` 参数被忽略 ✓）。
+    #
+    #   ★ 为什么要它 ✗（**实测的教训** ✓，就是仓规 §13「只允许一个声音」那一条 ✓）：
+    #     我的「贪心挪位搜索」（`_work/place_greedy.py` ✓）**自己抄了一份路由口径** ✗
+    #     ⇒ 它在候选 `D3 +0 -1` 上报 `8/9 ✓ 还差 2 条` ✓，
+    #     而**驱动器在同一份文件上只给 `4/9 ✗ 还差 7 条`** ✗（2026-10-06 实测 ✓）。
+    #     差的全是这里的**默认流水线** ✗：`[留走廊]` 先把 `5V` 单独布好**钉住** ✓、
+    #     `first=power` 排序 ✓、`mid_keep` 罚 `GND` 走中间 ✓、`keep` 禁落区 ✓、
+    #     `locked` 既有铜 ✓ —— scratch **一条都没有** ✗。
+    #   ⇒ 尺子**只许有一份实现** ✓：搜索**调这一份** ✓（抄一份就多一个错处 ✗）。
+    #   ★ 用法 ✓：`gen_routes.py <候选.fzz> _ --measure-only …` ⇒ 解析最后一行 `MEASURE …` ✓。
+    if "--measure-only" in argv:
+        _miss = sum(int(d.get("miss", 0)) for d in res.values())
+        print("MEASURE ok=%d nets=%d miss=%d len_mm=%.1f vias=%d bad=%s"
+              % (n_ok, len(res), _miss, MM(ln),
+                 sum(len(d["vias"]) for d in res.values()),
+                 ",".join(sorted(n for n, d in res.items() if not d["ok"])) or "-"))
+        return 0
     # ★★ `--dump-net=<网名>` ✓（2026-09-30 用户要的 ✓）：把**布线器内部**那张网的段
     #   与它各个脚的层原样摊开 ✓ ⇒ 一刀切开"**布线器没生成**" ✗ vs "**写回时丢了**" ✗。
     #   只打印 ✓、**绝不写文件** ✓（便于反复对着量 ✓）。
