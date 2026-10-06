@@ -877,6 +877,59 @@ def add_backrefs(text, edits):
     return text, n, miss, why, built
 
 
+def fill_net_decls(edits, model, net_pads):
+    r"""★★ 给**每张网的每只脚**都挂上一条 PCB 声明 ✓ —— 哪怕它那一段**没布通** ✗。
+
+    ✗✗ 病因（2026-10-06 **量实** ✓，推翻了我上一轮的"幽灵"解释 ✗）：
+      Fritzing 的「**一张网由哪些脚组成**」是靠**声明**算的 ✓
+        （`sketchwidget.cpp:7049` → `ConnectorItem::collectEqualPotential(…RatsnestFlag)` ✓）；
+      ✗ 一只脚若在 **pcbView 里 0 条声明** ✗ ⇒ 它**不属于任何一张网** ✗ ⇒
+      `scoreOneNet` 里 `num_nodes==1` 的那些"网"因 `gotUserConnection==false`
+      **被直接丢掉** ✗（`graphutils.cpp:502` ✓）⇒ **那张网少算一只脚** ⇒
+      剩下两只**有走线连着** ✓ ⇒ `anyMissing=false` ⇒ **状态栏说「布线完成」** ✗✗。
+      ⇒ v70（`RC` 三只脚一条线都没有 ✗）与 v71（只有 `U1.connector1` 孤着 ✗）**是同一个病** ✓。
+      ★★ 铁证 ✓：用户那份 **v69**（它说 **7/9** ✓）里，`RC` 三只脚在 pcbView 里
+        **各有 1–2 条声明** ✓（`_work/_cmp_nets.py` ✓ 逐视图量过 ✓）；
+        而 v71 的 `U1.connector1` 是 **0 条** ✗ —— 就差这里 ✓。
+
+    ★ 做法（**不编造** ✗）：对每张网取一条**已有的**回指（它带着真的源端
+      `源connectorId/源mi/源层` ✓）当**样板** ✓，**克隆**给同网里缺声明的脚 ✓
+      （目标的 `mi/cid/lay` 用那只脚**自己的** ✓）。
+      ⇒ 与 `add_backrefs` 同一条写入路径 ✓、同样幂等 ✓，✗ 不动任何已有声明 ✗。
+    """
+    mi2net = {}
+    # ★ 焊盘读 `model["pads"]` ✓（`pcb_check.collect` 那份 ✓：有 `title`/`cid`/`mi` ✓）——
+    #   ✗ 不是 `RT.pad_index` 那份 ✗（实测 2026-10-06：那份里**没有 `mi`** ✗ ⇒
+    #   整个函数静默返回空 ✗ ⇒ 日志里连“补网成员声明”那行都没出 ✗）。
+    bykey = {}
+    for _q0 in (model.get("pads") or ()):
+        if _q0.get("mi"):
+            bykey[(_q0.get("title"), _q0.get("cid"))] = _q0
+    for _net, _lst in (net_pads or {}).items():
+        for (_t, _c) in _lst:
+            _q = bykey.get((_t, _c))
+            if _q:
+                mi2net[(str(_q["mi"]), _c)] = _net
+    sample, have = {}, set()
+    for e in edits:
+        have.add((str(e[0]), e[1]))
+        _net = mi2net.get((str(e[0]), e[1]))
+        if _net and _net not in sample:
+            sample[_net] = e
+    add = []
+    for _net, _s in sample.items():
+        for (_t, _c) in (net_pads or {}).get(_net, ()):
+            _q = bykey.get((_t, _c))
+            if not _q or not _q.get("mi"):
+                continue
+            if (str(_q["mi"]), _c) in have:
+                continue                    # 已经有回指 ✓ ⇒ 不碰 ✗
+            _lays = list(PC.pad_layers(_q) or ())
+            _lay = "copper0" if "copper0" in _lays or not _lays else _lays[0]
+            add.append((_q["mi"], _c, _lay, _s[3], _s[4], _s[5]))
+    return add
+
+
 def prune_dangling(text):
     """★★ 清掉**悬空声明** ✓ —— 就是 `pcb_check` 第 **⑫** 条判的那一类 ✗（`docs/pr-candidates.md` 的 **P1** ✓）。
 
@@ -1615,6 +1668,14 @@ def main(argv):
         for (net, k, own, w2) in cross[:8]:
             print("       ✗ 网 `%s` 的段%s端落在 `%s.%s`（属 `%s`）✗" % (net, w2, k[0], k[1], own))
     xml, stats, edits = build_xml(text, res, model, pads, mil_of=mil_of, net_pads=net_pads)
+    # ★★ 2026-10-06 补 ✓：**每张网的每只脚都要挂上声明** ✓（见 `fill_net_decls` ✓）——
+    #   ✗ 不补的话，**没布通的那只脚**在 PCB 视图里 0 条声明 ✗ ⇒ Fritzing **不把它算进那张网** ✗
+    #     ⇒ 剩下两只连着 ⇒ 它就说「**布线完成**」✗✗（v70 / v71 实测 ✓）。
+    _add = fill_net_decls(edits, model, net_pads)
+    if _add:
+        print("   ★ 补**网成员声明** %d 条 ✓（每张网的每只脚都得在 PCB 视图里挂一条 ✓；"
+              "✗ 缺了它 Fritzing 就不把这只脚算进那张网 ✓ ⇒ 状态栏会说「布线完成」✗）" % len(_add))
+    edits = list(edits) + _add
     if stats.get("cross"):
         print("   %s **写回把它接错了**（线的一端结到别的网的盘 ✓）：%d 处 ✗"
               % ("✗✗" if not partial else "⚠️", len(stats["cross"])))
