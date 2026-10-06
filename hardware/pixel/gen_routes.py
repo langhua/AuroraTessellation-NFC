@@ -324,6 +324,138 @@ def _why_miss(res, net, lay, p):
 NO_MERGE = []
 
 
+def add_escape_stubs(res, model, pads, net_pads, copper_keep):
+    r"""★★ 给**没布通的脚**放一小截**逃逸残段** ✓（2026-10-06 用户点头 ✓）
+
+    ✗ 为什么非放不可 ✗（**读源码**读出来的死角 ✓，见 README 第三十三轮 ✓）：
+      Fritzing 的「一张网」是**靠声明**组的 ✓（`collectEqualPotential` ✓），
+      而 `scoreOneNet` 加边又是**声明 → 走线链** ✓ ⇒ 一只脚**一点铜都没有**时 ✗：
+        · 不给它声明 ✗ ⇒ `num_nodes==1` ⇒ **整张网被丢掉** ✗（`graphutils.cpp:502` ✓）；
+        · 给它声明 ✗ ⇒ 被并进**别人那片铜**的链 ⇒ **误判已连通** ✗✗。
+      ⇒ 状态栏**结构性**只会说「布线完成」✗。**给它一小截自己的铜** ✓ 才走得通 ✓：
+      它自己有铜 ⇒ 归"有声明"那条 ✓，而那条链**只到它自己** ✗ ⇒ **如实判"缺"** ✓
+      （鼠线也就能画对 ✓ —— 用户手工收尾正需要那条虚线 ✓）。
+
+    ★ 口径 ✓（✗ 不另写一套几何 ✗）：候选 = 8 个方向 × 2 个长度（0.30 / 0.50 mm ✓）；
+      用**驱动器同一批**常量与工具：`RT.TRACE_MM` ✓ / `RT.CLEAR_MM` ✓ /
+      `RT.seg_hits_rect` ✓（元件铜按**包围盒**挡 ✓ = 保守 ✓）/ `PC.pad_layers` ✓。
+      ✗ 只对**没布通的网**的、**一个段都没挨上的**脚动手 ✗（其余一个字不碰 ✗）。
+    ⇒ 返回 `[(网, 层, 起点, 终点)]` ✓（已写进 `res` ✓）。
+    """
+    import math as _m
+    # ★ 焊盘读 `model["pads"]` ✓（有 `thr`/`layer`/`cid` ✓）—— ✗ 不是 `RT.pad_index` 那份 ✗
+    #   （那份没有 `thr` ✗ ⇒ `PC.pad_layers` 直接 `KeyError` ✗，实测 2026-10-06 ✓ 同一个坑 ✓）。
+    bykey = {(q.get("title"), q.get("cid")): q for q in (model.get("pads") or ())}
+    half = RT.TRACE_MM / 2.0
+    # ★★ 离**别网焊盘心**的最小距离 ✓ —— ✗ 不许凭空定数 ✗（实测教训 2026-10-06 ✓：
+    #   我第一版写 `+ RT.U(0.5)` ✗ ⇒ `U1`（**QFN 0.4 mm 脚距** ✓）八个方向全被邻脚否掉 ✗
+    #   ⇒ 残段 0 条 ✗。⇒ 口径照**驱动器同一套** ✓：**线半宽 + 净距 + 焊盘半宽** ✓
+    #   （QFN 焊盘宽 ≈0.20 mm ✓ ⇒ 半宽 0.10 ✓）。
+    need_pad = half + RT.CLEAR_MM + RT.U(0.10)
+    need_pad = half + RT.CLEAR_MM + RT.U(0.10)     # 见上 ✓
+    need_seg = 2 * half + RT.CLEAR_MM              # 离**别网**走线至少这么远 ✓
+    added = []
+    n_pin, rej_cov, rej_pad, rej_seg = 0, 0, 0, 0
+    for net in sorted(res):
+        d = res[net]
+        if d.get("ok"):
+            continue
+        ends = set()
+        for (_lay, a, b) in d["segs"]:
+            ends.add((round(a[0], 6), round(a[1], 6)))
+            ends.add((round(b[0], 6), round(b[1], 6)))
+        for (t, c) in net_pads.get(net, ()):
+            q = bykey.get((t, c))
+            if q is None:
+                continue
+            cx, cy = q["c"]
+            if (round(cx, 6), round(cy, 6)) in ends:
+                rej_cov += 1
+                continue                            # 已经有铜 ✓ ⇒ 不碰 ✗
+            n_pin += 1
+            lays = list(PC.pad_layers(q) or ("copper0",))
+            ok_one = None
+            for lay in lays:
+                for (ux, uy) in ((1, 0), (-1, 0), (0, 1), (0, -1),
+                                 (1, 1), (1, -1), (-1, 1), (-1, -1)):
+                    # ★ 长度**短** ✓（0.15 / 0.05 mm ✓）—— 目的是"让这只脚**自己有铜**" ✓,
+                    #   ✗ 不是真的把它引出去 ✗（QFN 0.4 脚距根本引不出去 ✓，实测 ✓）。
+                    #   ★★ 先试 **0.15** ✗：实测（2026-10-06 ✓）0.05 mm 的段会被写回器的
+                    #   归一化（合并/切边 ✓）**吃掉** ✗ ⇒ 文件里走线条数不变 ✗、⑤ 也看不出 ✗
+                    #   ⇒ 先试长得多的那档 ✓，让它活到文件里 ✓。
+                    for L in (RT.U(0.15), RT.U(0.05)):
+                        ex = cx + ux * L / (1.0 if (ux == 0 or uy == 0) else 1.4142)
+                        ey = cy + uy * L / (1.0 if (ux == 0 or uy == 0) else 1.4142)
+                        # ① 别网焊盘 ✓
+                        bad = False
+                        for (t2, c2), q2 in bykey.items():
+                            if t2 == t and c2 == c:
+                                continue
+                            if _pt_seg(_m.hypot, q2["c"][0], q2["c"][1], cx, cy, ex, ey) < need_pad \
+                                    and (t2, c2) not in net_pads.get(net, ()):
+                                bad = True
+                                break
+                        if bad:
+                            rej_pad += 1
+                            continue
+                        # ② ✗ **不在这里挡“元件铜”** ✗：`copper_keep` 里存的是**包围盒** ✗,
+                        #   而线圈的框几乎盖满整板 ✓ ⇒ 一律被否 ✗（实测：0 条残段 ✓）。
+                        #   ★ 真正的判据是**逐图元**的 ⑦（含线宽 ✓）✓ —— 交给**写后复核**兜底 ✓
+                        #   （残段真撞上铜 ⇒ 复核会报 ⑦ ✗ ⇒ 我不过它 ✗）。
+                        # ③ 别网走线 ✓
+                        for n2 in res:
+                            if n2 == net:
+                                continue
+                            for (_l2, a2, b2) in res[n2]["segs"]:
+                                if _seg_d(cx, cy, ex, ey,
+                                          a2[0], a2[1], b2[0], b2[1]) < need_seg:
+                                    bad = True
+                                    break
+                            if bad:
+                                break
+                        if bad:
+                            rej_seg += 1
+                            continue
+                        ok_one = (lay, (cx, cy), (ex, ey))
+                        break
+                    if ok_one:
+                        break
+                if ok_one:
+                    break
+            if ok_one:
+                d["segs"] = list(d["segs"]) + [ok_one]
+                added.append((net, ok_one[0], ok_one[1], ok_one[2]))
+    print("   · 逃逸残段诊断 ✓：待放脚的 %d 个（已有铜跳过 %d）｜否于别网焊盘 %d｜否于别网走线 %d"
+          % (n_pin, rej_cov, rej_pad, rej_seg))
+    return added
+
+
+def _pt_seg(hypot, px, py, ax, ay, bx, by):
+    dx, dy = bx - ax, by - ay
+    ln2 = dx * dx + dy * dy
+    tt = 0.0 if ln2 == 0 else max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / ln2))
+    return hypot(px - (ax + tt * dx), py - (ay + tt * dy))
+
+
+def _seg_d(ax, ay, bx, by, cx, cy, dx2, dy2):
+    """两条线段的距离 ✓（只用于**粗筛** ✗ —— 判碰只有一份实现在库里 ✓）。"""
+    import math as _m
+    if _seg_hit(ax, ay, bx, by, cx, cy, dx2, dy2):
+        return 0.0
+    return min(_pt_seg(_m.hypot, ax, ay, cx, cy, dx2, dy2),
+               _pt_seg(_m.hypot, bx, by, cx, cy, dx2, dy2),
+               _pt_seg(_m.hypot, cx, cy, ax, ay, bx, by),
+               _pt_seg(_m.hypot, dx2, dy2, ax, ay, bx, by))
+
+
+def _seg_hit(ax, ay, bx, by, cx, cy, dx2, dy2):
+    def s(ox, oy, px, py, qx, qy):
+        return (px - ox) * (qy - oy) - (py - oy) * (qx - ox)
+    d1, d2 = s(ax, ay, bx, by, cx, cy), s(ax, ay, bx, by, dx2, dy2)
+    d3, d4 = s(cx, cy, dx2, dy2, ax, ay), s(cx, cy, dx2, dy2, bx, by)
+    return ((d1 > 0) != (d2 > 0)) and ((d3 > 0) != (d4 > 0))
+
+
 def build_xml(text, res, model, pads, *, color_map=None, mil_of=None, net_pads=None):
     """把布线结果变成 XML 实例片段 ✓ ⇒ `(xml, stats)`"""
     # ★★ 焊盘 → 网名 ✓（2026-10-01 加 ✓，给下面那道硬闸门用 ✓）
@@ -1702,6 +1834,16 @@ def main(argv):
               % len(cross))
         for (net, k, own, w2) in cross[:8]:
             print("       ✗ 网 `%s` 的段%s端落在 `%s.%s`（属 `%s`）✗" % (net, w2, k[0], k[1], own))
+    # ★★ 逃逸残段 ✓（用户 2026-10-06 点头 ✓）：给**没布通的脚**放一小截自己的铜 ✓
+    #   ⇒ Fritzing 才能如实报「缺 N 条」✓（✗ 否则它要么把网丢掉 ✗、要么判已连通 ✗ —— 见函数注释 ✓）。
+    _stubs = add_escape_stubs(res, model, pads, net_pads, copper_keep)
+    if _stubs:
+        print("   ★ 逃逸残段 %d 条 ✓（%s ✓）⇒ 它们的外端是**故意**的自由端 ✗"
+              " ⇒ 下面“悬空端点”会从 0 变成 %d ✓（这是要的 ✓）"
+              % (len(_stubs),
+                 "；".join("%s.%s" % (t, c) for (t, c) in
+                           [(k[0], k[1]) for n2 in res for k in net_pads.get(n2, ())
+                            if not res[n2].get("ok")][:4]), len(_stubs)))
     xml, stats, edits = build_xml(text, res, model, pads, mil_of=mil_of, net_pads=net_pads)
     # ★★ 2026-10-06 补 ✓：**每张网的每只脚都要挂上声明** ✓（见 `fill_net_decls` ✓）——
     #   ✗ 不补的话，**没布通的那只脚**在 PCB 视图里 0 条声明 ✗ ⇒ Fritzing **不把它算进那张网** ✗
