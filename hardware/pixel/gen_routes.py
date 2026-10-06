@@ -877,6 +877,36 @@ def add_backrefs(text, edits):
     return text, n, miss, why, built
 
 
+PCB_DECL_RE = re.compile(
+    r"[ \t]*<connect\b[^>]*\blayer=\"copper[01]trace\"[^>]*/>[ \t]*\r?\n?")
+
+
+def reset_pcb_decls(text):
+    r"""★★ 清掉底图里**所有旧的 PCB 声明** ✓（`layer="copper0trace|copper1trace"` ✓）
+
+    ✗ 为什么要清 ✗（2026-10-06 **读源码 + 实测** ✓，用户第三次报「布线完成」✓）：
+      `ConnectorItem::collectEqualPotential`（`connectors/connectoritem.cpp:1340` ✓）
+      **顺着声明组网** ✓；`scoreOneNet`（`utils/graphutils.cpp:447` ✓）加边也是
+      **声明 → `Wire::collectedChained` 的链端** ✓ ⇒ **一条指向「别人那片铜」的旧声明** ✗
+      就会把这只脚**并进别人的链** ✗ ⇒ 明明没连上却判「已连通」✗✗（**真·幽灵** ✓）。
+      实测 v74：`U1.connector1`（它那一段**没布通** ✗）的旧声明指着 `RC` 那片**已连通的**铜
+      （底图 `v69` 的遗迹 ✓）⇒ 它被当成连上了 ✗ ⇒ 状态栏「布线完成」✗。
+
+    ★ 口径 ✓：**PCB 声明只由写回器重建** ✓ —— `build_xml` 写走线那侧 ✓、`add_backrefs`
+      按**本次 `res` 的真实段**写焊盘那侧 ✓。
+      ✗ **面包板/原理图的声明一条不动** ✗（那是**网结构** ✓、也是用户 v69 的形状 ✓）。
+      ✗ 必须排在**插入新 XML 之前** ✗（否则会把新走线自己的声明一起清掉 ✗）。
+    ⇒ 返回 `(新文本, 清了几条)` ✓。
+    """
+    out, pos, n = [], 0, 0
+    for m in PCB_DECL_RE.finditer(text):
+        out.append(text[pos:m.start()])
+        pos = m.end()
+        n += 1
+    out.append(text[pos:])
+    return "".join(out), n
+
+
 def fill_net_decls(edits, model, net_pads):
     r"""★★ 给**每张网的每只脚**都挂上一条 PCB 声明 ✓ —— 哪怕它那一段**没布通** ✗。
 
@@ -967,6 +997,11 @@ def write(base, out, xml, edits=()):
     zin = zipfile.ZipFile(base)
     fz = [n for n in zin.namelist() if n.endswith(".fz")][0]
     text = zin.read(fz).decode("utf-8")
+    # ★★ 先清**旧 PCB 声明** ✓（见 `reset_pcb_decls` ✓）——✗ 必须在插新 XML 之前 ✗。
+    text, n_reset = reset_pcb_decls(text)
+    if n_reset:
+        print("   ★ 清掉**旧 PCB 声明** %d 条 ✓（底图里指向旧走线的那些 ✗ —— 它们会把"\
+              "没布通的脚并进别人的链 ⇒ Fritzing 误判已连通 ✗✗）" % n_reset)
     m = list(re.finditer(r"[ \t]*</instances>", text))
     if len(m) != 1:
         raise SystemExit("✗ 找不到唯一的 `</instances>`（找到 %d 个 ✗）⇒ 不写文件 ✗" % len(m))
