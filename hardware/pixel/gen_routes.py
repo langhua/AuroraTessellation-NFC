@@ -1671,7 +1671,13 @@ def main(argv):
     # ★★ 2026-10-06 补 ✓：**每张网的每只脚都要挂上声明** ✓（见 `fill_net_decls` ✓）——
     #   ✗ 不补的话，**没布通的那只脚**在 PCB 视图里 0 条声明 ✗ ⇒ Fritzing **不把它算进那张网** ✗
     #     ⇒ 剩下两只连着 ⇒ 它就说「**布线完成**」✗✗（v70 / v71 实测 ✓）。
-    _add = fill_net_decls(edits, model, net_pads)
+    # ★★ 但 **2026-10-06 当天就发现它治标不治本** ✗：真病在**底图**✗ ——
+    #   老底图 `v69_bare.fzz` 把走线**整条删**了 ✗ ⇒ 面包板/原理图的**网结构**一起没了 ✗
+    #   （声明**全悬空** ✗，实测 `_work/_cmp_nets.py` ✓）⇒ Fritzing 认不出 `RC` 是一张网 ✗。
+    #   ⇒ 正解 = 换**只剥 `<pcbView>`** 的底图 ✓（`tools/strip_pcb_view.py` ✓，网结构原样 ✓）；
+    #     这时底图里那只脚**本来就有**声明 ✓ ⇒ 再"补"就是**伪造连接** ✗（`<connect>` 一挂上，
+    #     `Wire::collectChained` 就会顺着链给它加边 ✗）⇒ 所以**默认关** ✗，只在 `--fill-decls` 时补 ✓。
+    _add = fill_net_decls(edits, model, net_pads) if "--fill-decls" in argv else []
     if _add:
         print("   ★ 补**网成员声明** %d 条 ✓（每张网的每只脚都得在 PCB 视图里挂一条 ✓；"
               "✗ 缺了它 Fritzing 就不把这只脚算进那张网 ✓ ⇒ 状态栏会说「布线完成」✗）" % len(_add))
