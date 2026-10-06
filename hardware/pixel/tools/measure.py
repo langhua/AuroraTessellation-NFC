@@ -82,6 +82,23 @@ SWEEP_PARAM = [
     ("--pitch=0.30", ["--pitch=0.30"]),
 ]
 
+# ★★ 第三族（**更细的旋钮** ✓，2026-10-06 ✓）：六族摆位/次序/参数都到顶之后 ✓，
+#   这一族的**特点是不动布局** ✗ —— 只把搜索分辨率（栅格 ✓）与偏好（影子半径 ✓、
+#   过孔贵贱 ✓、脚距阈值 ✓、层罚 ✓）再拧细一档 ✓。
+SWEEP_PARAM_FINE = [
+    ("（原样）", []),
+    ("--cell=0.075", ["--cell=0.075"]),
+    ("--escape-r=0.3", ["--escape-r=0.3"]),
+    ("--escape-r=0.6", ["--escape-r=0.6"]),
+    ("--escape-r=1.2", ["--escape-r=1.2"]),
+    ("--via=2", ["--via=2"]),
+    ("--via=6", ["--via=6"]),
+    ("--pitch=0.40", ["--pitch=0.40"]),
+    ("--layer-pen=0.1", ["--layer-pen=0.1"]),
+    ("--escape-cost=0.45", ["--escape-cost=0.45"]),
+    ("--escape-cost=0.45 --escape-r=0.6", ["--escape-cost=0.45", "--escape-r=0.6"]),
+]
+
 
 def main(argv):
     if not argv:
@@ -95,7 +112,9 @@ def main(argv):
         log.write(s + "\n")
         log.flush()
 
-    if "--sweep-param" in argv:
+    if "--sweep-param-fine" in argv:
+        todo = SWEEP_PARAM_FINE
+    elif "--sweep-param" in argv:
         todo = SWEEP_PARAM
     elif "--sweep" in argv:
         todo = SWEEP
