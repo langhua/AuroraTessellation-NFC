@@ -877,6 +877,38 @@ def add_backrefs(text, edits):
     return text, n, miss, why, built
 
 
+def prune_dangling(text):
+    """★★ 清掉**悬空声明** ✓ —— 就是 `pcb_check` 第 **⑫** 条判的那一类 ✗（`docs/pr-candidates.md` 的 **P1** ✓）。
+
+    ✗ 为什么要写在**写回这个出口** ✗（2026-10-06 修 P1 根因 ✓）：剥线时把**走线实例**删了 ✗，
+      却把它们在**焊盘 `<connects>` 里留下的 `<connect>` 声明**留着 ✗ ⇒ Fritzing 顺着声明走 ✓
+      ⇒ 显示「**布线完成**」✗，而**铜并不在** ✗✗（实测 v70：`RC` 三只脚一条线都没有 ✗）。
+      实测底图 `_work/v69_bare.fzz` 自带 **100 条** ✗（挂在 `L1.connector0/1` 上 ✓）。
+      ⇒ 只要出文件那一刻清掉 ✓，从它派生出来的每一份都自然干净 ✓。
+
+    ★★ **划界**（这条最要紧 ✗，别把合法的一起删了 ✗）：
+      删的只许是「**`modelIndex` 指向的实例根本不存在**」✗；
+      ✗ **绝不能**碰「实例在、只是它的 pcbView 里没这个 connector」那一类 ✗ ——
+      仓里量过：那类在 Fritzing 自己的样例里就有 **108 处** ✓、**合法** ✓（见 `write()` 里那段注释 ✓）。
+
+    ⇒ 返回 `(新文本, 清掉几条, 有几条写法异常没敢动)` ✓。
+    """
+    have = set(re.findall(r'<instance\b[^>]*\bmodelIndex="(\d+)"', text))
+    out, pos, n_del, n_odd = [], 0, 0, 0
+    for m in re.finditer(r"[ \t]*<connect\b[^>]*?>[ \t]*\r?\n?", text):
+        mi = re.search(r'\bmodelIndex="(\d+)"', m.group(0))
+        if not mi or mi.group(1) in have:
+            continue
+        if not m.group(0).rstrip().endswith("/>") or "</connect>" in text[m.start():m.end() + 20]:
+            n_odd += 1                      # ✗ 写法没见过 ⇒ **不碰** ✗（报出来给人看 ✓）
+            continue
+        out.append(text[pos:m.start()])
+        pos = m.end()
+        n_del += 1
+    out.append(text[pos:])
+    return "".join(out), n_del, n_odd
+
+
 def write(base, out, xml, edits=()):
     """把片段插在 `</instances>` 前 ✓；其它内容 / 其它包内文件**逐字节不动** ✓"""
     zin = zipfile.ZipFile(base)
@@ -899,6 +931,15 @@ def write(base, out, xml, edits=()):
         #   （例：裸露焊盘 EPAD 以前既没插面包板也没接原理图 ⇒ Fritzing 不给它写实例条目 ✓）
         #   ⇒ 这类**合法** ✓，只报数字 ✓、不挡写文件 ✓（`_work/layer_rule.txt` ✓）。
         print("   · 其中少数目标没有 pcbView 条目 ⇒ 合法 ✓（Fritzing 自己也有 108 处 ✓）")
+    # ★★ 清 **悬空声明** ✓（2026-10-06 修 P1 根因 ✓，见 `prune_dangling` ✓）：
+    #   ✗ 必须排在 `add_backrefs` **之后** ✗ —— 否则会把自己刚补的回指也删掉 ✗。
+    text2, n_dang, n_odd = prune_dangling(text2)
+    if n_dang or n_odd:
+        print("   ★ 清掉**悬空声明** %d 条 ✓（`<connect>` 指的对象**已不在文件里** ✗ ⇒ Fritzing 会"
+              "顺着它当已连通 ✓、显示「布线完成」✗ —— 那就是**幽灵** ✓）%s"
+              % (n_dang, "｜✗ 另有 %d 条写法异常、没敢动 ✗" % n_odd if n_odd else ""))
+    else:
+        print("   ★ 悬空声明 **0 条** ✓（没有幽灵 ✓）")
     zout = zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED)
     for it in zin.infolist():
         data = text2.encode("utf-8") if it.filename == fz else zin.read(it.filename)
@@ -1619,8 +1660,18 @@ def main(argv):
     bad = [s for s in probs if s.startswith("⑤ 网 ")]
     if bad:
         print("\n   ⚠ **这份文件不是全通** ✗：%d 张网里有 %d 张断着 ✗" % (len(expect), len(bad)))
-        print("      ⚠ 而 **Fritzing 状态栏很可能照样显示「布线完成」** ✗ —— 它顺着文件里的")
-        print("        `<connect>` 声明走 ✓（`graphutils.cpp` ✓）；**旧声明**会让它误判 ✗")
+        # ★★ 2026-10-06 改准 ✓：写回器现在**出文件那一刻**已清掉**悬空声明** ✓
+        #   （`prune_dangling` ✓，实测 v71 清掉 100 条 ✓、⑫ 复核 = 0 条 ✓）
+        #   ⇒ ⑫ **为 0** 时，Fritzing 那句就**应当如实**（它顺着 `<connect>` 走 ✓，
+        #     而声明已指向真对象 ✓）⇒ ✗ 不能再笼统写"它大概率会骗你" ✗（那是 v70 那时的情形 ✗）。
+        _dang = any(s.startswith("⑫") for s in probs)
+        if _dang:
+            print("      ⚠ 且 ⑫ 报**还有悬空声明** ✗ ⇒ **Fritzing 大概率显示「布线完成」** ✗"
+                  "（它顺着文件里的 `<connect>` 走 ✓）；**旧声明**会让它误判 ✗")
+        else:
+            print("      ✓ 且 ⑫ = **0 条悬空声明** ✓ ⇒ **Fritzing 那句应当是诚实的** ✓"
+                  "（`8 of 9 … 1 connector` ✓）—— ✗ 若你仍看到「布线完成」✗，"
+                  "那是**新**问题 ✗，请告诉我 ✓")
         print("      ⇒ **别信状态栏，信这一行** ✓（§13：文件是我们生成的，就必须用几何再核 ✓）")
     else:
         print("\n   ✓ **几何核对：%d 张网全部连通** ✓（**这一行**才是交付依据 ✓）" % len(expect))
