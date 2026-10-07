@@ -1,0 +1,11 @@
+{
+    "python-envs.pythonProjects": [
+        {
+            "path": ".",
+            "envManager": "ms-python.python:venv",
+            "packageManager": "ms-python.python:pip"
+        }
+    ],
+    "pixelDiff.projectDir": "hardware/pixel",
+    "pixelDiff.fzzPattern": "^pixel-pcb-v\\d+.*\\.fzz$"
+}

@@ -1,5 +1,8 @@
 # local editor / environment config
-.vscode/
+# ★ 2026-10-07 用户定 ✓：`.vscode/settings.json` **纳入版本管理** ✓（里面有扩展的两个设置，
+#   随项目走才能让新克隆的机器也有一样的「选版本」名单 ✓）；其余（tasks.json 等本机路径）仍忽略 ✗。
+.vscode/*
+!.vscode/settings.json
 __pycache__/
 *.pyc
 
