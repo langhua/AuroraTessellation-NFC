@@ -29,14 +29,25 @@ function log(s) {
 	outCh.appendLine(s);
 }
 
-/** 找到 `hardware/pixel`：先看 `<工作区>/hardware/pixel`，再看工作区根（单开 pixel 时）。 */
-function pixelDir() {
-	for (const f of vscode.workspace.workspaceFolders || []) {
-		const a = path.join(f.uri.fsPath, 'hardware', 'pixel');
-		if (fs.existsSync(path.join(a, 'tools', 'diff_revs.py'))) return a;
-		if (fs.existsSync(path.join(f.uri.fsPath, 'tools', 'diff_revs.py'))) return f.uri.fsPath;
+/** 找**项目目录**（放着 fzz / `pixel_nets.py` 的那个）与**工具所在目录**（库仓根 ✓）。
+ *
+ *  ★★ 2026-10-07 按约定搬家 ✓（用户指出：通用工具应放库下 ✓，项目里**不留副本** ✗ ——
+ *    项目根的 `toolpaths.py` 里就写着这条 ✓）：`diff_revs.py` 现在在
+ *    `fritzing-parts-langhua/tools/` ✓ ⇒ 这里要同时找两处 ✓：
+ *      · **项目目录** ⇒ 跑的时候当 **cwd** ✓（工具按 cwd 找 fzz ✓、找 `pixel_nets.py` ✓）；
+ *      · **库仓根** ⇒ 工具本体在那儿 ✓。
+ */
+function dirs() {
+	const folders = (vscode.workspace.workspaceFolders || []).map((f) => f.uri.fsPath);
+	let proj = null, tool = null;
+	for (const root of folders) {
+		if (!proj && fs.existsSync(path.join(root, 'hardware', 'pixel', 'pixel_nets.py'))) {
+			proj = path.join(root, 'hardware', 'pixel');
+		}
+		if (!proj && fs.existsSync(path.join(root, 'pixel_nets.py'))) proj = root;
+		if (!tool && fs.existsSync(path.join(root, 'tools', 'diff_revs.py'))) tool = root;
 	}
-	return null;
+	return { proj, tool };
 }
 
 /** `pixel-pcb-v*.fzz` ⇒ 按版本号排（后缀如 `_byHand` 排在同号之后）。 */
@@ -52,12 +63,15 @@ function listVersions(dir) {
 		});
 }
 
-/** 跑 diff_revs.py（日志进输出通道；PYTHONIOENCODING 必须给 —— 否则中文/✓ 会撞 GBK 控制台）。 */
-function runDiff(dir, a, b) {
+/** 跑 `diff_revs.py` ✓（工具在库里 ✓、**cwd 给项目目录** ✓ ⇒ fzz 与网表都自己找得到 ✓）。
+ *  日志进输出通道；`PYTHONIOENCODING` 必须给 —— 否则中文/✓ 会撞 GBK 控制台。
+ */
+function runDiff(toolDir, projDir, a, b) {
+	const tool = path.join(toolDir, 'tools', 'diff_revs.py');
 	return new Promise((resolve) => {
-		log(`\n> ${PY} tools/diff_revs.py "${a}" "${b}"   （cwd=${dir}）`);
-		cp.execFile(PY, ['tools/diff_revs.py', a, b], {
-			cwd: dir,
+		log(`\n> ${PY} "${tool}" "${a}" "${b}"   （cwd=${projDir}）`);
+		cp.execFile(PY, [tool, a, b], {
+			cwd: projDir,
 			env: Object.assign({}, process.env, { PYTHONIOENCODING: 'utf-8' }),
 			maxBuffer: 32 * 1024 * 1024
 		}, (err, stdout, stderr) => {
@@ -228,42 +242,48 @@ class DiffEditor {
 }
 
 async function cmdCompare(context) {
-	const dir = pixelDir();
-	if (!dir) return void vscode.window.showErrorMessage('找不到 hardware/pixel/tools/diff_revs.py');
-	const vers = listVersions(dir);
+	const { proj, tool } = dirs();
+	if (!proj || !tool) {
+		return void vscode.window.showErrorMessage(
+			'找不到项目目录（要有 pixel_nets.py）或库仓 tools/diff_revs.py —— 两者都要在工作区里');
+	}
+	const vers = listVersions(proj);
 	if (vers.length < 2) return void vscode.window.showErrorMessage('这个目录里少于两版 fzz');
 	const pick = (def) => vscode.window.showQuickPick(vers, { placeHolder: `选一版（默认 ${def}）` })
 		.then((v) => v || def);
 	const a = await pick(vers[vers.length - 2]);
 	const b = await pick(vers[vers.length - 1]);
 	await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `差异图：${a} ⇒ ${b}` },
-		() => runDiff(dir, a, b));
-	const md = newestDiffMd(dir);
+		() => runDiff(tool, proj, a, b));
+	const md = newestDiffMd(proj);
 	if (!md) return void vscode.window.showErrorMessage('跑完了但没有 diff-*.md，见「Pixel 差异」输出通道');
 	await vscode.commands.executeCommand('vscode.openWith', vscode.Uri.file(md), VIEW);
 }
 
 async function cmdCompareFiles() {
-	const dir = pixelDir();
-	if (!dir) return void vscode.window.showErrorMessage('找不到 hardware/pixel/tools/diff_revs.py');
+	const { proj, tool } = dirs();
+	if (!proj || !tool) {
+		return void vscode.window.showErrorMessage(
+			'找不到项目目录（要有 pixel_nets.py）或库仓 tools/diff_revs.py —— 两者都要在工作区里');
+	}
 	const one = await vscode.window.showOpenDialog({
-		canSelectMany: false, openLabel: '选第一个（A）', defaultUri: vscode.Uri.file(dir),
+		canSelectMany: false, openLabel: '选第一个（A）', defaultUri: vscode.Uri.file(proj),
 		filters: { 'fzz / svg': ['fzz', 'svg'] }
 	});
 	if (!one || !one.length) return;
 	const two = await vscode.window.showOpenDialog({
-		canSelectMany: false, openLabel: '选第二个（B）', defaultUri: vscode.Uri.file(dir),
+		canSelectMany: false, openLabel: '选第二个（B）', defaultUri: vscode.Uri.file(proj),
 		filters: { 'fzz / svg': ['fzz', 'svg'] }
 	});
 	if (!two || !two.length) return;
 	await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: '差异图' },
-		() => runDiff(dir, one[0].fsPath, two[0].fsPath));
-	const md = newestDiffMd(dir);
+		() => runDiff(tool, proj, one[0].fsPath, two[0].fsPath));
+	const md = newestDiffMd(proj);
 	if (md) {
 		await vscode.commands.executeCommand('vscode.openWith', vscode.Uri.file(md), VIEW);
 	} else {
 		// 两边都是 svg 时不出清单，只出图 ⇒ 直接把图打开
-		const png = path.join(dir, 'diff');
+		const png = path.join(proj, 'diff');
 		const hit = fs.existsSync(png)
 			? fs.readdirSync(png).filter((n) => /^diff-.*\.png$/.test(n))
 				.map((n) => ({ n, t: fs.statSync(path.join(png, n)).mtimeMs })).sort((x, y) => y.t - x.t)

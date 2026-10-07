@@ -5033,6 +5033,23 @@ SPI 栏都是 **1** ✓，引脚就是 **`PC5/PC6/PC7` = SCK/MOSI/MISO**（pin 1
 
 ## 10. 长跑脚本 与 版本比对（2026-10-07 加 ✓）
 
+★★ **2026-10-07 搬家 ✓**（用户指出 ✓：「这类通用工具，应该是放在库下面的」✓）——
+本节四个工具（`render_revs.py` ✓ / `diff_revs.py` ✓ / `run_detached.cmd` ＋ `detached_run.py` ✓ /
+`beep.py` ✓）**已搬回库仓** `fritzing-parts-langhua/tools/` ✓，**项目里不留副本** ✗
+（依据 = 项目根 `toolpaths.py` 里那条约定 ✓）。
+
+⇒ 于是 **§10.1–§10.4 里 `py tools\diff_revs.py …` 那种写法已经过时** ✗，现在两种用法 ✓：
+
+```
+# ① 最省事：命令面板 → Tasks: Run Task → ①…⑥（任务里的路径已指向库仓 ✓，cwd 仍是本项目 ✓）
+# ② 手敲（cwd 要在本项目目录 ✓ —— 工具按**当前目录**找 fzz / pixel_nets.py ✓）：
+python "f:\git\fritzing-parts-langhua\tools\diff_revs.py" v59 v76
+python "f:\git\fritzing-parts-langhua\tools\render_revs.py" --all
+```
+
+★ 项目**数据**仍留在项目 ✓（`pixel_nets.py` ✓，工具按当前目录自动找 ✓、也可 `--nets=` 指定 ✓）；
+扩展（§10.5 ✓）也已同步改：它现在**同时**找「项目目录」和「库仓工具」✓。
+
 [![v69 PCB 预览](pixel-pcb-v69_preview.png)](pixel-pcb-v69_preview.png)
 
 ### 10.1 长跑脚本扔到 VS Code 外面去跑 ✓ —— `tools\run_detached.cmd`

@@ -38,7 +38,9 @@ import pcb_check as PC        # noqa: E402
 import pcb_route as RT        # noqa: E402
 import projdata              # noqa: E402
 from nudge_sweep2 import write_zip       # noqa: E402
-from beep import done                    # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # 为 import toolpaths ✓
+import toolpaths                                 # ★ 库仓 tools 进 sys.path ✓
+from beep import done                            # ★ beep 已搬进库仓 ✓（2026-10-07 ✓）
 
 PASSES, BLOCKERS, EC = 8, 16, 0.3
 OFFS = [(1, 0), (-1, 0), (0, 1), (0, -1), (2, 0), (-2, 0), (0, 2), (0, -2),

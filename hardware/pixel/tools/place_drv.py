@@ -21,7 +21,9 @@ if HERE not in sys.path:
 
 from place_greedy import legal, flip_zip, write_zip       # noqa: E402
 from measure import measure                                # noqa: E402
-from beep import done                                      # noqa: E402
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # 为 import toolpaths ✓
+import toolpaths                                 # ★ 库仓 tools 进 sys.path ✓
+from beep import done                            # ★ beep 已搬进库仓 ✓（2026-10-07 ✓）
 from mutate import rot_zip, joint_zip                      # noqa: E402
 
 # ★ 只挪**电子件** ✓（`H1/H2` 安装孔、`L1` 传感线圈、`J1/J2` 对插件 = 机械/功能意义 ⇒ 不动 ✗）

@@ -29,7 +29,9 @@ NETS = os.path.join(PIX, "pixel_nets.py")
 
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
-from beep import done                                      # noqa: E402
+sys.path.insert(0, PIX)                     # 为了 import 项目根的 toolpaths ✓
+import toolpaths                            # ★ 一 import 就把**库仓 tools** 放进 sys.path ✓
+from beep import done                       # ★ beep 已搬进库仓 ✓（通用工具不在项目里留副本 ✓）
 
 # ★ **交付那把开关** ✓（出处：`_work/gen_v70.cmd` / `verify_check.cmd` ✓，
 #   2026-10-06 用 `--measure-only` 逐项复现 `ok=7 miss=3 len=282.8` ✓）
