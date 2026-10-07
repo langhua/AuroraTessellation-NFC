@@ -54,6 +54,9 @@ A_OTH, B_OTH = "#cfcfcf", "#5a5a5a"      # 丝印/板框/位号/孔：浅灰 ⇒
 # ★ 「点清单一条 ⇒ 图上高亮」用的**强调色** ✓（2026-10-07 用户要的 ✓）——
 #   得跟上面六种颜色都分得开 ✓ ⇒ 取玫红 ✓（蓝/橙/灰都不是它 ✓）。
 A_COLOR_HI = "#d81b60"
+# ★ svg 路径里给板框留的边距 ✓（同一处既用于 `tf()` 的摆放 ✓、又用于图例的左缘 ✓ ——
+#   ✗ 别一边写 20 一边写别的 ✗，那样图例就不跟板框对齐了 ✓）。
+MARGIN = 20.0
 JOINT = 0.01             # 认定"没动"的阈值（mm ✓）
 # ★ 1 sketch 单位 = 25.4/90 mm ✓（= 元件库 `pcb_wire.SK` ✓ 同一口径 ✓）
 SK = 25.4 / 90.0
@@ -567,20 +570,21 @@ def _svg_mode(a_f, b_f, out, px_mm, have=()):
              wb, hb, kb / ka, wa * (ra["u2mm"] or 0), ha * (ra["u2mm"] or 0)))
 
     def tf(t, r, k, b):
-        # 板框左上角 ⇒ 画布左上角（留 20 px 边 ✓）
-        dx = 20.0 - b["u"][0] * k
-        dy = 20.0 - b["u"][1] * k
+        # 板框左上角 ⇒ 画布左上角（留 `MARGIN` px 边 ✓）
+        dx = MARGIN - b["u"][0] * k
+        dy = MARGIN - b["u"][1] * k
         return "translate(%.4f,%.4f) scale(%.8f) translate(%.4f,%.4f)" % (
             dx, dy, k, -r["vb"][0], -r["vb"][1])
 
     # ★ 画布 = **板框的像素尺寸** ✓（✗ 2026-10-07 实测踩到：写成 `max(单位宽) × max(k)`
     #   = 把两边的量纲混乘 ✗ ⇒ cairo 报 `CAIRO_STATUS_INVALID_SIZE` ✗）
-    W = max(wa * ka, wb * kb) + 40
-    H = max(ha * ka, hb * kb) + 40
+    W = max(wa * ka, wb * kb) + 2 * MARGIN
+    H = max(ha * ka, hb * kb) + 2 * MARGIN
     la = _recolor_svg(_inner(ia), A_TOP, A_BOT, A_OTH)
     lb = _recolor_svg(_inner(ib), B_TOP, B_BOT, B_OTH)
     fs = max(13.0, W * 0.0105)
-    leg, extra = _legend(_legend_rows(na, nb), fs, fs * 0.6)      # 三列两行、放板子下面 ✓
+    # ★ 图例框左缘 = 板框左缘 ✓（这边板框被摆在画布的 `MARGIN` 上 ✓，与 `tf()` 里那个数一致 ✓）
+    leg, extra = _legend(_legend_rows(na, nb), fs, fs * 0.6, x0=MARGIN, width=W)
     H2 = H + extra
     svg = ('<?xml version="1.0" encoding="UTF-8"?>\n'
            '<svg xmlns="http://www.w3.org/2000/svg" width="%.0f" height="%.0f" '
@@ -726,25 +730,33 @@ def _inner(svg):
     return b.replace('<rect width="100%" height="100%" fill="#ffffff"/>', '')
 
 
-def _legend(rows, font, pad):
-    """⇒ `(图例 svg 片段, 需要的额外高度)` ✓ —— **六项分三列两行** ✓，画在**板子下方**的空白带里 ✓。
+def _legend(rows, font, pad, x0=None, width=None):
+    """⇒ `(图例 svg 片段, 需要的额外高度)` ✓ —— **三列** ✓，画在**板子下方**的空白带里 ✓。
 
-    ★★ 2026-10-07 用户定 ✓（原话：「图例建议放在图下面的白色区域，可以分开成三列显示」✓）——
-      旧版把图例**压在图上**（左上角 ✓），挡住了内容 ✗ ⇒ 现在**加一条空白带**放在板子下面 ✓
-      （画布里多出来的高度就是那条带 ✓，所以**单独打开这个 svg 也看得见图例** ✓）。
+    ★★ 两条都是用户定的 ✓：
+      · 2026-10-07 ①「图例建议放在图下面的白色区域，可以分开成三列显示」✓；
+      · 2026-10-07 ②「底部图例的框，应与上面 pcb 图形的**左边框**对齐」✓
+        ⇒ 框的左缘 = **板框那条线的 x** ✓（`x0` ✓），✗ 不是画布的左缘 ✗（那样会看着
+        比图缩进去一截 ✓）。调用方各自把板框左缘算好传进来 ✓（fzz 路径用 `_board_px()` ✓、
+        svg 路径用它自己的 `MARGIN` ✓）—— 本文件不重算 ✗。
+      · `width` 给了就**别越出画布右缘** ✓（框宽是死的 ✓，位置可夹 ✓）。
     """
     fs = font
     ncol = 3
     nrow = (len(rows) + ncol - 1) // ncol
     cw = fs * 16.5                       # 一列宽 ✓
+    box_w = ncol * cw + pad
     box_h = fs * (1.9 * nrow + 0.6)
+    x0 = pad if x0 is None else float(x0)
+    if width:
+        x0 = max(pad, min(x0, float(width) - box_w - pad))
     out = ['<rect x="%.1f" y="%.1f" width="%.1f" height="%.1f" fill="#ffffff" '
            'fill-opacity="0.96" stroke="#cccccc" stroke-width="%.2f"/>'
-           % (pad, pad, ncol * cw + pad, box_h, fs * 0.05)]
+           % (x0, pad, box_w, box_h, fs * 0.05)]
     for i, (c, lab) in enumerate(rows):
         # ★ **列优先** ✓（一列一个主题 ✓）：列 1 = 顶层两版 ✓、列 2 = 底层两版 ✓、列 3 = 灰 ✓
         #   ✗ 行优先读起来是「A 顶、B 顶、A 底 / B 底、灰、灰」⇒ 版次和层都乱 ✓（2026-10-07 调过 ✓）
-        cx = pad + (i // nrow) * cw + fs * 0.5
+        cx = x0 + (i // nrow) * cw + fs * 0.5
         cy = pad + fs * 0.7 + (i % nrow) * fs * 1.9
         out.append('<rect x="%.1f" y="%.1f" width="%.1f" height="%.1f" fill="%s" '
                    'stroke="#999999" stroke-width="%.2f"/>'
@@ -789,7 +801,11 @@ def overlay(svg_a, svg_b, name_a, name_b):
     # ★ 字号**按画布比例** ✓（✗ 写死 ⇒ 在这个渲染器的画布里看不见 ✗）；图例**放在板子下面**
     #   的空白带里 ✓（画布高度加一条 ✓ ⇒ 单独打开 svg 也看得见 ✓，不再压在图上 ✓）。
     fs = max(13.0, wa * 0.0105)
-    leg, extra = _legend(_legend_rows(name_a, name_b), fs, fs * 0.6)
+    # ★ 图例框的**左缘**对齐「上面 PCB 图形的左边框」✓（用户 2026-10-07 定 ✓）——
+    #   板框那条线的 x 就是它 ✓（fzz 路径是 `--board-only` 渲的 ⇒ 那个 rect 就是板框 ✓）。
+    bx = _board_px(svg_a, R)
+    leg, extra = _legend(_legend_rows(name_a, name_b), fs, fs * 0.6,
+                         x0=(bx[0] if bx else None), width=wa)
     vv = [float(x) for x in re.findall(r"[-+0-9.eE]+", va)] if va else []
     vx, vy = (vv[0], vv[1]) if len(vv) == 4 else (0.0, 0.0)
     H2 = ha + extra
