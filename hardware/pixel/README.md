@@ -5169,22 +5169,19 @@ py tools\diff_revs.py a.svg b.svg                    # 两个 svg 也行
 ★ 顺带得到一条库知识 ✓（写进了 `render_pcb.py` 的注释 ✓）：**预览里那个 `stroke=#111111`
 的 rect 不是板框** ✗（是**取景框** ✓）—— 以前拿它当板框用的地方会错 ✗。
 
-### 10.5 ★ VS Code 扩展：把**图**和**清单**合成一个界面 ✓（2026-10-07 用户要的 ✓）
+### 10.5 ★ VS Code 扩展：把**图**和**清单**合成一个界面 ✓（2026-10-07 ✓）
 
-用户原话 ✓：「现在做一个插件吧？把 md 文件与 svg/png 显示界面结合起来吧？」✓
+★★ **2026-10-07 已随工具一起搬去库仓** ✓（用户定 ✓：「扩展当然要搬，这是仓库的重要功能」✓）
+—— 扩展、安装脚本、单测现在都在 **`fritzing-parts-langhua/tools/`** ✓：
 
-⇒ 扩展在 **`vscode-diff/`** ✓（用法与限制见它自己的 `README.md` ✓）：
+| 在哪 | 是什么 |
+|---|---|
+| 库仓 `tools/vscode-diff/` ✓ | 扩展本体（`package.json` ＋ `extension.js` ＋ `README.md` ＋ 示例图 ＋ 单测 ✓） |
+| 库仓 `tools/install_diff_ext.cmd` ✓ | 装（拷进 `%USERPROFILE%\.vscode\extensions\` ⇒ `Reload Window` 即生效 ✓）；`uninstall` 可卸 ✓ |
+| 本仓 `hardware/pixel/pixel_nets.py` ✓ | **项目数据**：扩展跑工具时用本项目当 **cwd** ✓（工具按当前目录找 fzz 与网表 ✓） |
 
-```
-tools\install_diff_ext.cmd          # 拷进 %USERPROFILE%\.vscode\extensions\ ⇒ 重载窗口即生效
-```
+**用法与全部细节见库仓 README** ✓：根 `README.md` 的「★ 配套工具：PCB 版本差异视图」（带示例图 ✓）＋
+[`tools/README.md`](../../fritzing-parts-langhua/tools/README.md) 的「VS Code 扩展」一节 ✓。
+一句话：**双击 `diff\diff-*.md`** ⇒ 左图右清单 ✓ ⇒ **点清单里一条，图上高亮那处变化** ✓。
 
-- **入口**：命令面板「`Pixel 差异: 比较两版`」✓ ／「`Pixel 差异: 比较两个文件`」✓
-  （fzz / svg 都行 ✓）／ 直接在资源管理器里**双击 `diff\diff-*.md`** ✓；
-- **界面**：左 = **差异图**（svg ⇒ 矢量、可缩放 ✓），右 = **差异清单** ✓（清单变了会自动刷新 ✓）；
-- **刻意的取舍** ✓：不引依赖 ✓、webview **不开脚本** ✓、**不自己拼输出文件名** ✗
-  （跑完挑 `diff\` 里最新的 `diff-*.md` ✓ ⇒ 命名规则只留 `diff_revs.py` 一份 ✓）;
-- **验过的部分** ✓：装了什么文件 ✓ / `package.json` 合法 ✓ / `node --check` 语法 ✓ /
-  **纯逻辑单测**（`node _work\_test_ext.js` ✓）：76 版排序 ✓、找最新清单 ✓、清单转 HTML ✓
-  —— ★ 这个单测**当场抓出一个真 bug** ✗：清单开头那行 `> 图 …` 的 **`>`（引用符）**
-  被我改层色口径时弄丢了 ✗（变成 `| 图 …` ✓）⇒ 已修 ✓。
+★ 单测（不用开 VS Code ✓）：`node <库仓>\tools\vscode-diff\test_extension.js <本项目目录>` ✓
