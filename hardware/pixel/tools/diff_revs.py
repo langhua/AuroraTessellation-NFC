@@ -580,34 +580,17 @@ def _svg_mode(a_f, b_f, out, px_mm, have=()):
     la = _recolor_svg(_inner(ia), A_TOP, A_BOT, A_OTH)
     lb = _recolor_svg(_inner(ib), B_TOP, B_BOT, B_OTH)
     fs = max(13.0, W * 0.0105)
-    rows = [(A_TOP, "A = %s  top" % re.sub(r"[^\x20-\x7e]", "?", na)),
-            (B_TOP, "B = %s  top" % re.sub(r"[^\x20-\x7e]", "?", nb)),
-            (A_BOT, "A = %s  bottom" % re.sub(r"[^\x20-\x7e]", "?", na)),
-            (B_BOT, "B = %s  bottom" % re.sub(r"[^\x20-\x7e]", "?", nb)),
-            (A_OTH, "grey = silk / board / part-copper"),
-            (B_OTH, "(light = A / dark = B)")]
-
-    def sw(y, c, label):
-        return ('<rect x="%.0f" y="%.0f" width="%.0f" height="%.0f" fill="%s" stroke="#999999" '
-                'stroke-width="%.1f"/>\n<text x="%.0f" y="%.0f" font-family="sans-serif" '
-                'font-size="%.0f" fill="#333333">%s</text>\n'
-                % (fs * 0.6, y, fs * 1.5, fs * 1.15, c, fs * 0.05, fs * 2.7, y + fs * 1.15, fs, label))
-
-    leg = [('<rect x="%.0f" y="%.0f" width="%.0f" height="%.0f" fill="#ffffff" '
-            'fill-opacity="0.9" stroke="#bbbbbb" stroke-width="%.1f"/>'
-            % (fs * 0.3, fs * 0.3, fs * 27.0, fs * (2.0 * len(rows) + 0.9), fs * 0.05))]
-    for i, (c, lb2) in enumerate(rows):
-        leg.append(sw(fs * (0.9 + 2.0 * i), c, lb2))
+    leg, extra = _legend(_legend_rows(na, nb), fs, fs * 0.6)      # 三列两行、放板子下面 ✓
+    H2 = H + extra
     svg = ('<?xml version="1.0" encoding="UTF-8"?>\n'
            '<svg xmlns="http://www.w3.org/2000/svg" width="%.0f" height="%.0f" '
            'viewBox="0 0 %.1f %.1f">\n'
            '<rect width="100%%" height="100%%" fill="#ffffff"/>\n'
-           '%s\n'
            '<g id="A" opacity="0.75" transform="%s">%s</g>\n'
            '<g id="B" opacity="0.55" transform="%s">%s</g>\n'
+           '<g id="legend" transform="translate(0,%.1f)">%s</g>\n'
            '</svg>\n'
-           % (W, H, W, H, "\n".join(leg),
-              tf(ia, ra, ka, Ba), la, tf(ib, rb, kb, Bb), lb))
+           % (W, H2, W, H2, tf(ia, ra, ka, Ba), la, tf(ib, rb, kb, Bb), lb, H, leg))
     if not os.path.isdir(out):
         os.makedirs(out)
     stem = "diff-%s-%s" % (re.sub(r"[^\w.-]", "_", na), re.sub(r"[^\w.-]", "_", nb))
@@ -743,6 +726,44 @@ def _inner(svg):
     return b.replace('<rect width="100%" height="100%" fill="#ffffff"/>', '')
 
 
+def _legend(rows, font, pad):
+    """⇒ `(图例 svg 片段, 需要的额外高度)` ✓ —— **六项分三列两行** ✓，画在**板子下方**的空白带里 ✓。
+
+    ★★ 2026-10-07 用户定 ✓（原话：「图例建议放在图下面的白色区域，可以分开成三列显示」✓）——
+      旧版把图例**压在图上**（左上角 ✓），挡住了内容 ✗ ⇒ 现在**加一条空白带**放在板子下面 ✓
+      （画布里多出来的高度就是那条带 ✓，所以**单独打开这个 svg 也看得见图例** ✓）。
+    """
+    fs = font
+    ncol = 3
+    nrow = (len(rows) + ncol - 1) // ncol
+    cw = fs * 16.5                       # 一列宽 ✓
+    box_h = fs * (1.9 * nrow + 0.6)
+    out = ['<rect x="%.1f" y="%.1f" width="%.1f" height="%.1f" fill="#ffffff" '
+           'fill-opacity="0.96" stroke="#cccccc" stroke-width="%.2f"/>'
+           % (pad, pad, ncol * cw + pad, box_h, fs * 0.05)]
+    for i, (c, lab) in enumerate(rows):
+        # ★ **列优先** ✓（一列一个主题 ✓）：列 1 = 顶层两版 ✓、列 2 = 底层两版 ✓、列 3 = 灰 ✓
+        #   ✗ 行优先读起来是「A 顶、B 顶、A 底 / B 底、灰、灰」⇒ 版次和层都乱 ✓（2026-10-07 调过 ✓）
+        cx = pad + (i // nrow) * cw + fs * 0.5
+        cy = pad + fs * 0.7 + (i % nrow) * fs * 1.9
+        out.append('<rect x="%.1f" y="%.1f" width="%.1f" height="%.1f" fill="%s" '
+                   'stroke="#999999" stroke-width="%.2f"/>'
+                   % (cx, cy, fs * 1.4, fs * 1.0, c, fs * 0.05))
+        out.append('<text x="%.1f" y="%.1f" font-family="sans-serif" font-size="%.1f" '
+                   'fill="#333333">%s</text>'
+                   % (cx + fs * 1.9, cy + fs * 0.95, fs, lab))
+    return "\n".join(out), box_h + pad * 2
+
+
+def _legend_rows(name_a, name_b):
+    """六个条目 ✓（三层 × 两版 ✓ ＋ 灰的两条 ✓）—— 两个调用方共用这一份 ✓。"""
+    a = re.sub(r"[^\x20-\x7e]", "?", name_a)
+    b = re.sub(r"[^\x20-\x7e]", "?", name_b)
+    return [(A_TOP, "A = %s  top" % a), (B_TOP, "B = %s  top" % b),
+            (A_BOT, "A = %s  bottom" % a), (B_BOT, "B = %s  bottom" % b),
+            (A_OTH, "grey: A light (silk/board)"), (B_OTH, "grey: B dark")]
+
+
 def overlay(svg_a, svg_b, name_a, name_b):
     """两版叠合 ✓：A 蓝、B 红、重合深色 ✓。"""
     import render_pcb as R
@@ -765,45 +786,23 @@ def overlay(svg_a, svg_b, name_a, name_b):
     tb, ob = pal(B_TOP, B_BOT, B_OTH)
     ia = R.remap_colors(ia, ta, oa)
     ib = R.remap_colors(ib, tb, ob)
-    # ★★ 图例**只能用 ASCII** ✗（2026-10-07 实测 ✓）：中文 + `font-family=DroidSans` 在 cairosvg
-    #   里**渲不出字** ✗（实测：左上角只剩几个像素的痕迹 ✓）。
-    # ★★★ 而且字号必须**按画布比例算** ✗（同日第二个坑 ✗）：这个渲染器的 `--px` 存进去后
-    #   画布宽达 **8043 单位** ✗（实测 ✓）⇒ 写死 12 单位 = **2 像素** ✗ ⇒ 等于没画 ✓。
-    fs = max(13.0, wa * 0.0105)         # ★ 字号**按画布比例** ✓（写死 ⇒ 看不见 ✗）；
-    #   ⚠️ 且要比直觉小 ✗：cairosvg 的字体实际占高比 `font-size` 大 ⇒ 行距得给到 `2×fs` ✓
-    #   （实测：`1.35×fs` 上下行会撞 ✗、`1.75×fs` 仍然紧 ✗ —— 别再在这上面反复微调 ✗，一次给足 ✓）
-
-    def sw(y, c, label):
-        """图例一行：色块 ＋ 说明 ✓（色块就是**真用的那个颜色** ✓，不是近似 ✓）。"""
-        return ('<rect x="%.0f" y="%.0f" width="%.0f" height="%.0f" fill="%s" '
-                'stroke="#999999" stroke-width="%.1f"/>\n'
-                '<text x="%.0f" y="%.0f" font-family="sans-serif" font-size="%.0f" '
-                'fill="#333333">%s</text>\n'
-                % (fs * 0.6, y, fs * 1.5, fs * 1.15, c, fs * 0.05,
-                   fs * 2.7, y + fs * 1.15, fs, label))
-
-    rows = [(A_TOP, "A = %s  top   (light)" % name_a),
-            (B_TOP, "B = %s  top   (dark)" % name_b),
-            (A_BOT, "A = %s  bottom(light)" % name_a),
-            (B_BOT, "B = %s  bottom(dark)" % name_b),
-            (A_OTH, "silk/board: A light"),
-            (B_OTH, "            B dark")]
-    leg = [('<rect x="%.0f" y="%.0f" width="%.0f" height="%.0f" fill="#ffffff" '
-            'fill-opacity="0.9" stroke="#bbbbbb" stroke-width="%.1f"/>'
-            % (fs * 0.3, fs * 0.3, fs * 19.0, fs * (2.0 * len(rows) + 0.9), fs * 0.05))]
-    for i, (c, lab) in enumerate(rows):
-        leg.append(sw(fs * (0.9 + 2.0 * i), c, lab))
-    leg = "\n".join(leg)
+    # ★ 字号**按画布比例** ✓（✗ 写死 ⇒ 在这个渲染器的画布里看不见 ✗）；图例**放在板子下面**
+    #   的空白带里 ✓（画布高度加一条 ✓ ⇒ 单独打开 svg 也看得见 ✓，不再压在图上 ✓）。
+    fs = max(13.0, wa * 0.0105)
+    leg, extra = _legend(_legend_rows(name_a, name_b), fs, fs * 0.6)
+    vv = [float(x) for x in re.findall(r"[-+0-9.eE]+", va)] if va else []
+    vx, vy = (vv[0], vv[1]) if len(vv) == 4 else (0.0, 0.0)
+    H2 = ha + extra
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<svg xmlns="http://www.w3.org/2000/svg" width="%.0f" height="%.0f" '
-        'viewBox="%s">\n'
+        'viewBox="%.1f %.1f %.1f %.1f">\n'
         '<rect width="100%%" height="100%%" fill="#ffffff"/>\n'
-        '%s'
         '<g id="A" opacity="0.75">%s</g>\n'
         '<g id="B" opacity="0.55">%s</g>\n'
+        '<g id="legend" transform="translate(%.1f,%.1f)">%s</g>\n'
         '</svg>\n'
-    ) % (wa, ha, va, leg, ia, ib)
+    ) % (wa, H2, vx, vy, wa, H2, ia, ib, vx, vy + ha, leg)
 
 
 def main(argv):

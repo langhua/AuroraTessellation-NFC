@@ -111,15 +111,20 @@ function mdToHtml(md) {
 }
 
 // 「点清单一条 ⇒ 图上高亮」的那段脚本（2026-10-07 用户要的）。
-//   · 行里的脚名是从**反引号**里认的（清单里写的就是 `C1.connector0`）——不是自己拼的；
+//   · 脚名从行**文字**里认：`C1.connector0` 这个形状 ✓
+//     ★★ 2026-10-07 实测踩到 ✗：清单原文里脚名是**反引号**包着的（`C1.connector0` ✓），
+//        但转成 HTML 后反引号变成 `<code>` 标记 ⇒ **`textContent` 里根本没有反引号** ✗
+//        ⇒ 按反引号写的正则**一条都匹配不上** ✗ ⇒ 表现就是用户说的「**文字无法点击**」✗。
+//        ⇒ 直接按"**位号.connectorN**"这个形状认 ✓（② 里“脚：U1.connector5、…”那种也能点 ✓，正好有用 ✓）。
 //   · 高亮组是 diff_revs.py **已经写进 svg** 的隐藏组（id = `pd-<脚名>`）
 //     ⇒ 这里只切 display，**不算任何坐标**（坐标只有工具一份）。
 // ★ 用**单引号字符串数组**拼，不用模板串 —— 免得里面的反斜杠/花括号跟外层 `${}` 打架。
+const PAD_RE_SRC = '([A-Za-z][\\w.-]*\\.connector\\d+)';   // 与单测共用这一份图案 ✓
 const JS = [
 	'(function(){',
 	'  var SVG = document.getElementById("pd-svg");',
 	'  var li = Array.prototype.slice.call(document.querySelectorAll("li"));',
-	'  var RE = /`([\\w.-]+\\.connector\\d+)`/;',
+	'  var RE = new RegExp(' + JSON.stringify(PAD_RE_SRC) + ');',
 	'  function clear(){',
 	'    if (SVG) SVG.classList.remove("pd-focus");',
 	'    var g = document.querySelectorAll("#pd-hits > g");',
@@ -282,4 +287,4 @@ function deactivate() { }
 // 把**纯函数**引出来给单测用（`_work/_test_ext.js`）——
 // 扩展本体没法在这儿跑（要 VS Code 的扩展宿主），但"选版本 / 找最新清单 / 清单转 HTML"
 // 这几件是纯逻辑，能单独验 —— 免得只靠"装上去点一下看看"。
-module.exports = { activate, deactivate, _pure: { listVersions, newestDiffMd, mdToHtml } };
+module.exports = { activate, deactivate, _pure: { listVersions, newestDiffMd, mdToHtml, PAD_RE_SRC } };
