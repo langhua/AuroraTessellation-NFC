@@ -40,8 +40,13 @@ except Exception:                            # noqa: BLE001  老解释器没这�
 HERE = os.path.dirname(os.path.abspath(__file__))
 PIX = os.path.dirname(HERE)
 
-A_COLOR = "#1a73e8"      # A 版 = 蓝 ✓
-B_COLOR = "#d93025"      # B 版 = 红 ✓
+# ★★ 颜色口径（2026-10-07 用户定 ✓，原话：「双面板的**颜色差异看不出来了**」✗）：
+#   **色相 = 层**（顶 = 暖 ✓ / 底 = 冷 ✓）、**深浅 = 版**（浅 = A 旧 ✓ / 深 = B 新 ✓）、
+#   **非铜**（丝印/板框/位号/孔）= 中性灰（A 浅 ✓ / B 深 ✓）。
+#   ✗ 旧口径「整版一色（A 蓝 / B 红）」把 copper0 与 copper1 **刷成一色** ✗ ⇒ 层分不出来 ✗。
+A_TOP, B_TOP = "#f0a868", "#b8440a"      # 顶层：浅橙 ⇒ 深橙红 ✓
+A_BOT, B_BOT = "#8ab4f8", "#1a4fd0"      # 底层：浅蓝 ⇒ 深蓝 ✓
+A_OTH, B_OTH = "#cfcfcf", "#5a5a5a"      # 丝印/板框/位号/孔：浅灰 ⇒ 深灰 ✓
 JOINT = 0.01             # 认定"没动"的阈值（mm ✓）
 # ★ 1 sketch 单位 = 25.4/90 mm ✓（= 元件库 `pcb_wire.SK` ✓ 同一口径 ✓）
 SK = 25.4 / 90.0
@@ -223,8 +228,9 @@ def _foot(c):
 def report(a_fzz, b_fzz, ma, mb, netmap):
     """⇒ 差异清单（`list[str]` ✓）"""
     L = ["# 差异清单：%s ⇒ %s" % (_vtxt(a_fzz), _vtxt(b_fzz)), "",
-         "> 图 `diff-%s-%s.png` ✓：**蓝 = 只有 A 有**（删掉了 ✗）｜**红 = 只有 B 有**（新增 ✓）｜"
-         "**紫/深 = 两版重合**（没动 ✓）。" % (_vtxt(a_fzz), _vtxt(b_fzz)), ""]
+         "| 图 `diff-%s-%s.png` ✓：**顶层 = 暖色（橙）** ✓、**底层 = 冷色（蓝）** ✓，"
+         "**浅 = A（旧）** ✓、**深 = B（新）** ✓，丝印/板框/位号 = 中性灰 ✓（A 浅 / B 深 ✓）；"
+         "两版重合处会叠得更深（= 没动 ✓）。" % (_vtxt(a_fzz), _vtxt(b_fzz)), ""]
 
     # ① 元件摆位 ✓
     pa, pb = _pad_map(ma), _pad_map(mb)
@@ -348,32 +354,53 @@ def overlay(svg_a, svg_b, name_a, name_b):
     # 板框的**底色**要清掉 ✓（否则 A 的板底一铺，B 就看不见了 ✗）；描边留着 ✓ ⇒ 会各自染色 ✓
     ia = _inner(svg_a).replace('fill="%s"' % R.C_BRD_FILL, 'fill="none"')
     ib = _inner(svg_b).replace('fill="%s"' % R.C_BRD_FILL, 'fill="none"')
-    ia = R.repaint_colors(ia, A_COLOR)
-    ib = R.repaint_colors(ib, B_COLOR)
+    # ★★ “**认色换色**”而不是“刷成一色” ✗：层色是渲染器的**固定常量** ✓
+    #   （面 `C_CU0/C_CU1` ✓、线 `C_W0/C_W1` ✓、过孔 `C_VIA_*` ✓）⇒ 按表逐项换 ✓；
+    #   表里没写到的（丝印/板框/位号/孔）⇒ `default` 中性灰 ✓。
+    def pal(top, bot, oth):
+        return ({R.C_CU1: top, R.C_W1: top, R.C_VIA_TOP: top,
+                 R.C_CU0: bot, R.C_W0: bot, R.C_VIA_BOT: bot}, oth)
+
+    ta, oa = pal(A_TOP, A_BOT, A_OTH)
+    tb, ob = pal(B_TOP, B_BOT, B_OTH)
+    ia = R.remap_colors(ia, ta, oa)
+    ib = R.remap_colors(ib, tb, ob)
     # ★★ 图例**只能用 ASCII** ✗（2026-10-07 实测 ✓）：中文 + `font-family=DroidSans` 在 cairosvg
     #   里**渲不出字** ✗（实测：左上角只剩几个像素的痕迹 ✓）。
     # ★★★ 而且字号必须**按画布比例算** ✗（同日第二个坑 ✗）：这个渲染器的 `--px` 存进去后
     #   画布宽达 **8043 单位** ✗（实测 ✓）⇒ 写死 12 单位 = **2 像素** ✗ ⇒ 等于没画 ✓。
-    fs = max(14.0, wa * 0.014)
-    leg = ('<rect x="%.0f" y="%.0f" width="%.0f" height="%.0f" fill="#ffffff" '
-           'fill-opacity="0.88" stroke="#bbbbbb" stroke-width="%.1f"/>\n'
-           '<text x="%.0f" y="%.0f" font-family="sans-serif" font-size="%.0f" fill="%s">'
-           'A = %s  (blue only)</text>\n'
-           '<text x="%.0f" y="%.0f" font-family="sans-serif" font-size="%.0f" fill="%s">'
-           'B = %s  (red only)</text>\n'
-           '<text x="%.0f" y="%.0f" font-family="sans-serif" font-size="%.0f" '
-           'fill="#555555">overlap = same</text>\n'
-           % (fs * 0.3, fs * 0.3, fs * 13.5, fs * 4.3, fs * 0.05,
-              fs * 0.75, fs * 1.6, fs, A_COLOR, name_a,
-              fs * 0.75, fs * 2.9, fs, B_COLOR, name_b,
-              fs * 0.75, fs * 4.2, fs))
+    fs = max(13.0, wa * 0.0105)         # ★ 字号**按画布比例** ✓（写死 ⇒ 看不见 ✗）；
+    #   ⚠️ 且要比直觉小 ✗：cairosvg 的字体实际占高比 `font-size` 大 ⇒ 行距得给到 `2×fs` ✓
+    #   （实测：`1.35×fs` 上下行会撞 ✗、`1.75×fs` 仍然紧 ✗ —— 别再在这上面反复微调 ✗，一次给足 ✓）
+
+    def sw(y, c, label):
+        """图例一行：色块 ＋ 说明 ✓（色块就是**真用的那个颜色** ✓，不是近似 ✓）。"""
+        return ('<rect x="%.0f" y="%.0f" width="%.0f" height="%.0f" fill="%s" '
+                'stroke="#999999" stroke-width="%.1f"/>\n'
+                '<text x="%.0f" y="%.0f" font-family="sans-serif" font-size="%.0f" '
+                'fill="#333333">%s</text>\n'
+                % (fs * 0.6, y, fs * 1.5, fs * 1.15, c, fs * 0.05,
+                   fs * 2.7, y + fs * 1.15, fs, label))
+
+    rows = [(A_TOP, "A = %s  top   (light)" % name_a),
+            (B_TOP, "B = %s  top   (dark)" % name_b),
+            (A_BOT, "A = %s  bottom(light)" % name_a),
+            (B_BOT, "B = %s  bottom(dark)" % name_b),
+            (A_OTH, "silk/board: A light"),
+            (B_OTH, "            B dark")]
+    leg = [('<rect x="%.0f" y="%.0f" width="%.0f" height="%.0f" fill="#ffffff" '
+            'fill-opacity="0.9" stroke="#bbbbbb" stroke-width="%.1f"/>'
+            % (fs * 0.3, fs * 0.3, fs * 19.0, fs * (2.0 * len(rows) + 0.9), fs * 0.05))]
+    for i, (c, lab) in enumerate(rows):
+        leg.append(sw(fs * (0.9 + 2.0 * i), c, lab))
+    leg = "\n".join(leg)
     return (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<svg xmlns="http://www.w3.org/2000/svg" width="%.0f" height="%.0f" '
         'viewBox="%s">\n'
         '<rect width="100%%" height="100%%" fill="#ffffff"/>\n'
         '%s'
-        '<g id="A" opacity="0.45">%s</g>\n'
+        '<g id="A" opacity="0.75">%s</g>\n'
         '<g id="B" opacity="0.55">%s</g>\n'
         '</svg>\n'
     ) % (wa, ha, va, leg, ia, ib)
@@ -424,7 +451,8 @@ def main(argv):
     svg_p = os.path.join(out, stem + ".svg")
     open(svg_p, "w", encoding="utf-8", newline="\n").write(
         overlay(sa, sb, na, nb))
-    print("✓ 叠合差异图 %s（A=%s 蓝 ✓ / B=%s 红 ✓ / 重合=深 ✓）" % (svg_p, na, nb))
+    print("✓ 叠合差异图 %s（层 = 色相：顶橙 ✓ 底蓝 ✓；版 = 深浅：浅 A %s ✓ 深 B %s ✓）"
+          % (svg_p, na, nb))
     try:
         import cairosvg
         png_p = os.path.join(out, stem + ".png")
