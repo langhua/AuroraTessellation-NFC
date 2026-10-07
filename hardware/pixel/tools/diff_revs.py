@@ -22,10 +22,14 @@ r"""★★ 版本差异图 ＋ 差异清单 ✓（2026-10-07 用户要的「**�
 ★ 几何**不另写一套** ✗：走线/焊盘/过孔全部来自元件库 `pcb_check.collect()` ✓
 （= 校验器同一个世界模型 ✓）；渲染用 `render_pcb.render()` ✓。AGENTS §13「只允许一个声音」✓。
 
-用法 ✓（版本名或路径都行 ✓）：
-  py tools\diff_revs.py v59 v76
-  py tools\diff_revs.py --last 2            # 最后两版 ✓
-  py tools\diff_revs.py v69 pixel-pcb-v76.fzz --px 24
+用法 ✓（版本名 / `.fzz` / **svg** 都行；**带网表清单的只有两个 `.fzz`** ✓）：
+  py tools\diff_revs.py v59 v76                    # 两个 fzz ⇒ 图 ＋ 清单 ✓
+  py tools\diff_revs.py --last 2                   # 最后两版 ✓
+  py tools\diff_revs.py "pixel-pcb-v47_图示.svg" v47   # **Fritzing 导出的 svg ⇔ fzz** ✓（推荐 ✓）
+  py tools\diff_revs.py a.svg b.svg                # 两个 svg 也行 ✓（锚靠各自 board 组 ✓）
+★ 比 svg 时**锚 = 板框** ✓（见 README §10.4 ✓）—— ✗ 不要拿我们自己渲的**带取景**预览
+  当输入 ✗（那种文件里 `stroke=#111111` 的 rect 是**取景框** ✗ 不是板框 ✗ ⇒ 会整体平移 ✗）；
+  fzz 那一侧**直接给 .fzz** ✓，工具会自己用 `--board-only` 现渲 ✓。
 """
 import os
 import re
@@ -223,6 +227,305 @@ def _foot(c):
     """一块铜挂的脚 ⇒ 一行字 ✓（脚名照 Fritzing 的写法 `U1.connector3` ✓ 见 AGENTS §13 ✓）。"""
     s = ["%s.%s" % (t, cid) for t, cid in c["terms"]]
     return "、".join(s[:4]) + ("…（共 %d ✓）" % len(s) if len(s) > 4 else "")
+
+
+# ── ★★ 也能比「Fritzing 导出的 svg」✓（2026-10-07 用户问 ✓）────────────────────────
+#   用户原话 ✓：「如果我从 Fritzing 导出一个 svg，是不是也能这样比较了？」✓
+#   ⇒ 能 ✓，但**两个前提**要先处理 ✗（都是实测出来的 ✓，不是猜 ✗）：
+#     ① **取景要换算** ✗：Fritzing 导出是 **1in = 72 单位** 且有留白/水印 ✓
+#        （实测 `width="1.2278in"` + `viewBox="0 0 88.4 100.7"` ✓ 且带 `<g id="watermark">` ✓）
+#        ⇒ 先按**单位换算成 mm** ✓ 再按**墨迹包围盒**对齐 ✓（✗ 直接叠会错位 ✗）。
+#     ② **层色口径不同** ✗：导出里**只有走线/过孔**带层色 ✓（`#f28a00` 底 / `#f2c600` 顶 ✓
+#        = 同一套 ✓）；**元件自己的铜箔保留原色** ✗（线圈 `#f7bf13` ✓）
+#        ⇒ 那些件在两版里都画成**灰** ✓（反正两版一样 ⇒ 灰 = 没动 ✓，信息不丢 ✓）。
+
+
+def _root(svg):
+    """⇒ `dict(vb=(x,y,w,h), u2mm=None|float, w=…, h=…)` ✓（`u2mm=None` ⇒ 比例未知 ✗）。"""
+    m = re.search(r"<svg\b[^>]*>", svg)
+    a = dict(re.findall(r'([\w:-]+)\s*=\s*"([^"]*)"', m.group(0) if m else ""))
+    vbn = [float(x) for x in re.findall(r"[-+0-9.eE]+", a.get("viewBox", ""))]
+    if len(vbn) == 4:
+        vb = tuple(vbn)
+    else:
+        w = re.match(r"^([\d.]+)", a.get("width", "") or "")
+        h = re.match(r"^([\d.]+)", a.get("height", "") or "")
+        vb = (0.0, 0.0, float(w.group(1)) if w else 100.0,
+              float(h.group(1)) if h else 100.0)
+
+    def mm(v):
+        """`width`/`height` ⇒ mm ✓；**无单位或 px ⇒ None** ✗（那个比例不可信 ✗）。"""
+        m2 = re.match(r"^\s*([\d.]+)\s*([a-zA-Z%]*)\s*$", v or "")
+        if not m2:
+            return None
+        n, u = float(m2.group(1)), m2.group(2).lower()
+        if u in ("", "px", "%"):
+            return None
+        return {"mm": n, "cm": n * 10.0, "in": n * 25.4, "pt": n * 25.4 / 72.0}.get(u)
+
+    wmm, hmm = mm(a.get("width")), mm(a.get("height"))
+    u2mm = None
+    if wmm and vb[2]:
+        u2mm = wmm / vb[2]
+        if hmm and vb[3] and abs(hmm / vb[3] - u2mm) > 1e-4 * u2mm:
+            print("⚠️ 这份 svg 的 x/y 比例不一致 ✗（width %.4f vs height %.4f mm/单位 ✓）"
+                  "⇒ 按 x 算 ✓" % (u2mm, hmm / vb[3]))
+    return dict(vb=vb, u2mm=u2mm, w=wmm, h=hmm)
+
+
+def _drop_group(svg, gid):
+    """整段删 `<g id="X">…</g>` ✓（**配平扫描** ✓ —— 非贪婪正则只会截到第一个 `</g>` ✗）。"""
+    out, i = [], 0
+    while True:
+        m = re.search(r'<g\b[^>]*\bid="%s"[^>]*>' % re.escape(gid), svg[i:])
+        if not m:
+            break
+        s = i + m.start()
+        if m.group(0).rstrip().endswith("/>"):
+            out.append(svg[i:i + m.end()])
+            i += m.end()
+            continue
+        depth, j = 1, i + m.end()
+        while j < len(svg) and depth:
+            n = re.search(r"<(/?)g\b", svg[j:])
+            if not n:
+                break
+            k = j + n.start()
+            if n.group(1):
+                depth -= 1
+            else:
+                t = svg.find(">", k)
+                if not (t >= 0 and svg[k:t].rstrip().endswith("/")):
+                    depth += 1
+            j = j + n.end()
+            if depth == 0:
+                break
+        out.append(svg[i:s])
+        i = j
+    out.append(svg[i:])
+    return "".join(out)
+
+
+def _ink_bbox(png_bytes):
+    """量**墨迹包围盒**（px ✓）—— 用来对齐 ✓。
+
+    ★ 两条判据缺一不可 ✗（2026-10-07 实测 ✓）：① **透明**不是墨 ✗（cairosvg 可以透明底 ✓）；
+      ② **近白**也不是墨 ✗ —— 导出里有一大片白底/白丝印 ✓ ⇒ 只看 alpha 会把整张画布当墨 ✗。
+    """
+    import io
+    from PIL import Image, ImageChops
+    im = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
+    a = im.getchannel("A").point(lambda v: 255 if v > 8 else 0)
+    g = im.convert("L").point(lambda v: 0 if v >= 245 else 255)
+    return ImageChops.multiply(a, g).getbbox()
+
+
+def _recolor_svg(svg, top, bot, oth):
+    """按层色认色换色 ✓；表里没有的（元件的自有颜色 / 丝印 / 板框）⇒ `oth`（灰 ✓）。
+
+    ★ 层色的**权威来源**是渲染器的常量 ✓（`C_W0/C_W1` 走线 ✓、`C_CU0/C_CU1` 面 ✓、
+      `C_VIA_*` 过孔 ✓）—— Fritzing 导出用的是**同一套** ✓（实测 ✓）⇒ 两边都能认 ✓。
+    """
+    import render_pcb as R
+    tab = {R.C_W0: bot, R.C_W1: top, R.C_CU0: bot, R.C_CU1: top,
+           R.C_VIA_BOT: bot, R.C_VIA_TOP: top}
+    return R.remap_colors(svg, tab, oth)        # oth = 两版都一样的东西 ✓
+
+
+def _wrap(root_tag, inner):
+    """把一段内容包回**原来的根标签** ✓ —— ✗ 别自己写 `<svg>` ✗：原标签带着
+    `xmlns:svg` / `baseProfile` 等声明 ✓（Fritzing 导出的就有 ✓），丢了会解析失败 ✗。"""
+    return "<?xml version='1.0' encoding='UTF-8'?>\n%s%s</svg>" % (root_tag, inner)
+
+
+def _extract_group(svg, gid):
+    """取出 `<g id="X">…</g>` 整段 ✓（配平扫描 ✓）；没有 ⇒ None ✓。
+
+    ★★ 2026-10-07 实测踩到 ✗：配平扫描里 `j += n.end()` 只是**走到 `g` 后面** ✗，
+      它还**没有吃掉 `>`** ✗ ⇒ 切出来的片段尾巴是 `<…</g` ✗（实测包装后解析报
+      `not well-formed (invalid token): line 4, column 6` ✓，打出来一看是 `</g</svg>` ✗）。
+      ⇒ 回片时必须**把 `</g>` 的 `>` 也带上** ✓。
+    """
+    m = re.search(r'<g\b[^>]*\bid="%s"[^>]*>' % re.escape(gid), svg)
+    if not m:
+        return None
+    if m.group(0).rstrip().endswith("/>") :
+        return m.group(0)
+    depth, j = 1, m.end()
+    while j < len(svg) and depth:
+        n = re.search(r"<(/?)g\b", svg[j:])
+        if not n:
+            break
+        k = j + n.start()
+        if n.group(1):
+            depth -= 1
+        else:
+            t = svg.find(">", k)
+            if not (t >= 0 and svg[k:t].rstrip().endswith("/")):
+                depth += 1
+        j += n.end()
+        if depth == 0:
+            t = svg.find(">", k)                     # ★ 连 `</g>` 的 `>` 一起收 ✓
+            return svg[m.start():(t + 1 if t >= 0 else j)]
+    return None
+
+
+def _board_box(txt, r):
+    """**只画板框**渲一遍 ⇒ 量出板框的**用户单位**范围 ✓（对齐的锚 ✓）。
+
+    ★★ 为什么不能拿**整幅墨迹**对齐 ✗（2026-10-07 实测 ✓）：两边包含的东西不一样
+      （留白 ✓、位号位置 ✓、导出的白底 ✓）⇒ 按整幅宽度归一 ⇒ **比例就偏了** ✗
+      ⇒ 实测两张图里的线圈**同心却错开** ✗（一眼看就是没对齐 ✓）。**板框才是物理锚** ✓。
+    """
+    import cairosvg
+    import render_pcb as R
+    chunk = _extract_group(txt, "board")                     # Fritzing 导出 ✓
+    if not chunk:                                           # 我们渲染的：认板框 rect ✓
+        # ★★ 2026-10-07 实测踩到两个坑 ✗（都靠证据定位 ✓，不是猜 ✗）：
+        #   ① **`C_BRD_FILL` 就是 `#ffffff`** ✗ ⇒ 只按 fill 找会抓到渲染器开头的
+        #      **整幅白底**矩形 ✗（`<rect width="100%" height="100%" fill="#ffffff"/>` ✓）；
+        #   ② 改认 `stroke=C_BRD_EDGE` 之后**又抓错了一个** ✗ —— 量出来 3802.9×**3782.7**
+        #      “板框” ✗（板框是 **25×25 方的** ✓，一看就不对 ✓）。
+        #   ⇒ 正解：把候选**全收齐**，取**面积最大**那个 ✓（板框必然是这张图上最大的矩形 ✓），
+        #     并排除 `%` 尺寸（那是背景 ✓）。★ 自检就在判据里 ✓：量出来必须是**近似正方形** ✓。
+        best, best_a = None, -1.0
+        for m2 in re.finditer(r"<rect\b[^>]*/?>", txt):
+            tag = m2.group(0)
+            if ('stroke="%s"' % getattr(R, "C_BRD_EDGE", "\0")) not in tag and \
+               ('fill="%s"' % getattr(R, "C_BRD_FILL", "\0")) not in tag:
+                continue
+            if re.search(r'\b(width|height)="[^"]*%"', tag):
+                continue
+            at = dict(re.findall(r'([\w:-]+)="([^"]*)"', tag))
+            try:
+                ar = float(at.get("width", 0) or 0) * float(at.get("height", 0) or 0)
+            except ValueError:
+                continue
+            if ar > best_a:
+                best, best_a = tag, ar
+        chunk = best
+    if not chunk:
+        return None
+    root = re.search(r"<svg\b[^>]*>", txt)
+    if not root:
+        return None
+    W = 2000
+    png = cairosvg.svg2png(bytestring=_wrap(root.group(0), chunk).encode("utf-8"),
+                           output_width=W)
+    bb = _ink_bbox(png)
+    if not bb:
+        return None
+    k = W / r["vb"][2]                                       # 参考栅格的 px/单位 ✓
+    return dict(u=(bb[0] / k, bb[1] / k, bb[2] / k, bb[3] / k))
+
+
+def _side(path_or_fzz, px_mm, PC, R):
+    """一侧的 svg 文本 ＋ 它的「板框锚」来源说明 ✓。
+
+    ★★ 为什么 **fzz 这一侧要自己渲** ✗（2026-10-07 实测踩到 ✓）：
+      ✗ 直接拿 `render_revs` 渲好的预览当输入 ⇒ 那个文件**默认带墨迹取景** ✗
+        ⇒ `render_pcb.py:246` 会把 `r` **胀成「板框 ∪ 全部墨迹」** ✗ ⇒ 里面的
+        “板框 rect”其实是**取景框** ✗ ⇒ 拿它对锚 ⇒ **整体平移** ✗（实测：线圈/安装孔
+        全部错开约 0.5 mm ✓，而板框却“碰巧”看着对齐 ✓）。
+      ⇒ 正解：这一侧用 **`--board-only`** 现渲 ✓（那时 `r` = 真板框 ✓）✓。
+      ★ 顺带一条真相 ✓：不带 `--board-only` 时，预览里那个 `stroke=#111111` 的 rect
+        **不是板框** ✗（= 取景框 ✓）——以前拿它当板框用会错 ✗。
+    """
+    if path_or_fzz.lower().endswith(".fzz"):
+        return R.render(PC.collect(path_or_fzz), px_mm, ("--board-only",)), \
+            "我们自己渲的（fzz ⇒ `--board-only` ✓ 锚 = 真板框 ✓）"
+    return open(path_or_fzz, encoding="utf-8").read(), \
+        "svg 自带的 `<g id=\"board\">` ✓"
+
+
+def _svg_mode(a_f, b_f, out, px_mm, have=()):
+    """比**两个 svg** ✓ —— 也可以是「**一个 fzz ＋ 一个 (Fritzing 导出的) svg**」✓。"""
+    import cairosvg
+    import sys as _sys
+
+    _sys.path.insert(0, _lib_tools())
+    _sys.path.insert(0, os.path.dirname(HERE))
+    import pcb_check as PC
+    import render_pcb as R
+
+    ta, sa = _side(a_f, px_mm, PC, R)
+    tb, sb = _side(b_f, px_mm, PC, R)
+    ra, rb = _root(ta), _root(tb)
+    ia, ib = _drop_group(ta, "watermark"), _drop_group(tb, "watermark")   # 水印要去掉 ✗
+    na, nb = _vtxt(a_f), _vtxt(b_f)
+    if not (a_f.lower().endswith(".fzz") or b_f.lower().endswith(".fzz")):
+        print("⚠️ 两边都是**外部 svg** ✗：锚只能靠各自自带的 `<g id=\"board\">` ✓；"
+              "✗ 若某一边那份**没有** board 组（比如取的是我们自己渲的**带取景**预览 ✗），"
+              "锚就会落在“取景框”上 ✗ ⇒ 画面会整体平移 ✗。⇒ **fzz 那一侧请直接给 .fzz** ✓。")
+    print("   锚：A = %s；B = %s" % (sa, sb))
+
+    Ba, Bb = _board_box(ta, ra), _board_box(tb, rb)
+    if not (Ba and Bb):
+        raise SystemExit("量不出板框 ✗（这两份 svg 里都没有 `<g id=\"board\">` 或已知板框 rect ✗）"
+                         "⇒ 先在 Fritzing 里导出**当前板**的 svg 再比 ✓")
+    wa, wb = Ba["u"][2] - Ba["u"][0], Bb["u"][2] - Bb["u"][0]      # 板框宽（各自用户单位 ✓）
+    ha, hb = Ba["u"][3] - Ba["u"][1], Bb["u"][3] - Bb["u"][1]
+    # ★ A 有单位就按**物理尺寸**定标 ✓（mm ✓）；否则随便定一个 ✓（叠合只看相对 ✓）
+    ka = (px_mm * ra["u2mm"]) if ra["u2mm"] else (1000.0 / ra["vb"][2])
+    kb = ka * (wa / wb)                                            # 让两块板框同宽 ✓
+    print("   板框：A %.4f×%.4f 单位%s ✓；B %.4f×%.4f 单位 ✓；比例 B×%.4f ✓；"
+          "A 的板框 = %.2f×%.2f mm ✓"
+          % (wa, ha, ("（×%.4f mm/单位 ⇒ 实为 ✓）" % ra["u2mm"]) if ra["u2mm"] else "✗（无单位）",
+             wb, hb, kb / ka, wa * (ra["u2mm"] or 0), ha * (ra["u2mm"] or 0)))
+
+    def tf(t, r, k, b):
+        # 板框左上角 ⇒ 画布左上角（留 20 px 边 ✓）
+        dx = 20.0 - b["u"][0] * k
+        dy = 20.0 - b["u"][1] * k
+        return "translate(%.4f,%.4f) scale(%.8f) translate(%.4f,%.4f)" % (
+            dx, dy, k, -r["vb"][0], -r["vb"][1])
+
+    # ★ 画布 = **板框的像素尺寸** ✓（✗ 2026-10-07 实测踩到：写成 `max(单位宽) × max(k)`
+    #   = 把两边的量纲混乘 ✗ ⇒ cairo 报 `CAIRO_STATUS_INVALID_SIZE` ✗）
+    W = max(wa * ka, wb * kb) + 40
+    H = max(ha * ka, hb * kb) + 40
+    la = _recolor_svg(_inner(ia), A_TOP, A_BOT, A_OTH)
+    lb = _recolor_svg(_inner(ib), B_TOP, B_BOT, B_OTH)
+    fs = max(13.0, W * 0.0105)
+    rows = [(A_TOP, "A = %s  top" % re.sub(r"[^\x20-\x7e]", "?", na)),
+            (B_TOP, "B = %s  top" % re.sub(r"[^\x20-\x7e]", "?", nb)),
+            (A_BOT, "A = %s  bottom" % re.sub(r"[^\x20-\x7e]", "?", na)),
+            (B_BOT, "B = %s  bottom" % re.sub(r"[^\x20-\x7e]", "?", nb)),
+            (A_OTH, "grey = silk / board / part-copper"),
+            (B_OTH, "(light = A / dark = B)")]
+
+    def sw(y, c, label):
+        return ('<rect x="%.0f" y="%.0f" width="%.0f" height="%.0f" fill="%s" stroke="#999999" '
+                'stroke-width="%.1f"/>\n<text x="%.0f" y="%.0f" font-family="sans-serif" '
+                'font-size="%.0f" fill="#333333">%s</text>\n'
+                % (fs * 0.6, y, fs * 1.5, fs * 1.15, c, fs * 0.05, fs * 2.7, y + fs * 1.15, fs, label))
+
+    leg = [('<rect x="%.0f" y="%.0f" width="%.0f" height="%.0f" fill="#ffffff" '
+            'fill-opacity="0.9" stroke="#bbbbbb" stroke-width="%.1f"/>'
+            % (fs * 0.3, fs * 0.3, fs * 27.0, fs * (2.0 * len(rows) + 0.9), fs * 0.05))]
+    for i, (c, lb2) in enumerate(rows):
+        leg.append(sw(fs * (0.9 + 2.0 * i), c, lb2))
+    svg = ('<?xml version="1.0" encoding="UTF-8"?>\n'
+           '<svg xmlns="http://www.w3.org/2000/svg" width="%.0f" height="%.0f" '
+           'viewBox="0 0 %.1f %.1f">\n'
+           '<rect width="100%%" height="100%%" fill="#ffffff"/>\n'
+           '%s\n'
+           '<g id="A" opacity="0.75" transform="%s">%s</g>\n'
+           '<g id="B" opacity="0.55" transform="%s">%s</g>\n'
+           '</svg>\n'
+           % (W, H, W, H, "\n".join(leg),
+              tf(ia, ra, ka, Ba), la, tf(ib, rb, kb, Bb), lb))
+    if not os.path.isdir(out):
+        os.makedirs(out)
+    stem = "diff-%s-%s" % (re.sub(r"[^\w.-]", "_", na), re.sub(r"[^\w.-]", "_", nb))
+    p = os.path.join(out, stem + ".svg")
+    open(p, "w", encoding="utf-8", newline="\n").write(svg)
+    cairosvg.svg2png(url=p, write_to=os.path.join(out, stem + ".png"), scale=1.0,
+                     background_color="white")
+    print("✓ 叠合差异图 %s ✓（锚 = **板框** ✓，不靠整幅留白 ✓ —— 见 README §10.4 ✓）" % p)
+    print("（svg 输入**没有网表清单** ✗ —— 要清单就得给两个 `.fzz` ✓）")
+    return 0
+
 
 
 def report(a_fzz, b_fzz, ma, mb, netmap):
@@ -430,6 +733,16 @@ def main(argv):
     if len(pos) != 2:
         print(__doc__)
         return 2
+    n_svg = sum(1 for p in pos if p.lower().endswith(".svg"))
+    if n_svg:
+        if n_svg == 2:
+            print("—— 两个 svg ⇒ **不比网表** ✗，只出叠合差异图 ✓（Fritzing 导出的也算 ✓）")
+            return _svg_mode(pos[0], pos[1], out, 40.0)
+        # ★ 一个 fzz ＋ 一个 svg ✓ = **推荐用法** ✓（fzz 那侧我们自己渲 ⇒ 锚准 ✓）
+        svg_p = [p for p in pos if p.lower().endswith(".svg")][0]
+        fzz_p = _resolve([p for p in pos if p != svg_p][0], have)
+        print("—— 一个 fzz ＋ 一个 svg ⇒ **不比网表** ✗，只出叠合差异图 ✓")
+        return _svg_mode(svg_p, fzz_p, out, 40.0)
     a_fzz = _resolve(pos[0], have)
     b_fzz = _resolve(pos[1], have)
 
