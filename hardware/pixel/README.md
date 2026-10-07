@@ -5185,3 +5185,18 @@ py tools\diff_revs.py a.svg b.svg                    # 两个 svg 也行
 一句话：**双击 `diff\diff-*.md`** ⇒ 左图右清单 ✓ ⇒ **点清单里一条，图上高亮那处变化** ✓。
 
 ★ 单测（不用开 VS Code ✓）：`node <库仓>\tools\vscode-diff\test_extension.js <本项目目录>` ✓
+
+★ 本项目的**两个设置**（扩展通用化后加的 ✓，2026-10-07 ✓）：
+
+```jsonc
+// AuroraTessellation-NFC\.vscode\settings.json
+{
+  "pixelDiff.projectDir": "hardware/pixel",
+  "pixelDiff.fzzPattern": "^pixel-pcb-v\\d+.*\\.fzz$"
+}
+```
+
+为什么必须钉 ✗：本项目目录里是 **151 个 fzz** ✓，其中只有 **76 个** 是 `pixel-pcb-v*` ✓，
+剩下 75 个是 `pixel-breadboard*` / `pixel-schematic*` ✗ ⇒ 不钉就会混进「选版本」选择框 ✓。
+⚠️ `.vscode/` 在本仓 `.gitignore` 里 ✗ ⇒ 这两行目前只在**本机**生效 ✓，新克隆的机器上要自己加 ✓
+（要不要把它纳入版本管理，等用户定 ✓）。
