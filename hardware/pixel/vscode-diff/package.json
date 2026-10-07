@@ -1,0 +1,42 @@
+{
+	"name": "pixel-diff",
+	"displayName": "Pixel 差异视图（图 + 清单）",
+	"description": "把 tools/diff_revs.py 生成的「叠合差异图」和「差异清单 md」合成一个界面显示。",
+	"version": "0.0.1",
+	"publisher": "langhua",
+	"license": "MIT",
+	"engines": {
+		"vscode": "^1.80.0"
+	},
+	"categories": [
+		"Other"
+	],
+	"activationEvents": [],
+	"main": "./extension.js",
+	"contributes": {
+		"commands": [
+			{
+				"command": "pixelDiff.compare",
+				"title": "比较两版（出差异图 + 清单，并打开合并视图）",
+				"category": "Pixel 差异"
+			},
+			{
+				"command": "pixelDiff.compareFiles",
+				"title": "比较两个文件（fzz / svg 都行）",
+				"category": "Pixel 差异"
+			}
+		],
+		"customEditors": [
+			{
+				"viewType": "pixelDiff.diffMd",
+				"displayName": "Pixel 差异（差异图 + 清单）",
+				"selector": [
+					{
+						"filenamePattern": "**/diff/diff-*.md"
+					}
+				],
+				"priority": "default"
+			}
+		]
+	}
+}

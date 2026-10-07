@@ -1,0 +1,49 @@
+# Pixel 差异视图（VS Code 扩展 · v0.0.1）
+
+把 `tools\diff_revs.py` 生成的**叠合差异图**和**差异清单 md** 合成**一个界面**显示 ✓。
+
+[![v59 ⇒ v76 差异图](../pixel-pcb-diff-v59-v76.png)](../pixel-pcb-diff-v59-v76.png)
+
+## 装（一条命令 ✓）
+
+```
+tools\install_diff_ext.cmd
+```
+
+它把本目录拷到 **`%USERPROFILE%\.vscode\extensions\langhua.pixel-diff-0.0.1\`** ✓
+（VS Code 启动时就会扫这个目录 ✓），然后 **`Ctrl+Shift+P` → `Reload Window`** 即生效 ✓
+—— 不用按 F5 开"扩展开发宿主"✗、也不用打包 `.vsix`✓。
+
+卸载：`tools\install_diff_ext.cmd uninstall` ✓（就是把那个目录删掉 ✓）。
+
+## 用（三种入口 ✓）
+
+| 入口 | 做什么 |
+|---|---|
+| 命令面板 → **`Pixel 差异: 比较两版（出差异图 + 清单，并打开合并视图）`** | 弹出选两版（默认**最后两版** ✓）⇒ 跑 `diff_revs.py` ⇒ **自动打开合并视图** ✓ |
+| 命令面板 → **`Pixel 差异: 比较两个文件`** | 文件选择器里挑任意两个（`.fzz` / `.svg` 都行 ✓，比如**Fritzing 导出的 svg** ⇔ fzz ✓）|
+| 在资源管理器里**双击** `diff\diff-*.md` | 直接进**合并视图** ✓（左图右清单 ✓）|
+
+合并视图里：**左边 = 差异图**（svg ⇒ 矢量、可缩放 ✓）、**右边 = 差异清单** ✓；
+清单文件改了（重跑了一版 ✓）画面会**自动刷新** ✓。
+
+## 它刻意不做的事（第一版求稳 ✓）
+
+- **不引任何依赖** ✓（纯 CommonJS ✓，只用 node 内置模块 ✓）；
+- webview **不开脚本** ✓（`enableScripts: false` ✓）⇒ 没有 CSP nonce / 注入面那一摊 ✓；
+- **不自己拼输出文件名** ✗ —— 跑完去 `diff\` 里挑**最新的 `diff-*.md`** ✓
+  ⇒ 命名规则只有 `diff_revs.py` 一份实现 ✓（本仓老规矩：判据/公式只留一份 ✓）。
+
+## 已知限制
+
+- 两边都是 **svg** 时 `diff_revs.py` 不出清单 ✗ ⇒ 扩展会把**新生成的 png** 直接打开 ✓；
+- 清单旁边**没有同名图**时 ⇒ 视图里给一句提示 ✓（先跑一次 `diff_revs.py` ✓）。
+
+## 逻辑单测
+
+```
+node _work\_test_ext.js      # 拿真目录/真清单跑：版本排序 ✓ 找最新清单 ✓ 清单转 HTML ✓
+```
+
+（扩展本体要 VS Code 的扩展宿主才能跑 ✗，所以把**纯逻辑**引出来单独验 ✓ ——
+`extension.js` 末尾的 `_pure` ✓。）
