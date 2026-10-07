@@ -51,6 +51,9 @@ PIX = os.path.dirname(HERE)
 A_TOP, B_TOP = "#f0a868", "#b8440a"      # 顶层：浅橙 ⇒ 深橙红 ✓
 A_BOT, B_BOT = "#8ab4f8", "#1a4fd0"      # 底层：浅蓝 ⇒ 深蓝 ✓
 A_OTH, B_OTH = "#cfcfcf", "#5a5a5a"      # 丝印/板框/位号/孔：浅灰 ⇒ 深灰 ✓
+# ★ 「点清单一条 ⇒ 图上高亮」用的**强调色** ✓（2026-10-07 用户要的 ✓）——
+#   得跟上面六种颜色都分得开 ✓ ⇒ 取玫红 ✓（蓝/橙/灰都不是它 ✓）。
+A_COLOR_HI = "#d81b60"
 JOINT = 0.01             # 认定"没动"的阈值（mm ✓）
 # ★ 1 sketch 单位 = 25.4/90 mm ✓（= 元件库 `pcb_wire.SK` ✓ 同一口径 ✓）
 SK = 25.4 / 90.0
@@ -221,6 +224,96 @@ def _net_summary(nets):
         d.setdefault(nm, []).append(c)
     return d
 
+
+
+def _board_px(svg, R):
+    """从**已经渲好的** svg 里量出「板框 rect」的 px 位置与尺寸 ✓ ⇒ `(x, y, w, h)` ✓。
+
+    ★ 为什么量它 ✗（而不是照 `render()` 的内部公式再算一遍 ✗）：本仓老规矩 —— **同一件事
+      只留一份实现** ✓。`--board-only` 渲出来的那个 rect 就是板框 ✓（实测 ✓），
+      拿它当"坐标换算锚" ⇒ 我在下面把 sketch 单位换成 px 时用的公式，只依赖
+      `model["board"]` ✓ ＋ 这个 rect ✓（都是公开量 ✓），**不碰 render 的内部** ✓。
+    """
+    m = re.search(r'<rect\b[^>]*\bx="([\d.]+)"\s+y="([\d.]+)"\s+width="([\d.]+)"\s+height="([\d.]+)"'
+                  r'[^>]*\bfill="%s"' % re.escape(getattr(R, "C_BRD_FILL", "\0")), svg)
+    if not m:                       # 兜底：按描边色找（白底 rect 没有 stroke ✓）
+        m = re.search(r'<rect\b[^>]*\bx="([\d.]+)"\s+y="([\d.]+)"\s+width="([\d.]+)"\s+height="([\d.]+)"'
+                      r'[^>]*\bstroke="%s"' % re.escape(getattr(R, "C_BRD_EDGE", "\0")), svg)
+    return tuple(float(v) for v in m.groups()) if m else None
+
+
+def _hit_layer(ma, mb, svg_a, svg_b, name_a, name_b):
+    """★ 「点清单里一条 ⇒ 图上高亮对应变化」用的**隐藏**图层 ✓（2026-10-07 用户要的 ✓）。
+
+    用户原话 ✓：「在元件摆位下，点一条信息，图里面的相应变化，能高亮显示出来」✓
+
+    做法 ✓（省事又不会两处算坐标 ✗）：
+      · 这里**先**把每个"挪过 / 新增 / 删掉"的脚写成一组元素 ✓，`display:none` 藏着 ✓；
+      · 扩展那边**只负责**点行 ⇒ 把对应那组 `display` 打开 ✓ ⇒ **坐标换算只有这一份** ✓。
+    每组画三样 ✓：A 的旧位置（空心圈 ✓）、B 的新位置（实心圈 ✓）、两者之间一条引线 ＋
+    一个标签（脚名 ＋ 位移 mm ✓）。
+    """
+    import render_pcb as R
+    ra, rb = _board_px(svg_a, R), _board_px(svg_b, R)
+    if not (ra and rb and ma.get("board") and mb.get("board")):
+        return ""
+    pair = []
+    for (mA, sv, r) in ((ma, svg_a, ra), (mb, svg_b, rb)):       # 两侧各求一个「单位→px」映射 ✓
+        bw = mA["board"][2] - mA["board"][0]
+        bh = mA["board"][3] - mA["board"][1]
+        if bw <= 0 or bh <= 0:
+            return ""
+        kx, ky = r[2] / bw, r[3] / bh
+        pair.append(lambda u, v: (r[0] + (u - mA["board"][0]) * kx,
+                                  r[1] + (v - mA["board"][1]) * ky))
+    (put_a, put_b) = pair
+
+    pa, pb = _pad_map(ma), _pad_map(mb)
+    W = max(ra[2], rb[2])
+    o = ['<g id="pd-hits">']
+    for k in sorted(set(pa) | set(pb)):
+        qa = pa.get(k, [{}])[0].get("c")
+        qb = pb.get(k, [{}])[0].get("c")
+        if k[0] == "PCB1":
+            continue
+        pid = "%s.%s" % k
+        o.append('<g id="pd-%s" style="display:none">' % re.sub(r"[^\w.-]", "_", pid))
+        if qa:
+            x, y = put_a(*qa)
+            o.append('<circle cx="%.1f" cy="%.1f" r="%.3f" fill="none" stroke="%s" stroke-width="%.2f"/>'
+                     % (x, y, W * 0.022, A_COLOR_HI, W * 0.004))
+        if qb:
+            x2, y2 = put_b(*qb)
+            o.append('<circle cx="%.1f" cy="%.1f" r="%.3f" fill="%s" fill-opacity="0.85" stroke="#ffffff" '
+                     'stroke-width="%.2f"/>' % (x2, y2, W * 0.022, A_COLOR_HI, W * 0.004))
+        if qa and qb:
+            x, y = put_a(*qa)
+            dx = (qb[0] - qa[0]) * SK
+            dy = (qb[1] - qa[1]) * SK
+            d = (dx * dx + dy * dy) ** 0.5
+            o.append('<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" stroke="%s" stroke-width="%.2f" '
+                     'stroke-dasharray="%.1f %.1f"/>'
+                     % (x, y, x2, y2, A_COLOR_HI, W * 0.0035, W * 0.012, W * 0.008))
+            o.append('<text x="%.1f" y="%.1f" font-family="sans-serif" font-size="%.1f" '
+                     'fill="%s">%s  Δ %.3f mm</text>'
+                     % (x2 + W * 0.03, y2 - W * 0.02, W * 0.024, A_COLOR_HI,
+                        esc(pid), d))
+        elif qb:
+            x2, y2 = put_b(*qb)
+            o.append('<text x="%.1f" y="%.1f" font-family="sans-serif" font-size="%.1f" fill="%s">'
+                     '%s  新增</text>' % (x2 + W * 0.03, y2 - W * 0.02, W * 0.024, A_COLOR_HI, esc(pid)))
+        else:
+            x, y = put_a(*qa)
+            o.append('<text x="%.1f" y="%.1f" font-family="sans-serif" font-size="%.1f" fill="%s">'
+                     '%s  没了</text>' % (x + W * 0.03, y - W * 0.02, W * 0.024, A_COLOR_HI, esc(pid)))
+        o.append('</g>')
+    o.append('</g>')
+    return "\n".join(o)
+
+
+def esc(s):
+    """XML 转义 ✓（脚名是 ASCII ✓，但别赌 ✗）。"""
+    return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 def _foot(c):
@@ -553,6 +646,8 @@ def report(a_fzz, b_fzz, ma, mb, netmap):
         if d > JOINT:
             moved.append((k[0], k[1], dx, dy, d))
     L.append("## ① 元件摆位")
+    L.append("> 在 VS Code 的**合并视图**里点下面任一条 ✓ ⇒ 图上会高亮那处变化 ✓"
+             "（旧位置 = 空心圈 ✓、新位置 = 实心圈 ✓、虚线 = 位移 ✓）。")
     if not moved and not gone and not new:
         L.append("- **没动** ✓（每个焊盘都在原位 ✓，`modelIndex` 被重编号的也按件名对上了 ✓）")
     for t, cid, dx, dy, d in moved:
@@ -764,8 +859,17 @@ def main(argv):
     na, nb = _vtxt(a_fzz), _vtxt(b_fzz)
     stem = "diff-%s-%s" % (na, nb)
     svg_p = os.path.join(out, stem + ".svg")
-    open(svg_p, "w", encoding="utf-8", newline="\n").write(
-        overlay(sa, sb, na, nb))
+    body = overlay(sa, sb, na, nb)
+    # ★★ 把「点清单一条 ⇒ 图上高亮」用的**隐藏图层**塞进去 ✓（2026-10-07 ✓）——
+    #   连样式一起写进 svg 本体 ✓ ⇒ 它**单文件也能用** ✓（不是在扩展里才亮 ✓）。
+    hits = _hit_layer(ma, mb, sa, sb, na, nb)
+    if hits:
+        body = body.replace("</svg>",
+                            '<style>svg.pd-focus #A, svg.pd-focus #B {opacity:.16}'
+                            '</style>\n' + hits + "\n</svg>")
+        print("✓ 高亮层：%d 组（点清单里 ① 的条目 ⇒ 扩展会亮对应那组 ✓）"
+              % hits.count('<g id="pd-'))
+    open(svg_p, "w", encoding="utf-8", newline="\n").write(body)
     print("✓ 叠合差异图 %s（层 = 色相：顶橙 ✓ 底蓝 ✓；版 = 深浅：浅 A %s ✓ 深 B %s ✓）"
           % (svg_p, na, nb))
     try:

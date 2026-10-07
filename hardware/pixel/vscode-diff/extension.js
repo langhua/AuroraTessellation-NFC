@@ -110,8 +110,46 @@ function mdToHtml(md) {
 	return out.join('\n');
 }
 
-function html(webview, mdText, imgUri, imgName, hint) {
-	const csp = `default-src 'none'; img-src ${webview.cspSource} data:; style-src 'unsafe-inline';`;
+// 「点清单一条 ⇒ 图上高亮」的那段脚本（2026-10-07 用户要的）。
+//   · 行里的脚名是从**反引号**里认的（清单里写的就是 `C1.connector0`）——不是自己拼的；
+//   · 高亮组是 diff_revs.py **已经写进 svg** 的隐藏组（id = `pd-<脚名>`）
+//     ⇒ 这里只切 display，**不算任何坐标**（坐标只有工具一份）。
+// ★ 用**单引号字符串数组**拼，不用模板串 —— 免得里面的反斜杠/花括号跟外层 `${}` 打架。
+const JS = [
+	'(function(){',
+	'  var SVG = document.getElementById("pd-svg");',
+	'  var li = Array.prototype.slice.call(document.querySelectorAll("li"));',
+	'  var RE = /`([\\w.-]+\\.connector\\d+)`/;',
+	'  function clear(){',
+	'    if (SVG) SVG.classList.remove("pd-focus");',
+	'    var g = document.querySelectorAll("#pd-hits > g");',
+	'    for (var i = 0; i < g.length; i++) g[i].style.display = "none";',
+	'    li.forEach(function(x){ x.classList.remove("sel"); });',
+	'  }',
+	'  li.forEach(function(x){',
+	'    var m = RE.exec(x.textContent || "");',
+	'    if (!m) return;',
+	'    x.classList.add("clickable");',
+	'    x.title = "点一下：在图上高亮 " + m[1];',
+	'    x.addEventListener("click", function(){',
+	'      clear();',
+	'      if (SVG) SVG.classList.add("pd-focus");',
+	'      var t = document.getElementById("pd-" + m[1]);',
+	'      if (t) { t.style.display = ""; x.classList.add("sel"); }',
+	'    });',
+	'  });',
+	'  document.addEventListener("keydown", function(e){ if (e.key === "Escape") clear(); });',
+	'  if (SVG) SVG.addEventListener("click", clear);',
+	'})();'
+].join('\n');
+
+function html(webview, mdText, svgText, imgUri, imgName, hint, nonce) {
+	const csp = `default-src 'none'; img-src ${webview.cspSource} data:; `
+		+ `style-src 'unsafe-inline'; script-src 'nonce-${nonce}';`;
+	const art = svgText
+		? `<div class="art">${svgText}</div>`
+		: (imgUri ? `<img src="${imgUri}" alt="${esc(imgName || 'diff')}">`
+			: `<div class="hint" style="padding:16px">${esc(hint || '还没生成差异图')}</div>`);
 	return `<!DOCTYPE html><html><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="${csp}">
 <style>
@@ -120,24 +158,28 @@ function html(webview, mdText, imgUri, imgName, hint) {
   .pane { overflow:auto; }
   .left { flex:2 1 0; background:#ffffff; display:flex; align-items:flex-start; justify-content:center;
           padding:8px; box-sizing:border-box; }
-  .left img { max-width:100%; height:auto; }
+  .left img, .art svg { max-width:100%; height:auto; }
+  .art svg { cursor:default; }
   .right { flex:1 1 0; padding:10px 14px; border-left:1px solid var(--vscode-panel-border); }
   .bar { font-size:12px; opacity:.75; padding:4px 8px; border-bottom:1px solid var(--vscode-panel-border); }
   h1 { font-size:1.15em; } h2 { font-size:1.05em; margin-top:1.1em; } h3 { font-size:1em; }
   code { background: var(--vscode-textCodeBlock-background); padding:0 3px; border-radius:3px; }
   blockquote { margin:.4em 0; padding-left:8px; border-left:3px solid var(--vscode-panel-border); opacity:.85; }
   ul { padding-left:1.2em; margin:.2em 0; }
+  li.clickable { cursor:pointer; border-radius:3px; }
+  li.clickable:hover { background: var(--vscode-list-hoverBackground); }
+  li.sel { background: var(--vscode-list-activeSelectionBackground); }
   .hint { color: var(--vscode-errorForeground); }
 </style></head><body>
 <div class="wrap">
-  <div class="pane left">${imgUri
-		? `<img src="${imgUri}" alt="${esc(imgName || 'diff')}">`
-		: `<div class="hint" style="padding:16px">${esc(hint || '还没生成差异图')}</div>`}</div>
+  <div class="pane left">${art}</div>
   <div class="pane right">
-    <div class="bar">${imgUri ? esc(imgName) : '（无图）'}</div>
+    <div class="bar">${svgText ? '点 ① 里任意一条 ⇒ 图上高亮（Esc 或点图取消）'
+		: (imgUri ? esc(imgName) : '（无图）')}</div>
     ${mdToHtml(mdText)}
   </div>
 </div>
+<script nonce="${nonce}">${svgText ? JS : ''}</script>
 </body></html>`;
 }
 
@@ -148,14 +190,25 @@ class DiffEditor {
 		const mdPath = document.uri.fsPath;
 		const dir = path.dirname(mdPath);
 		const stem = path.basename(mdPath).replace(/\.md$/, '');
-		const svg = path.join(dir, stem + '.svg');
-		const png = path.join(dir, stem + '.png');
-		const img = fs.existsSync(svg) ? svg : (fs.existsSync(png) ? png : null);
-		panel.webview.options = { enableScripts: false, localResourceRoots: [vscode.Uri.file(dir)] };
+		const svgPath = path.join(dir, stem + '.svg');
+		const pngPath = path.join(dir, stem + '.png');
+		// ★ 开了脚本：因为要「点清单一条 ⇒ 图上高亮」⇒ svg 必须**内联**进来
+		//   ✗ `<img>` 里的 svg 父文档碰不到 ✗（改不了它里面的 display ✓）。
+		panel.webview.options = { enableScripts: true, localResourceRoots: [vscode.Uri.file(dir)] };
 		const draw = () => {
-			const uri = img ? panel.webview.asWebviewUri(vscode.Uri.file(img)) : null;
-			panel.webview.html = html(panel.webview, document.getText(), uri, img ? path.basename(img) : '',
-				`这份清单旁边没有同名图 ⇒ 先跑 py tools\\diff_revs.py，或直接对我用命令「比较两版」`);
+			let svgText = null;
+			if (fs.existsSync(svgPath)) {
+				svgText = fs.readFileSync(svgPath, 'utf8')
+					.replace(/^[\s\S]*?<svg\b/, '<svg')            // 去掉 xml 声明/注释，留 `<svg …>`
+					.replace(/^<svg\b(?!\s+id=)/, '<svg id="pd-svg"');   // 给它一个 id 好挂点击
+			}
+			const pngUri = (!svgText && fs.existsSync(pngPath))
+				? panel.webview.asWebviewUri(vscode.Uri.file(pngPath)) : null;
+			const nonce = String(Math.random()).slice(2) + String(Date.now());
+			panel.webview.html = html(panel.webview, document.getText(), svgText, pngUri,
+				pngUri ? path.basename(pngPath) : '',
+				'这份清单旁边没有同名图 ⇒ 先跑 py tools\\diff_revs.py，或直接对我用命令「比较两版」',
+				nonce);
 		};
 		draw();
 		this.context.subscriptions.push(
