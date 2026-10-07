@@ -7,5 +7,7 @@
         }
     ],
     "pixelDiff.projectDir": "hardware/pixel",
-    "pixelDiff.fzzPattern": "^pixel-pcb-v\\d+.*\\.fzz$"
+    "pixelDiff.fzzPattern": "^pixel-pcb-v\\d+.*\\.fzz$",
+    "pixelDiff.bbPattern": "^pixel-breadboard\\d+.*\\.fzz$",
+    "pixelDiff.schPattern": "^pixel-schematic-v\\d+.*\\.fzz$"
 }

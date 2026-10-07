@@ -5189,14 +5189,17 @@ py tools\diff_revs.py a.svg b.svg                    # 两个 svg 也行
 ★ 本项目的**两个设置**（扩展通用化后加的 ✓，2026-10-07 ✓）：
 
 ```jsonc
-// AuroraTessellation-NFC\.vscode\settings.json
+// AuroraTessellation-NFC\.vscode\settings.json   ← 已入库 ✓
 {
   "pixelDiff.projectDir": "hardware/pixel",
-  "pixelDiff.fzzPattern": "^pixel-pcb-v\\d+.*\\.fzz$"
+  "pixelDiff.fzzPattern": "^pixel-pcb-v\\d+.*\\.fzz$",
+  "pixelDiff.bbPattern": "^pixel-breadboard\\d+.*\\.fzz$",
+  "pixelDiff.schPattern": "^pixel-schematic-v\\d+.*\\.fzz$"
 }
 ```
 
-为什么必须钉 ✗：本项目目录里是 **151 个 fzz** ✓，其中只有 **76 个** 是 `pixel-pcb-v*` ✓，
-剩下 75 个是 `pixel-breadboard*` / `pixel-schematic*` ✗ ⇒ 不钉就会混进「选版本」选择框 ✓。
+三个视图都能比了 ✓（2026-10-07 ✓）：`pixelDiff.fzzPattern` = PCB ✓（76 个 ✓）、
+`bbPattern` = 面包板 ✓（21 个 ✓）、`schPattern` = 原理图 ✓（52 个 ✓）——
+全量 fzz 151 个 ⇒ 不钉的话三个选择框里都会混进别的稿 ✗。
 ⚠️ `.vscode/` 在本仓 `.gitignore` 里 ✗ ⇒ 这两行目前只在**本机**生效 ✓，新克隆的机器上要自己加 ✓
 （要不要把它纳入版本管理，等用户定 ✓）。
