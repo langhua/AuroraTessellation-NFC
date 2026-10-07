@@ -38,5 +38,15 @@ def done(ok=True):
 
 if __name__ == "__main__":
     # 自测 ✓：`py -3.13 tools\beep.py` ⇒ 上行三声 ✓；加 `bad` ⇒ 下行两声 ✓
-    done(ok="bad" not in sys.argv)
-    print("beep ✓" if "bad" not in sys.argv else "beep ✗")
+    # ★ `--exit N` ✓（2026-10-07 补 ✓）：给 `run_detached.cmd` 用 ✓ ——
+    #   把被跑脚本的**退出码**带进来 ✓ ⇒ **0 响上行 ✓、非 0 响下行 ✓**（不用看屏幕 ✓）。
+    _a = sys.argv[1:]
+    _rc = 0
+    if "--exit" in _a:
+        try:
+            _rc = int(_a[_a.index("--exit") + 1])
+        except (IndexError, ValueError):
+            _rc = 1
+    _ok = ("bad" not in _a) and _rc == 0
+    done(ok=_ok)
+    print("beep ✓" if _ok else "beep ✗")

@@ -14,6 +14,10 @@ bom/
 # pipeline intermediates (hardware/pixel/run_v6.py writes here; deliverables go to hardware/pixel/)
 hardware/pixel/_work/
 
+# ★ 版本比对图（tools/render_revs.py 渲染的 png/svg + 索引）：
+#   一条命令能全部重生，且 79 版≈77 MB ⇒ 不入库
+hardware/pixel/diff/
+
 *.code-workspace
 
 *_图示.svg
