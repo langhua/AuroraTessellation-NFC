@@ -307,4 +307,7 @@ function deactivate() { }
 // 把**纯函数**引出来给单测用（`_work/_test_ext.js`）——
 // 扩展本体没法在这儿跑（要 VS Code 的扩展宿主），但"选版本 / 找最新清单 / 清单转 HTML"
 // 这几件是纯逻辑，能单独验 —— 免得只靠"装上去点一下看看"。
-module.exports = { activate, deactivate, _pure: { listVersions, newestDiffMd, mdToHtml, PAD_RE_SRC } };
+module.exports = {
+	activate, deactivate,
+	_pure: { listVersions, newestDiffMd, mdToHtml, PAD_RE_SRC, dirs }
+};
