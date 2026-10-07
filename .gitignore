@@ -18,6 +18,10 @@ hardware/pixel/_work/
 #   一条命令能全部重生，且 79 版≈77 MB ⇒ 不入库
 hardware/pixel/diff/
 
+# ★ 用户手画的示意图（与上面的 *_图示.svg 同批）：
+#   是**你的**素材，不是生成物 ⇒ 我不动它们，也不入库 ✗（2026-10-07 用户定 ✓）
+*_图示.png
+
 *.code-workspace
 
 *_图示.svg
