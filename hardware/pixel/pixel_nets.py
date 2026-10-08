@@ -34,10 +34,17 @@ NETS = {
      #   —— EPAD 要**接到 GND** ✓（原理图上就接过来 ✓；元件库里它仍是独立脚 ✓ 见 AGENTS §5 ✓）
                  ("U1", "EPAD")],
     "BR+":      [("D3", "C1"), ("D3", "C2"), ("R1", "#1")],
-    "RC":       [("R1", "#2"), ("C1", "#1"), ("U1", "PA1")],
+    # ★★ 2026-10-09 用户按 **PCB 布线需要**换了三只脚 ✓（手改版 `_work/v76_byHand.fzz` ✓，
+    #   核实见 README §五十四 ✓）：`RC` 的 ADC 输入 **`PA1(ADC_IN1)` ⇒ `PD6(ADC_IN6)`** ✓
+    #   （仍是 ADC 脚 ✓）；`DATA_IN` **`PA2` ⇒ `PC1`** ✓、`DATA_OUT` **`PD0` ⇒ `PD2`** ✓
+    #   （都是普通数字脚 ✓）。
+    #   ★ 代价（记着 ✗ 别忘 ✗）：① 线圈离开 `PA1` ⇒ **内置 OPA 的输入 `OPN0` 再也用不上** ✗
+    #     （要用 OPA 就得把线圈搬回 `PA1` ✓）；② 吃掉 `PD2`/`PD6` 两个 ADC 备用脚的其中两个 ✓。
+    #   ★ `LED_DIN` 仍留 **`PC6`** ✓（= `SPI_MOSI` ✓：用户 2026-10-09 决定**保住 SPI+DMA** ✓）。
+    "RC":       [("R1", "#2"), ("C1", "#1"), ("U1", "PD6")],
     "5V":       [("U1", "VDD"), ("C2", "#1"), ("LED2", "VDD"), ("J1", "#1"), ("J2", "#1")],
-    "DATA_IN":  [("U1", "PA2"), ("J1", "#3")],
-    "DATA_OUT": [("U1", "PD0"), ("J2", "#3")],
+    "DATA_IN":  [("U1", "PC1"), ("J1", "#3")],
+    "DATA_OUT": [("U1", "PD2"), ("J2", "#3")],
     "LED_DIN":  [("U1", "PC6"), ("LED2", "DI")],
 }
 
@@ -90,11 +97,14 @@ EXPECT = {
             #   上一版把它写成"单脚网、图上留空"是错的 ✗ —— 裸盘要接到 GND ✓
             "U1.connector20"},
     "BR+": {"D3.connector3", "D3.connector4", "R1.connector0"},
-    "RC": {"R1.connector1", "C1.connector0", "U1.connector1"},
+    "RC": {"R1.connector1", "C1.connector0", "U1.connector19"},
+    # ★ `U1.connector19` = **PD6** ✓（2026-10-09 换脚 ✓；原来 `connector1` = PA1 ✓）
     "5V": {"U1.connector5", "C2.connector0", "LED2.connector3", "J1.connector0",
            "J2.connector0"},
-    "DATA_IN": {"U1.connector2", "J1.connector2"},
-    "DATA_OUT": {"U1.connector4", "J2.connector2"},
+    "DATA_IN": {"U1.connector7", "J1.connector2"},
+    #   ★ `connector7` = **PC1** ✓（原 `connector2` = PA2 ✓）
+    "DATA_OUT": {"U1.connector15", "J2.connector2"},
+    #   ★ `connector15` = **PD2** ✓（原 `connector4` = PD0 ✓）
     "LED_DIN": {"U1.connector12", "LED2.connector2"},
 }
 
