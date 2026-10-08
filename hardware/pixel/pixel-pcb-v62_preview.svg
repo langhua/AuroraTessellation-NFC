@@ -858,15 +858,15 @@
  </g>
 <line x1="3308.46" y1="3455.19" x2="3546.11" y2="3388.73" stroke="#f28a00" stroke-width="91.84" stroke-linecap="round"/>
 <line x1="675.77" y1="507.69" x2="599.13" y2="745.87" stroke="#f28a00" stroke-width="91.84" stroke-linecap="round"/>
-<line x1="3070.64" y1="486.16" x2="1767.37" y2="289.19" stroke="#f28a00" stroke-width="91.84" stroke-linecap="round"/>
+<path d="M3070.64,486.16 C2636.20,272.76 2401.63,191.32 1767.37,289.19" fill="none" stroke="#f28a00" stroke-width="91.84" stroke-linecap="round"/>
 <line x1="3546.14" y1="3388.73" x2="3540.81" y2="2919.23" stroke="#f28a00" stroke-width="91.84" stroke-linecap="round"/>
 <line x1="1208.62" y1="499.62" x2="675.76" y2="507.69" stroke="#f28a00" stroke-width="91.84" stroke-linecap="round"/>
-<line x1="3540.83" y1="2919.23" x2="3628.35" y2="1277.64" stroke="#f28a00" stroke-width="91.84" stroke-linecap="round"/>
+<path d="M3540.83,2919.23 C3540.83,2919.23 4130.18,2301.78 3628.35,1277.64" fill="none" stroke="#f28a00" stroke-width="91.84" stroke-linecap="round"/>
 <line x1="3628.33" y1="1277.64" x2="3070.63" y2="486.16" stroke="#f28a00" stroke-width="91.84" stroke-linecap="round"/>
-<line x1="1767.37" y1="289.19" x2="1208.64" y2="499.62" stroke="#f28a00" stroke-width="91.84" stroke-linecap="round"/>
+<path d="M1767.37,289.19 C1617.21,323.01 1457.73,375.98 1208.64,499.62" fill="none" stroke="#f28a00" stroke-width="91.84" stroke-linecap="round"/>
 <line x1="1184.39" y1="718.59" x2="749.78" y2="745.87" stroke="#f28a00" stroke-width="91.84" stroke-linecap="round"/>
-<line x1="2889.51" y1="667.27" x2="1184.38" y2="718.59" stroke="#f28a00" stroke-width="91.84" stroke-linecap="round"/>
-<line x1="3311.73" y1="2910.23" x2="3346.34" y2="1193.53" stroke="#f28a00" stroke-width="91.84" stroke-linecap="round"/>
+<path d="M2889.51,667.27 C1945.20,295.27 1336.07,716.74 1184.38,718.59" fill="none" stroke="#f28a00" stroke-width="91.84" stroke-linecap="round"/>
+<path d="M3311.73,2910.23 C3311.73,2910.23 4055.66,2198.89 3346.34,1193.53" fill="none" stroke="#f28a00" stroke-width="91.84" stroke-linecap="round"/>
 <line x1="3346.34" y1="1193.53" x2="2851.87" y2="704.93" stroke="#f28a00" stroke-width="91.84" stroke-linecap="round"/>
 <line x1="1508.05" y1="1875.82" x2="1410.12" y2="1875.82" stroke="#f28a00" stroke-width="30.61" stroke-linecap="round"/>
 <line x1="1508.05" y1="1875.82" x2="1508.06" y2="1890.89" stroke="#f28a00" stroke-width="30.61" stroke-linecap="round"/>

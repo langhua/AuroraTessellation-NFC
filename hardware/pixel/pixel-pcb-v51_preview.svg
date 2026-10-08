@@ -1335,10 +1335,10 @@
    <line x1="-2.667" y1="0.964" x2="-2.667" y2="2.600" stroke="#444444" stroke-width="0.12" stroke-linecap="round"/>
    <line x1="2.667" y1="0.964" x2="2.667" y2="2.600" stroke="#444444" stroke-width="0.12" stroke-linecap="round"/>
   </g>
-<circle cx="3466.66" cy="587.67" r="82.86" fill="none" stroke="#b8860b" stroke-width="75.33"/>
-<circle cx="3466.66" cy="587.67" r="165.73" fill="#000000" stroke="none"/>
-<circle cx="604.10" cy="3450.21" r="82.86" fill="none" stroke="#b8860b" stroke-width="75.33"/>
-<circle cx="604.10" cy="3450.21" r="165.73" fill="#000000" stroke="none"/>
+<circle cx="3466.57" cy="587.59" r="82.86" fill="none" stroke="#b8860b" stroke-width="75.33"/>
+<circle cx="3466.57" cy="587.59" r="165.73" fill="#000000" stroke="none"/>
+<circle cx="604.02" cy="3450.13" r="82.86" fill="none" stroke="#b8860b" stroke-width="75.33"/>
+<circle cx="604.02" cy="3450.13" r="165.73" fill="#000000" stroke="none"/>
 <text x="3418.16" y="2268.27" font-family="DroidSans, sans-serif" font-size="55.3" font-weight="bold" fill="#333333" text-anchor="middle">C1</text>
 <text x="2035.39" y="1532.50" font-family="DroidSans, sans-serif" font-size="55.3" font-weight="bold" fill="#333333" text-anchor="middle">C2</text>
 <text x="1508.06" y="2022.14" font-family="DroidSans, sans-serif" font-size="55.3" font-weight="bold" fill="#333333" text-anchor="middle">D3</text>

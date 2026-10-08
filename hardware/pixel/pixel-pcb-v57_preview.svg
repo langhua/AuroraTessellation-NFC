@@ -858,15 +858,15 @@
  </g>
 <line x1="3308.46" y1="3455.19" x2="3546.11" y2="3388.73" stroke="#f28a00" stroke-width="91.84" stroke-linecap="round"/>
 <line x1="675.77" y1="507.69" x2="599.13" y2="745.87" stroke="#f28a00" stroke-width="91.84" stroke-linecap="round"/>
-<line x1="3070.64" y1="486.16" x2="1767.37" y2="289.19" stroke="#f28a00" stroke-width="91.84" stroke-linecap="round"/>
+<path d="M3070.64,486.16 C2636.20,272.76 2401.63,191.32 1767.37,289.19" fill="none" stroke="#f28a00" stroke-width="91.84" stroke-linecap="round"/>
 <line x1="3546.14" y1="3388.73" x2="3540.81" y2="2919.23" stroke="#f28a00" stroke-width="91.84" stroke-linecap="round"/>
 <line x1="1208.62" y1="499.62" x2="675.76" y2="507.69" stroke="#f28a00" stroke-width="91.84" stroke-linecap="round"/>
-<line x1="3540.83" y1="2919.23" x2="3628.35" y2="1277.64" stroke="#f28a00" stroke-width="91.84" stroke-linecap="round"/>
+<path d="M3540.83,2919.23 C3540.83,2919.23 4130.18,2301.78 3628.35,1277.64" fill="none" stroke="#f28a00" stroke-width="91.84" stroke-linecap="round"/>
 <line x1="3628.33" y1="1277.64" x2="3070.63" y2="486.16" stroke="#f28a00" stroke-width="91.84" stroke-linecap="round"/>
-<line x1="1767.37" y1="289.19" x2="1208.64" y2="499.62" stroke="#f28a00" stroke-width="91.84" stroke-linecap="round"/>
+<path d="M1767.37,289.19 C1617.21,323.01 1457.73,375.98 1208.64,499.62" fill="none" stroke="#f28a00" stroke-width="91.84" stroke-linecap="round"/>
 <line x1="1184.39" y1="718.59" x2="749.78" y2="745.87" stroke="#f28a00" stroke-width="91.84" stroke-linecap="round"/>
-<line x1="2889.51" y1="667.27" x2="1184.38" y2="718.59" stroke="#f28a00" stroke-width="91.84" stroke-linecap="round"/>
-<line x1="3311.73" y1="2910.23" x2="3346.36" y2="1193.53" stroke="#f28a00" stroke-width="91.84" stroke-linecap="round"/>
+<path d="M2889.51,667.27 C1945.20,295.27 1336.07,716.74 1184.38,718.59" fill="none" stroke="#f28a00" stroke-width="91.84" stroke-linecap="round"/>
+<path d="M3311.73,2910.23 C3311.73,2910.23 4055.66,2198.89 3346.36,1193.53" fill="none" stroke="#f28a00" stroke-width="91.84" stroke-linecap="round"/>
 <line x1="3311.73" y1="2910.23" x2="3296.25" y2="3077.90" stroke="#f28a00" stroke-width="91.84" stroke-linecap="round"/>
 <line x1="3308.46" y1="3605.85" x2="3040.15" y2="3603.40" stroke="#f28a00" stroke-width="91.84" stroke-linecap="round"/>
 <line x1="3296.25" y1="3077.90" x2="3040.18" y2="3603.40" stroke="#f2c600" stroke-width="91.84" stroke-linecap="round"/>
@@ -1308,10 +1308,10 @@
    <line x1="-2.667" y1="0.964" x2="-2.667" y2="2.600" stroke="#444444" stroke-width="0.12" stroke-linecap="round"/>
    <line x1="2.667" y1="0.964" x2="2.667" y2="2.600" stroke="#444444" stroke-width="0.12" stroke-linecap="round"/>
   </g>
-<circle cx="3466.66" cy="587.67" r="82.86" fill="none" stroke="#b8860b" stroke-width="75.33"/>
-<circle cx="3466.66" cy="587.67" r="165.73" fill="#000000" stroke="none"/>
-<circle cx="604.10" cy="3450.21" r="82.86" fill="none" stroke="#b8860b" stroke-width="75.33"/>
-<circle cx="604.10" cy="3450.21" r="165.73" fill="#000000" stroke="none"/>
+<circle cx="3466.57" cy="587.59" r="82.86" fill="none" stroke="#b8860b" stroke-width="75.33"/>
+<circle cx="3466.57" cy="587.59" r="165.73" fill="#000000" stroke="none"/>
+<circle cx="604.02" cy="3450.13" r="82.86" fill="none" stroke="#b8860b" stroke-width="75.33"/>
+<circle cx="604.02" cy="3450.13" r="165.73" fill="#000000" stroke="none"/>
 <text x="1834.89" y="2259.93" font-family="DroidSans, sans-serif" font-size="55.3" font-weight="bold" fill="#333333" text-anchor="middle">C1</text>
 <text x="2942.42" y="617.58" font-family="DroidSans, sans-serif" font-size="55.3" font-weight="bold" fill="#333333" text-anchor="middle">C2</text>
 <text x="1508.06" y="2022.14" font-family="DroidSans, sans-serif" font-size="55.3" font-weight="bold" fill="#333333" text-anchor="middle">D3</text>
