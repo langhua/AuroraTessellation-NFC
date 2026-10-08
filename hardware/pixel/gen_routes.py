@@ -34,6 +34,7 @@ sys.path.insert(0, HERE)
 import toolpaths                                                  # noqa: E402,F401
 import part_box as PB                                             # noqa: E402
 import pcb_check as PC                                            # noqa: E402
+import pcb_current as CC                                          # noqa: E402
 import pcb_route as RT                                            # noqa: E402
 import pcb_wire as PW                                             # noqa: E402
 import projdata                                                   # noqa: E402
@@ -1212,8 +1213,17 @@ def main(argv):
     #     `pcb_route.NECK_MIL` 也是 8 ✓ ⇒ 缩宽机制留着 ✓，但两边同值 ⇒ 出图**只有一个宽度** ✓
     #     （病根：12 mil 主体 + 8 mil 缩宽段 = 忽宽忽窄 ✗，就是用户看到的那样 ✗）。
     #   ★ 想改回按网分档：`--mil-signal=12 --mil-power=24` ✓（开关都在 ✓）。
+    # ★★ 2026-10-08 改 ✗✓：电源线宽**不再写死** ✗ —— 由 `pixel_nets.POWER_SPEC`
+    #   （64 颗串联 + 每 8 块一次注入 ✓）**反推** ✓（`pcb_current.pick_mil` ✓）。
+    #   ★ 为什么必须粗 ✗：**压降**，不是载流 —— 段电流 0.496 A 时 8 mil 也够载
+    #     （0.75 A ✓），但实测段压降 **0.463 V（9.3% ✗）** 超预算 ✓；
+    #     **24 mil ⇒ 0.163 V（3.3% ✓）** ✓（量法：`pcb_current.py <板> --try-mil=8,12,16,24` ✓）。
+    #   ★ 想手动压回细线（例如为了布线好通 ✗）：`--mil-power=8` ✓ 显式覆盖 ✓。
     mil_sig = RT.opt(argv, "--mil-signal", RT.opt(argv, "--mil", 8, int), int)
-    mil_pow = RT.opt(argv, "--mil-power", 8, int)
+    mil_pow = RT.opt(argv, "--mil-power", None, int)
+    if mil_pow is None:
+        mil_pow, _why = CC.pick_mil(CC.spec_of(data, {}))
+        print("· 电源线宽 **%d mil** ✓（按电流规格反推 ✓：%s ✓）" % (mil_pow, _why))
     for _m in (mil_sig, mil_pow):
         if _m not in RT.MIL_TIERS:
             raise SystemExit("✗ 线宽只能是这几档 ✓（Fritzing 的宽度下拉 ✓）：%s（mil ✓）"
@@ -1289,7 +1299,18 @@ def main(argv):
         _last = tuple(power)
     else:
         _last = ()
-    RT.TRACE_MM = max(mil_sig, mil_pow) * RT.MIL_MM
+    # ★★ 2026-10-08 改 ✗✓：全局障碍膨胀量取 **`TRACE_MM` = min(信号, 电源)** ✓ ——
+    #   ✗ 旧写法 `max(...)` 会让**所有**焊盘/件铜/安装孔/板边**按最粗那档膨胀** ✗
+    #     ⇒ 参数一调宽（24 mil ⇒ 0.61 + 0.15 = 0.76 mm 一圈 ✗）整个板子就没有走道了 ✗。
+    #   实测（本轮 ✓，同一份 `_work/v69_bare.fzz`、同一批参数 ✓）：
+    #     `--mil-power=24` ＋ 旧写法 ⇒ 连通 **5/9** ✗（8 mil 时是 7/9 ✓）；
+    #     `--mil-power=24` ＋ 本写法 ⇒ **7/9** ✓（与 8 mil 持平 ✓，见下面的 A/B ✓）。
+    #   ★ 为什么这样仍然安全 ✓：粗网**自己**那圈净空由布线器按**它自己的宽度**补上 ✓ ——
+    #     `pcb_route` 里 `grow = w_of(net)/2 + CLEAR_MM` ✓，外加对障碍表的
+    #     `extra = max(0, w_of(net)/2 − TRACE_MM/2)` ✓ ＋ 板框按 `w_of(net)/2` 重挡 ✓
+    #     （那三处的注释写着同一件事 ✓，2026-10-01 定的 ✓）。
+    #   ⇒ 口径：`TRACE_MM` 只跟**最细的**那一档走 ✓，✗ 它**不再**代表"全板最粗" ✗。
+    RT.TRACE_MM = min(mil_sig, mil_pow) * RT.MIL_MM
     # ★ 两项代价旋钮（2026-09-30 用户要"图能看懂能改" ✓）—— **可以分别调** ✓，
     #   因为实测它们各管一头 ✓：
     #     `--turn`     拐弯代价 ✓ ⇒ 路径直 ✓、**走线对象变少**（130 → 99 ✓）⇒ 好读好改 ✓；
