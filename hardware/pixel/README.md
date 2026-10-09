@@ -6637,6 +6637,7 @@ py -3.13 _work\_r79_accept.py _work\v76.4_byHand.pre-xreduce.fzz pixel-pcb-v79.f
   —— `--label` 那条教训 ✓）。缺省 **0.15 mm** ✓、范围 **[0, 2.54] mm** ✓、超范围 ⇒ **夹到边界 ＋ 警告** ✓
   （不静默 ✗、不崩 ✗）；**只写 `--textgap`（不给值）** ⇒ 用缺省 ✓；`--text-gap=0` ⇒ **整条规则关掉** ✓
   ＝ **一键回旧行为** ✓。
+  另有一把**只放行第二档**的开关 ✓：`--text-gap-symbol` ✓（缺省**关** ✓ —— 见下 ④ 的理由 ✗）。
 - **★ 判据只有一份** ✓：新增 `tools/sch_textgap.py` ✓ —— **生成器的硬闸门 ＋ 自动修 / 验收探针 ⑫ /
   渲染器 ④d** 三处**都调它** ✓（本仓最贵的那类错是"同一个概念两把尺子" ✗）。同一轮还把
   **位号行的内容规则**从 `render_sch.py` 上收成 `sch_text.fritzing_lines()` ✓（原来只写在渲染器里 ✗）。
@@ -6650,8 +6651,17 @@ py -3.13 _work\_r79_accept.py _work\v76.4_byHand.pre-xreduce.fzz pixel-pcb-v79.f
     （滤空了**退回全量** ✓ —— 不许因此丢解 ✗）；
   · ✗ **网标签不能挪** ✗ —— 它必须坐在**切口线端**上 ✓（挪了就把网切开 ⇒ "每网 1 岛"当场挂 ✗）。
 - **第二档：微调符号件 ≤ 1 个车道** ✓（`sch_textgap.nudge_symbol()` ✓）—— 只给**接地 / 网标签符号** ✓：
-  挪它**同时把它那条引线的端点一起挪** ✓ ⇒ **接头原地不动** ✓（电气一字不变 ✓）。
+  挪它**同时把它那条引线的端点一起挪** ✓ ⇒ **接头原地不动** ✓。
   ★ 为什么**不给器件** ✗：挪一个器件要牵动**它所有的脚** ✗ —— 那已经等于重新布线 ✗（本档不做 ✗、**但要报出来** ✓）。
+  ★★ **默认不做** ✗（要 `--text-gap-symbol` 才放行 ✓）—— ★ **实测踩过** ✗：`--text-gap 5` 那一次
+  第二档把 `Wire90015558` 挪成**斜线** ✗ ⇒ **打破了「线距 ≥ `--wire-gap`」这条硬闸门** ✗✗
+  ⇒ 按仓规「**硬约束一条都不许退** ✗」⇒ 默认档**只挪文字** ✓（文字挪动**碰不到任何几何** ✓）。
+  ★★ 放行后也**必须过五道复核** ✓（`_tg_nudge_ok()` ✓）：① 文字违例**变少** ✗② **线距不新增** ✗
+  （`sch_geom.conductor_clearance` ✓ 同一把尺子 ✓）③ **不穿体** ✓④ **不压别人的脚** ✓（自己的脚豁免 ✓）
+  ⑤ **不与已布线重叠** ✓ —— 任何一条不过 ⇒ **原样撤回** ✗。
+  ★ 连"哪条线端在它身上"也**重定过** ✗✓（`symbol_pin()` ✓）：接地符号的**脚 ≠ 原点** ✗
+  （实测偏 `(+9.001, +0.596)` ✓）；而且只认**恰好一条**重合线端 ✓（0 条 / >1 条 ⇒ **不动** ✗）——
+  ✗ 原来取"**离符号最近**的那个线端"不是单射 ⇒ 挪回去**挪不回来** ✗（那个斜线就是它造成的 ✗）。
 - **第三档：还不行 ⇒ 大声报 ＋ 退出码 1** ✗（`TEXT_GAP_LEFT` ✓ —— **不许静默放过** ✗，`AGENTS §0` ✓）。
   ★ **记账** ✗：用户给的第三条出路「**删除冗余值文字**」**本轮没有触发** ✓（前两档已治好全部 3 处 ✓）
   ⇒ 按仓规「**不许把没收益的复杂度留下** ✗」⇒ **不写这档** ✗；真要它，得**先拿一份 Fritzing 导出**
@@ -6721,7 +6731,7 @@ py -3.13 _work\_r79_accept.py _work\v76.4_byHand.pre-xreduce.fzz pixel-pcb-v79.f
 ### ⑦ 七道验收 ✓（**7 / 7** ✓ —— 原始输出留档 `_work/_r80_accept.txt` ✓）
 
 ```bat
-py -3.13 _work\_r80_accept.py pixel-pcb-v79.fzz pixel-pcb-v80.fzz _work\_r80_accept.txt
+py -3.13 _work\\_r80_accept.py pixel-pcb-v79.fzz pixel-pcb-v80.fzz _work\\_r80_accept.txt
 ```
 
 | # | 项 ✓ | 结果 ✓ |
@@ -6737,21 +6747,21 @@ py -3.13 _work\_r80_accept.py pixel-pcb-v79.fzz pixel-pcb-v80.fzz _work\_r80_acc
 ### ⑧ 复现命令 ✓（交付件 = `_work/v76.4_byHand.fzz` ＝ `pixel-pcb-v80.fzz` ✓；改前留 `_work/v76.4_byHand.pre-textgap.fzz` ✓）
 
 ```bat
-set TOOLS=F:\git\fritzing-parts-langhua\tools
-copy _work\v76.4_byHand.fzz _work\v76.4_byHand.pre-textgap.fzz                             # 先备份 ✓
-py -3.13 %TOOLS%\sch_strip_wires.py _work\v76.4_byHand.pre-dedupe.fzz _work\_r0_strip.fzz    # 与 §六十～六十五 同一条链 ✓
-py -3.13 %TOOLS%\render_sch.py _work\_r0_strip.fzz _work\_r0_base.png --pins-out=_work\_r0_pins.py
-py -3.13 gen_schematic_wires.py _work\_r0_strip.fzz _work\_r0_base.svg _work\_v80_gen.fzz ^
-    --nets=pixel_nets.py --orig _work\v76.4_byHand.pre-dedupe.fzz --ratio 1.0 --rails --islands=GND ^
+set TOOLS=F:\\git\\fritzing-parts-langhua\\tools
+copy _work\\v76.4_byHand.fzz _work\\v76.4_byHand.pre-textgap.fzz                             # 先备份 ✓
+py -3.13 %TOOLS%\\sch_strip_wires.py _work\\v76.4_byHand.pre-dedupe.fzz _work\\_r0_strip.fzz    # 与 §六十～六十五 同一条链 ✓
+py -3.13 %TOOLS%\\render_sch.py _work\\_r0_strip.fzz _work\\_r0_base.png --pins-out=_work\\_r0_pins.py
+py -3.13 gen_schematic_wires.py _work\\_r0_strip.fzz _work\\_r0_base.svg _work\\_v80_gen.fzz ^
+    --nets=pixel_nets.py --orig _work\\v76.4_byHand.pre-dedupe.fzz --ratio 1.0 --rails --islands=GND ^
     --vlanes=5V@29.778 --decoup --hardbody --corebox --dedupe-symbols --complete-islands ^
     --symmerge --mst-merge --bodyoutline --mst-shape --escs 7.2,12.2,19.4 --text-gap
 rem        ↑ 本轮唯一新增的开关 ✓：`--text-gap`（不给值 ⇒ 缺省 **0.15 mm** ✓）
-py -3.13 %TOOLS%\merge_sch.py _work\v76.4_byHand.pre-dedupe.fzz _work\_v80_gen.fzz _work\_v80_out.fzz
-copy _work\_v80_out.fzz _work\v76.4_byHand.fzz                                               # 就地更新 ✓
-copy _work\_v80_out.fzz pixel-pcb-v80.fzz                                                    # 交付件 ✓
-py -3.13 %TOOLS%\render_sch.py pixel-pcb-v80.fzz pixel-pcb-v80_sch.png                       # 原理图预览 ✓
-py -3.13 %TOOLS%\render_pcb.py pixel-pcb-v80.fzz pixel-pcb-v80_preview.svg --png             # PCB 预览 ✓（PCB 没动 ⇒ 与 v79 的预览**逐字节相同** ✓）
-py -3.13 _work\_r80_accept.py pixel-pcb-v79.fzz pixel-pcb-v80.fzz _work\_r80_accept.txt
+py -3.13 %TOOLS%\\merge_sch.py _work\\v76.4_byHand.pre-dedupe.fzz _work\\_v80_gen.fzz _work\\_v80_out.fzz
+copy _work\\_v80_out.fzz _work\\v76.4_byHand.fzz                                               # 就地更新 ✓
+copy _work\\_v80_out.fzz pixel-pcb-v80.fzz                                                    # 交付件 ✓
+py -3.13 %TOOLS%\\render_sch.py pixel-pcb-v80.fzz pixel-pcb-v80_sch.png                       # 原理图预览 ✓
+py -3.13 %TOOLS%\\render_pcb.py pixel-pcb-v80.fzz pixel-pcb-v80_preview.svg --png             # PCB 预览 ✓（PCB 没动 ⇒ 与 v79 的预览**逐字节相同** ✓）
+py -3.13 _work\\_r80_accept.py pixel-pcb-v79.fzz pixel-pcb-v80.fzz _work\\_r80_accept.txt
 ```
 
 ★ **一键回旧行为** ✓ ＝ **什么都不加** ✓（`--text-gap` 不写 ⇒ 整条规则不跑 ✓，实测**逐字节相同** ✓）；
@@ -6760,7 +6770,7 @@ py -3.13 _work\_r80_accept.py pixel-pcb-v79.fzz pixel-pcb-v80.fzz _work\_r80_acc
 `_tg_probe.py`（直接调共享判据 ✓）、`_tg_boxes.py`（框/本体对照 ✓）、`_tg_wires.py`（按网列线 ✓）、
 `_tg_fix.py`（自动修原型 ✓）、`_spot.py`（按 sketch 坐标裁特写 ✓ —— **不标定** ✓）、
 `_r80_accept.py`（七道验收一次跑齐 ✓）、`_r80_accept.txt`（原始输出 ✓）。
-★ **改前的量**（要复核 v79 的 3 对 ✓）：`py -3.13 -X utf8 _work\_tg_probe.py pixel-pcb-v79.fzz` ✓。
+★ **改前的量**（要复核 v79 的 3 对 ✓）：`py -3.13 -X utf8 _work\\_tg_probe.py pixel-pcb-v79.fzz` ✓。
 
 ### ⑨ 遗留 ✗（下一手 ✓）
 

@@ -2386,6 +2386,11 @@ GROUND_GAP = 9.0
 TEXT_GAP_ON = False
 TEXT_GAP_MM = 0.15
 TEXT_GAP_LEFT = []          # ★ 修完还剩的违例 ✓（>0 ⇒ 闸门失败 ⇒ 退出码 1 ✓）
+# ★★ 2026-10-09 ✓ `--text-gap-symbol`：放行**第二档**（微调符号件 ≤ 1 个车道 ✓）
+#   —— 为什么**默认不做** ✗、以及它要过哪五道复核 ✓，全写在 `textgap_pass()` / `_tg_symbol_tier()` 里 ✓。
+#   ★ 记账（实测 ✓）：`--text-gap 5` 那一次它把 `Wire90015558` 挪成**斜线** ✗
+#     ⇒ **打破了「线距 ≥ `--wire-gap`」** ✗✗ ⇒ 按仓规「硬约束一条都不许退 ✗」⇒ **默认关** ✓。
+TEXT_GAP_SYMBOL = False
 # ★★ 2026-10-09 ✓ `--stub-dive`：给 `candidates()` 加「**先出脚 → 竖一段（离轨）→ 横着走**」那一族 ✓
 #   —— 为什么、取多少条通道、以及第六十六轮 `--stair` 全积跑不动的账，全写在 `candidates()` 里 ✓。
 #   ★ **默认关** ✓ ⇒ 不给开关时输出**一字节不差** ✓（本仓纪律 ✓）。
@@ -2657,6 +2662,13 @@ def main(argv):
         global HARD_FJ
         HARD_FJ = False
         print("硬闸门 HARD_FJ：**关闭** ✓（`--nofj` ⇒ 回到 v25：跨网假接头不拦 ✗）")
+    if "--text-gap-symbol" in argv:            # 第四十九轮 ✓：放行第二档（微调符号 ✓）
+        global TEXT_GAP_SYMBOL
+        TEXT_GAP_SYMBOL = True
+        print("★ **`--text-gap-symbol`** ✓：放行第二档 ⇒ 文字挪不开时**可以微调符号件 ≤ 1 个车道** ✓"
+              "（连同它那条引线的端点一起挪 ✓ ⇒ 接头原地不动 ✓）"
+              "★ 但它**会动几何** ⇒ 每挪一步都要过**五道复核** ✓（文字违例变少 ✓、线距不新增 ✓、"
+              "穿体 ✓、贴脚 ✓、重叠 ✓）⇒ 任何一条不过就**原样撤回** ✓")
     if "--stub-dive" in argv:                  # 第四十九轮实验 ✓：给候选加「先竖后横」那一族 ✓
         global STUB_DIVE
         STUB_DIVE = True
@@ -8119,7 +8131,7 @@ def dedupe_power_symbols(insts, nets, orig_path, only=None, sroot=None, eps=0.05
     return rep
 
 
-def textgap_pass(sroot, packed):
+def textgap_pass(sroot, packed, wires=None, boxes=None, pin_all=()):
     r"""★★★ **`--text-gap` 的主入口** ✓ —— 判据 ＋ 自动修 ＋ 台账（**全部调共享实现** ✓）
 
     ① 判据 ✓：`sch_textgap.violations()` ✓（= 验收探针 ⑫ **同一份** ✓）；
@@ -8127,11 +8139,17 @@ def textgap_pass(sroot, packed):
        · 第一档 ⇒ `sch_textgap.repair()` ✓：**挪位号块** ✓（网标签**不能挪** ✗ —— 它必须坐在切口上 ✓，
          挪了就把网切开 ⇒ "每网 1 岛"当场挂 ✗）；
        · 第二档 ⇒ `sch_textgap.nudge_symbol()` ✓：把一个**符号件**（接地 / 网标签）挪 **≤ 一个车道** ✓
-         并把**它那条引线的端点一起挪** ✓（接头不动 ⇒ 电气一字不变 ✓）；
+         并把**它那条引线的端点一起挪** ✓（接头不动 ✓）。
+         ★★ **默认不做** ✗（`TEXT_GAP_SYMBOL` ✓，要 `--text-gap-symbol` 才放行 ✓）——
+           因为它**会动几何** ✗：实测（`--text-gap 5` ✓）把 `Wire90015558` 挪成斜线后
+           **打破了「线距 ≥ `--wire-gap`」这条硬闸门** ✗✗ ⇒ 按仓规「**硬约束一条都不许退**」✗
+           ⇒ 默认档**只挪文字** ✓（文字挪动**碰不到任何几何** ✓）。
+         ★ 放行时也**必须**过四道复核 ✓（`_tg_safe_nudge()` ✓）：① 文字违例**变少** ✗② 线距
+           不新增 ✗③ 不穿体 ✗④ 不压别人的脚 ✗⑤ 不与已布线重叠 ✗ —— 任何一条不过 ⇒ **原样撤回** ✓。
        · 第三档 ⇒ **大声报 + 退出码 1** ✗（`TEXT_GAP_LEFT` ✓）—— ★ **不许静默放过** ✗（`AGENTS §0` ✓）。
          ★ 记账：用户给的另一条出路「删除冗余值文字」**本轮没有触发** ✓（前两档已治好全部 3 处 ✓）
-         ⇒ 按仓规**不留没收益的复杂度** ✗（`README §六十二 ⑦` ✓）：真要它，得先拿一份 Fritzing
-         **导出**验一次 `<displayKey>` 的语义 ✓（本仓不许拿未验证的写法当闸门 ✗）。
+         ⇒ 按仓规**不留没收益的复杂度** ✗：真要它，得先拿一份 Fritzing **导出**验一次 `<displayKey>`
+         的语义 ✓（本仓不许拿未验证的写法当闸门 ✗）。
     ★ 返回 `(剩余违例数, 挪动台账)` ✓。
     """
     gap_u = TEXT_GAP_MM / TG.MM
@@ -8151,32 +8169,14 @@ def textgap_pass(sroot, packed):
 
     left, moves = TG.repair(sroot, texts, objs, gap_u, pairs)
     texts, objs = TG.items(sroot, packed)
-    if left:
-        # ② 微调**符号件** ≤ 一个车道 ✓（只挪"离违例那处最近"的符号 ✓，一次一个车道 ✓）
-        _insts = TG.instances(sroot)
-        for _t, _o, _d, _i in list(TG.violations(sroot, texts, objs, gap_u, pairs)):
-            if _o["kind"] not in ("接地符号", "网标签符号"):
-                continue
-            _g2 = _insts.get(_o["mi"], {}).get("gel")
-            if _g2 is None:
-                continue
-            _best, _bk = None, None
-            for _dx, _dy in ((TG.LANE, 0), (-TG.LANE, 0), (0, TG.LANE), (0, -TG.LANE)):
-                TG.nudge_symbol(sroot, _o["mi"], _dx, _dy)
-                _n = len(TG.violations(sroot, *TG.items(sroot, packed), gap_u, pairs))
-                TG.nudge_symbol(sroot, _o["mi"], -_dx, -_dy)        # 先还原 ✓ 再比 ✓
-                if _bk is None or _n < _bk:
-                    _best, _bk = (_dx, _dy), _n
-            if _best is not None and _bk < left:
-                TG.nudge_symbol(sroot, _o["mi"], _best[0], _best[1])
-                print("   ★ 第二档 ✓：**微调符号 %s**（%s ✓）by (%g,%g) = **%.1f 个车道** ✓"
-                      "（它那条引线的端点**一起挪** ✓ ⇒ 接线一字不变 ✓；违例 %d ⇒ %d ✓）"
-                      % (_o["name"], _o["kind"], _best[0], _best[1],
-                         math.hypot(_best[0], _best[1]) / TG.LANE, left, _bk))
-                left = _bk
-                texts, objs = TG.items(sroot, packed)
-                if not left:
-                    break
+    if left and not TEXT_GAP_SYMBOL:
+        print("   ⚠ 第一档之后仍剩 **%d 对** ✗ ⇒ 本可走第二档（**微调符号 ≤1 车道** ✓），"
+              "但它**会动几何** ⇒ **默认不做** ✗（`--text-gap-symbol` 才放行 ✓）；"
+              "★ 为什么默认不做 ✓：`--text-gap 5` 实测它把 `Wire90015558` 挪成斜线、"
+              "**打破了「线距」这条硬闸门** ✗✗（硬约束不许退 ✓）" % left)
+    if left and TEXT_GAP_SYMBOL:
+        left = _tg_symbol_tier(sroot, packed, texts, objs, pairs, gap_u, left,
+                               wires, boxes, pin_all)
         texts, objs = TG.items(sroot, packed)
         left = len(TG.violations(sroot, texts, objs, gap_u, pairs))
     if moves:
@@ -8187,8 +8187,93 @@ def textgap_pass(sroot, packed):
         print("   ✗ 改后：%s" % TG.fmt_net(_v, gap_u))
     if after:
         print("   ✗✗ **不许静默放过** ✗（`AGENTS §0` ✓）—— 要治它得：① 放宽某条可读性规则 ✗、"
-              "② 挪器件（本档只给符号件 ✓）、③ 删冗余值文字（**要先用一份 Fritzing 导出验** ✓）")
+              "② 挪器件（本档只给符号件 ✓、且要 `--text-gap-symbol` ✓）、"
+              "③ 删冗余值文字（**要先用一份 Fritzing 导出验** ✓）")
     return len(after), moves
+
+
+def _tg_wire_triples(sroot, wires):
+    """把 `emit()` 那份 `wires`（含网 ✓）**重新按 `sroot` 读一遍坐标** ✓ ⇒ `[(p,q,net)]` ✓"""
+    inst = TG.instances(sroot)
+    out = []
+    for w in wires or ():
+        d = inst.get(str(w.get("mi")))
+        pq = TG.wire_ends(d) if d else None
+        if pq:
+            out.append((pq[0], pq[1], w.get("net")))
+    return out
+
+
+def _tg_symbol_tier(sroot, packed, texts, objs, pairs, gap_u, left, wires, boxes, pin_all):
+    r"""第二档 ✓：**微调符号件 ≤ 1 个车道** ✓ —— ★★ 每挪一步都要**过五道复核** ✗✓
+
+    复核（任何一条不过 ⇒ **原样撤回** ✓）：① 文字违例**变少** ✓；② **线距不新增** ✗✓
+    （`sch_geom.conductor_clearance` ✓ 同一把尺子 ✓）；③ **不穿体** ✓（`body_hard_bad` ✓）；
+    ④ **不压别人的脚** ✓（`pin_intr` ✓，自己的脚豁免 ✓）；⑤ **不与已布线重叠** ✓（`ovl_hard_bad` ✓）。
+    ★ 为什么非要这五道 ✗：`--text-gap 5` 实测过一次**打破硬闸门** ✗✗（见 `textgap_pass` 的文档串 ✓）。
+    """
+    tri0 = _tg_wire_triples(sroot, wires)
+    gap0 = len(SG.conductor_clearance(tri0, gap=WIRE_GAP)[2]) if (tri0 and HARD_GAP) else 0
+    insts = TG.instances(sroot)
+    for _t, _o, _d, _i in list(TG.violations(sroot, texts, objs, gap_u, pairs)):
+        if _o["kind"] not in ("接地符号", "网标签符号"):
+            continue
+        _d2 = insts.get(str(_o["mi"]))
+        if _d2 is None:
+            continue
+        _att = TG.symbol_attachments(sroot, _d2)
+        if _att is None:
+            print("   ⊘ 符号 %s（%s）：**恰好一条重合线端**这条认不出 ✗ ⇒ 不动 ✓"
+                  % (_o["name"], _o["kind"]))
+            continue
+        _wmi = str(_att[2])
+        _own = {(_d2["title"], cid) for cid in
+                {c.get("connectorId") for c in _d2["sv"].iter("connector")}}
+        _best, _bk = None, None
+        for _dx, _dy in ((TG.LANE, 0), (-TG.LANE, 0), (0, TG.LANE), (0, -TG.LANE)):
+            TG.nudge_symbol(sroot, _o["mi"], _dx, _dy, _att)
+            _bad = _tg_nudge_ok(sroot, packed, texts, objs, pairs, gap_u, left,
+                                wires, boxes, pin_all, gap0, _own, _wmi, insts)
+            TG.nudge_symbol(sroot, _o["mi"], -_dx, -_dy, _att)          # ★ 严格互逆 ✓
+            if _bad is not None and (_bk is None or _bad < _bk):
+                _best, _bk = (_dx, _dy), _bad
+        if _best is not None and _bk < left:
+            TG.nudge_symbol(sroot, _o["mi"], _best[0], _best[1], _att)
+            print("   ★ 第二档 ✓：**微调符号 %s**（%s ✓）by (%g,%g) = **%.1f 个车道** ✓"
+                  "（它那条引线的端点**一起挪** ✓ ⇒ 接头原地不动 ✓；"
+                  "★ 已过**五道复核** ✓：文字违例 %d ⇒ %d ✓、线距/穿体/贴脚/重叠**都没退** ✓）"
+                  % (_o["name"], _o["kind"], _best[0], _best[1],
+                     math.hypot(_best[0], _best[1]) / TG.LANE, left, _bk))
+            return _bk
+    return left
+
+
+def _tg_nudge_ok(sroot, packed, texts, objs, pairs, gap_u, left, wires, boxes, pin_all,
+                 gap0, own, wmi, insts):
+    """试位中的那次挪动**过不过五道复核** ✓ ⇒ 不过就返回 `None`（= 撤回 ✓）
+
+    ★ 只有**被挪符号那条引线**会变 ✓（`symbol_attachments()` 只挪它那一个线端 ✓）
+      ⇒ 几何三闸（穿体 / 贴脚 / 重叠）**只查那一根** ✓（别的线**一个字节都没动** ✓）。
+    """
+    _t2, _o2 = TG.items(sroot, packed)
+    _n = len(TG.violations(sroot, _t2, _o2, gap_u, pairs))
+    if _n >= left:
+        return None
+    tri = _tg_wire_triples(sroot, wires)
+    if tri and HARD_GAP and len(SG.conductor_clearance(tri, gap=WIRE_GAP)[2]) > gap0:
+        return None
+    _d = insts.get(wmi)
+    _pq = TG.wire_ends(_d) if _d else None
+    if _pq:
+        _seg = [_pq[0], _pq[1]]
+        if body_hard_bad(_seg, boxes, PIN_ALL):
+            return None
+        if pin_intr(_seg, own, PIN_ALL) != 0:
+            return None
+        if ovl_hard_bad(_seg, [(t3[0], t3[1], t3[2]) for t3 in tri
+                               if (t3[0], t3[1]) != _pq]):
+            return None
+    return _n
 
 
 def emit(sroot, insts, z, nets_segs, orig_path, out_path, PIN_ALL=(), boxes=None):
@@ -9236,7 +9321,8 @@ def emit(sroot, insts, z, nets_segs, orig_path, out_path, PIN_ALL=(), boxes=None
     if TEXT_GAP_ON:
         _tg_pack = {n: z.read(n).decode("utf-8", "replace")
                     for n in z.namelist() if n.endswith(".svg")}
-        _tg_left, _tg_moves = textgap_pass(sroot, _tg_pack)
+        _tg_left, _tg_moves = textgap_pass(sroot, _tg_pack, wires=wires, boxes=boxes,
+                                           pin_all=PIN_ALL)
         if _tg_moves:
             print("   ★ 文字净距自动修 ✓：挪了 **%d 个位号块** ✓" % len(_tg_moves))
             for _nm, _o, _n in _tg_moves:
