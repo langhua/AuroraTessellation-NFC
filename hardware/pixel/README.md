@@ -6873,7 +6873,7 @@ py -3.13 _work\\_r80_accept.py pixel-pcb-v79.fzz pixel-pcb-v80.fzz _work\\_r80_a
 | # | 验收 | 结果 |
 |---|---|---|
 | ① | `py -3.13 %TOOLS%\pcb_check.py pixel-pcb-v81.fzz --nets=pixel_nets.py` | ✓ **判定：✓ 全过** ✓（⑩ 声明 105 条 ✓ 不合格 0 ✓；⑫ 悬空声明 **0** ✓ —— 改前是 1 ✗）|
-| ② | `py -X utf8 tools\net_group_check.py pixel-pcb-v81.fzz` | ✓ **exit 0** ✓（9 张网 Fritzing 都认得出 ✓）|
+| ② | `py -X utf8 tools\net_group_check.py pixel-pcb-v81.fzz` | ✓ **exit 0** ✓（9 张网 Fritzing 都认得出 ✓）★ **旧尺子** ✗ ⇒ 见 §六十八 ⑥ ✓：新尺子下 v81 = **exit 1** ✗（有 2 张网被面包板的跨视图记录**并掉**了 ✗）|
 | ③ | `_work\view_bytes_diff.py` ＋ `_work\_bb\viewcheck.py` | ✓ **`pcbView` 74 块 ＋ `schematicView` 65 块逐字节相同** ✓（拼哈希 `24141dd900659867` ✓ 两边同 ✓）|
 | ④ | `py -X utf8 tools\bb_probe.py pixel-pcb-v81.fzz` | ✓ **exit 0（11 项全过）** ✓：9 网逐脚连通 ✓／一 bus 一网 ✓／**备用脚 15 只零连接** ✓／声明双向 ✓／悬空端 0 ✓／重叠 0 ✓／压本体 0 ✓／**孔占用唯一** ✓／**「不是最近孔」= 0** ✓／拐点直方图 ✓／总长 337.1 mm ✓ |
 | ⑤ | `tests\run_all.py --with-lib` ＋ 库仓 `tools\tests\run_all.py` | ✓ **两个 runner 都 exit 0** ✓（本轮各新增 1 个 ✓：`bb_rules_selftest.py` ✓）|
@@ -6924,3 +6924,153 @@ py -3.13 -X utf8 tools\bb_probe.py pixel-pcb-v81.fzz                            
 6. **`audit_layout.py` 的 ④ 有 6 条"未验证" ⚠**（`RC` 两块网标签 ✓ / `Ground1/2` ✓ / `Via1/2` ✓）：
    它们是**原理图/PCB 专有**的 core 件 ✓（`.fzp` 在 `:\resources\parts\core\` 下、**磁盘上没有** ✗）
    ⇒ 量不到框 ⇒ **不计入违规** ✓（面包板上的 9 件**全部量到** ✓ ⇒ **真违规 0** ✓）。
+
+---
+
+**六十八、第五十一轮（2026-10-10 ✓）：用户报「PCB 不用再布线了，Fritzing 仍说两根没布好」✗ ⇒ 查出**跨视图 glue 的旧账** ✗ ⇒ **只删声明、几何一字不动** ⇒ 发布 `pixel-pcb-v82.fzz` ✓**
+
+### ① 用户报的件 ✓（原话 ✓）
+
+> 用户 2026-10-10：「现在只剩下 PCB 视图有问题 ✓，根据之前对 PCB 的检查，**已经不需要再布线了** ✓，
+> 但是 Fritzing **仍然说有两根线没有布好** ✗（状态栏：「**2 个连接仍然需要布线**」✗），请检查 ✓。」
+
+★ 关键是**两边都对** ✗✓：我们三套闸门**全过** ✓（`pcb_check --nets` ✓ ①②…⑫ ✓、`net_group_check` ✓、
+面包板探针 ✓、铜的岛/重叠/贴脚/穿体全 0 ✓），而状态栏也**没说错它自己那套账** ✓
+—— ✗ **不是同一个口径** ✗（这正是要立第二把尺子的理由 ✓）。
+
+### ② 先复现 Fritzing 的口径 ✓（新探针 `tools\pcb_rats_probe.py` ✓，只读 ✓）
+
+口径**逐条照源码** ✓（出处见工具头部表 ✓）：状态栏那句 = `mainwindow.cpp:2298` ✓、
+计数 = `sketchwidget.cpp:7013` 调 `GraphUtils::scoreOneNet` ✓、
+★ **「还剩几个」= 该网连通片数 − 1** ✓（`scoreOneNet` 末尾的 `check[]` ✓，2026-10-02 读出来的 ✓）、
+分网 = 本视图 `<connect>` ＋ 同脚跨层 ＋ 零件内部 bus ✓（`connectoritem.cpp:1340` ✓、
+`itembase.cpp:559` ✓）、判"通没通"只看**几何命中** ✓（`connectoritem.cpp:1972` ✓）、
+导线要 `wireFlags & 4` ✓（`graphutils.cpp:550` ✓）。
+★ 「铜块」这层**不自己重写** ✗ —— 用库仓 `pcb_check.py` ⑤ 那份**已复核过**的 `groups` ✓。
+
+★ **两向都要能对上** ✓（只会放行的尺子等于没尺子 ✗）：
+
+| 文件 | 用户读到的 Fritzing | 本探针 | |
+|---|---|---|---|
+| `pixel-pcb-v59.fzz` | 「**7 中的 5** …，**2** 个连接件仍然需要布线」✗ | **M=7 / K=2** ✓ | 对 ✓ |
+| `_work/v76.4_byHand.fzz`（v81 的底 ✓） | 「**7 中的 5** …，**2** 个接插件仍然需要布线」✓（已截图核对 ✓） | **M=7 / K=2** ✓ | 对 ✓ |
+| `pixel-pcb-v68.fzz` | **三视图都正确** ✓（用户 2026-10-05 读的 ✓） | **M=9 / K=0** ✓ | 对 ✓ |
+| `pixel-pcb-v81.fzz` ✗ | 「… **2 个连接仍然需要布线**」✗（本手 ✓） | **M=7 / K=2** ✓ | 对 ✓ |
+
+### ③ 根因链路 ✓（逐条给数值 ✓）
+
+**查出来的不是"少了两根线" ✗，是面包板在 PCB 视图里**偷偷并网** ✗**：
+
+1. 交付件里的面包板实例 `Breadboard1`（mi `5785` ✓）**在 `pcbView` 里也有段落** ✓
+   —— 46 个孔 ＋ **47 条记录** ✓（核心面包板件给每个孔都声明了 `breadboardbreadboard` 层 ✓
+   ⇒ 孔在 PCB 视图里**也有连接器项** ✓，看不见 ✗ 但在网表里 ✓）；
+2. ★★ 那 46 条孔记录是**上一轮"就近选孔"改孔之前的旧账** ✗：逐只脚核过 ✓
+   （`_work\fz_holediff.py` ✓ 45 只脚里 **44 只对不上** ✗）—— 例：
+   `D3.connector0` 真插 `pin12E` ✓ 却声明成 `pin16E` ✗（**差 4 列** ✓）；
+   `J1.connector0` 真插 `pin33J` ✓ 却声明成 `pin46J` ✗（**差 13 列** ✓）；
+   `L1.connector0` 真插 `pin1E` ✓ 却声明成 `pin16J` ✗；
+3. ★ 其中 **3 只脚被两只孔同时声明** ✗（物理上不可能 ✓）：`C1.connector0`（`pin16J`＋`pin22F` ✗）、
+   `C1.connector1`（`pin17J`＋`pin21F` ✗）、`R1.connector1`（`pin16I`＋`pin22G` ✗）；
+4. 再加上面包板件自己的 **130 条内部 bus** ✓（同一条带宽 5 孔 ✓）⇒ 两条 **glue 通道** ✗ 就成立了 ✓：
+   · **孔 `pin16J` 一只孔同时声明 `L1.connector0`（`COIL_A` ✓）与 `C1.connector0`（`RC` ✓）**
+     ⇒ 把 **`RC` ＋ `COIL_A` 并成一张** ✗；
+   · **bus `pin17F/pin17G/pin17J`**（同带 ✓）声明了 `D3.connector4`＋`R1.connector0`（`BR+` ✓）
+     与 `C1.connector1`（`GND` ✓）⇒ 把 **`GND` ＋ `BR+` 并成一张** ✗；
+5. ⇒ 在 Fritzing 眼里 **9 张网变成 7 张** ✓（＝用户看到的「**7 中的 5**」✓），
+   而这两张"并出来的网"各自碎成 **2 块铜** ✓（`GND` 9 块铜 ✓ vs `BR+` 3 只脚 ✓；
+   `RC` 3 只脚 ✓ vs `COIL_A` 2 只脚 ✓）⇒ **1 ＋ 1 ＝ 2 条没布** ✓✓
+   （＝用户看到的「**2 个连接仍然需要布线**」✓）。两条鼠线**最近的那一对**（Fritzing 就画在那里 ✓）
+   也量出来了 ✓（`_work\fz_pair.py` ✓）：
+
+| 鼠线 | 一端 | 另一端 | 差 |
+|---|---|---|---|
+| `GND`↔`BR+` | `C1.connector1` (42.9999, 17.1000) mm | `D3.connector3` (41.6810, 17.9220) mm | **1.5541 mm** ✗ |
+| `RC`↔`COIL_A` | `L1.connector0` (43.9309, 20.3220) mm | `R1.connector1` (42.8999, 19.0000) mm | **1.6765 mm** ✗ |
+
+探针给出的原文 ✓：
+
+```
+   ⚠ 跨视图 glue ✗：孔 pin16J  把 C1.connector0、L1.connector0 牵在一起
+   ⚠ 跨视图 glue ✗：bus pin16F 把 pin16F（D3.connector5）、pin16I（R1.connector1）、pin16J（C1.connector0、L1.connector0） 牵在一起
+   ⚠ 跨视图 glue ✗：bus pin17F 把 pin17F（D3.connector4）、pin17G（R1.connector0）、pin17J（C1.connector1） 牵在一起
+   ⚠ 跨视图 glue ✗：bus pin22F 把 pin22F（C1.connector0）、pin22G（R1.connector1） 牵在一起
+   ⇒ **M（Fritzing 会算成几张网）= 7** ✓｜**K（还剩几条没布）= 2** ✓
+     ✗ `BR+/GND` 焊盘 12 ⇒ **2 块**：…9 只（GND）… ｜ D3.connector3＋D3.connector4＋R1.connector0（BR+）
+     ✗ `COIL_A/RC` 焊盘 5 ⇒ **2 块**：D3.connector5＋L1.connector0 ｜ C1.connector0＋R1.connector1＋U1.connector19
+```
+
+★ **与 v69/v77 那类病不是一回事** ✓：那类是真断铜 ✗（底图剥瘦 ✓）；本手这**铜全通** ✓、
+断的只是"Fritzing 眼里那张网" ✗ ⇒ 它要的是**面包板那半边的账** ✓。
+
+### ④ 修法 ✓（**A：只改声明** ✓ —— 几何/摆位/面包板视图**一字不动** ✗）
+
+新工具 `tools\fz_deglue_records.py` ✓（只读查 ＋ 写新件 ✓）：
+
+* **只删 `<pcbView>` 段里的"跨视图记录"** ✗（94 条 ✓ ＝ 面包板自己 47 ✓ ＋ 45 只脚 47 ✓），
+  **两个方向都删** ✗ —— 只删一半**没用** ✗（记录是**双向**的 ✓，库仓 `fz_deglue_views.py` 实测记过 ✓）；
+* ✗ 不碰 `<geometry>` / `<transform>` / 铜声明 ✗；✗ 不碰面包板视图 ✗；✗ 不删/不加任何视图段 ✗
+  （`pcbView` 74 ✓ / `schematicView` 65 ✓ / `breadboardView` 66 ✓ **不变** ✓）；
+* 自检 ✓：XML 可解析 ✓、`<connect` 只减 94 ✓、面包板视图段**逐字节相同** ✓、
+  视图段数不变 ✓、**逐行核**（改的只有那 90 行 `<connect … breadboardbreadboard/>` ✓，其余一行未动 ✓）、
+  包内条目时间戳照抄 ⇒ **同一输入产出逐字节相同** ✓（可复现 ✓）；
+* ★ 为什么**不**走 v68 那条路 ✗（库仓工具把面包板的 `<pcbView>`/`<schematicView>` **整段删掉** ✓）：
+  那条**也修得好** ✓（用户 2026-10-05 验过 ✓），但会**动视图段** ✗ ⇒ 本手选更外科的那条 ✓。
+
+### ⑤ 六道验收 ✓（**原文**存 `_work\_r82_accept.txt` ✓）
+
+| # | 验收 | 结果 |
+|---|---|---|
+| ① | `py -X utf8 %TOOLS%\pcb_check.py pixel-pcb-v82.fzz --nets=pixel_nets.py` | ✓ **判定：✓ 全过** ✓（⑩ 声明 105 条 ✓ 不合格 **0** ✓；⑫ 悬空声明 **0** ✓；焊盘 45 ✓／走线 52 ✓／过孔 5 ✓）|
+| ② | `py -X utf8 tools\net_group_check.py pixel-pcb-v82.fzz` | ✓ **exit 0** ✓（9 张网都在一块铜里 ✓、**跨视图 glue 证据 0 条** ✓）|
+| ③ | `_work\view_bytes_diff.py v81 v82 pcbView schematicView breadboardView` | ✓ `schematicView` **逐字节相同** ✓（`e720b6e5a06e9de1` ✓）、`breadboardView` **逐字节相同** ✓（`d08b63ff3564a552` ✓）；`pcbView` **只有那 10 个实例块少了 94 条不可见记录** ✗（几何属性语义项一字未动 ✓，见下 ✓）|
+| ③b | **渲染三视图**（`render_pcb`/`render_sch`/`render_bb` ✓） | ✓ **逐字节相同** ✓✓：PCB `_r81.svg`/`_r82.svg` 同为 `0192EAA5…EA458B` ✓（132559 字节 ✓）、原理图 `_s*.png` 同为 `91FB99E2…D0880EC` ✓、面包板 `_b*.png` 同为 `F4E67780…2C12832` ✓ ⇒ **用户看到的三张图一模一样** ✓ |
+| ④ | `py -X utf8 tools\bb_probe.py pixel-pcb-v82.fzz` ／ `_work\sch_probe.py pixel-pcb-v82.fzz` | ✓ **两个都 exit 0** ✓（面包板 11 项全过 ✓：「不是最近孔」0 ✓／总长 337.1 mm ✓；原理图逐岛 ✓）|
+| ⑤ | `tests\run_all.py --with-lib` ＋ 库仓 `tools\tests\run_all.py` | ✓ **两个 runner 都 exit 0** ✓（本仓 4 个 ＋ 库仓 1 个 ＝ 5 处 ✓；本手新增 `tests\pcb_rats_selftest.py` ✓）|
+| ⑥ | **零副作用** ✓ | ✓ 没动任何生成器/开关 ✓（本轮只删交付件里的**不可见声明** ✓）⇒ 生成链照旧 ✓；修法器**可复现** ✓（一跑就得逐字节相同的件 ✓）|
+| ⑦ | **新增闸门** ✓ | ✓ `tools\pcb_rats_probe.py`（**K 必须 = 0** ✓）＋ `tools\fz_deglue_records.py --check`（**跨视图记录必须 = 0** ✓）＋ `tests\pcb_rats_selftest.py`（**两向锁** ✓：v81 必须报 2 ✗、v82 必须报 0 ✓）|
+
+### ⑥ ★ 顺手查出一件更重要的事 ✗：**旧闸门奖励了 bug** ✗ ⇒ 已重标定 ✓（诚实记 ✓）
+
+`tools\net_group_check.py` 的旧判据 ✗ 是"把**所有视图**的 `<connect>` 并成一张图 ＋ 数块里元件脚 ≥ 3" ✓
+—— 它的两块**都不是 Fritzing 的语义** ✗：① `<connect>` 只在**当前视图**里解析 ✓（`itembase.cpp:559` ✓）；
+② 那些跨视图记录是把网**并小**（9→7 ✓），✗ 不是把网"撑大"到 ≥3 ✗。**实测两个反例** ✓：
+
+| 文件 | 用户实测 | 旧判据 | 新判据 |
+|---|---|---|---|
+| `pixel-pcb-v68.fzz` ✓ | **三视图都正确** ✓ | ✗ 9 处"网不存在" ✗ | ✓ exit 0 ✓ |
+| `pixel-pcb-v81.fzz` ✗ | PCB 报「2 个连接仍然需要布线」✗ | ✓ exit 0 ✗ | ✗ 4 处（2 张网被并 ✗） |
+
+⇒ **旧尺子把"并网"当成了"网存在"** ✗（有病的 v81 过 ✓、正确的 v68 挂 ✗）。
+★ 所以本手把它**重标定**成**逐视图**的口径 ✓（A 同块 ✓／B 不许并网 ✓／C ≥2 只脚 ✓／D 脚得有连接器项 ✓），
+实现**只有一份** ✓（入口 `net_group_check.py` import `pcb_rats_probe.check()` ✓）。
+⚠ **历史条目的读法** ✗：README 里那些「`net_group_check` ⇒ exit 0」（v77…v81 那几处 ✓）是**旧尺子**的结论 ✓，
+新尺子下它们会报 ✗ ✓ —— 那些版本的**真状态**以**新探针**（`pcb_rats_probe`）为准 ✓。
+
+### ⑦ 复现命令 ✓（交付件 = `pixel-pcb-v82.fzz` ✓；改前 = `pixel-pcb-v81.fzz` ✓）
+
+```bat
+set TOOLS=F:\git\fritzing-parts-langhua\tools
+py -3.13 -X utf8 tools\fz_deglue_records.py pixel-pcb-v81.fzz --check                rem 查（94 条 ✗ ⇒ exit 1）
+py -3.13 -X utf8 tools\fz_deglue_records.py pixel-pcb-v81.fzz pixel-pcb-v82.fzz      rem 修（写新件 ✓）
+py -3.13 -X utf8 %TOOLS%\pcb_check.py pixel-pcb-v82.fzz --nets=pixel_nets.py         rem ① ✓ 全过
+py -3.13 -X utf8 tools\net_group_check.py pixel-pcb-v82.fzz                          rem ② exit 0
+py -3.13 -X utf8 tools\pcb_rats_probe.py pixel-pcb-v82.fzz                           rem ⑦ M=9 / K=0
+py -3.13 -X utf8 tools\bb_probe.py        pixel-pcb-v82.fzz                          rem ④ exit 0
+py -3.13 -X utf8 _work\sch_probe.py       pixel-pcb-v82.fzz                          rem ④ exit 0
+py -3.13 -X utf8 tests\run_all.py --with-lib                                         rem ⑤ 两个 runner ✓
+py -3.13 -X utf8 %TOOLS%\render_pcb.py pixel-pcb-v82.fzz pixel-pcb-v82_preview.svg --px 12 --png
+py -3.13 -X utf8 %TOOLS%\render_sch.py pixel-pcb-v82.fzz pixel-pcb-v82_sch.png 2200
+py -3.13 -X utf8 %TOOLS%\render_bb.py  pixel-pcb-v82.fzz pixel-pcb-v82_bb.png  2200
+```
+
+### ⑧ 遗留 ✗（逐条 ✓）
+
+1. ★ **那 46 条孔记录的"来源"没查** ✗：写回器为什么按**旧孔**写 `pcbView` 的孔记录 ✓
+   （是"面包板改造之后的写回没跟上" ✓ 还是"另存时按旧快照写" ✓）⇒ 下一手查生成链 ✓
+   （本轮只清理了症状 ✓；根子上要**让这类记录根本不生成** ✓）；
+2. **顺手可做** ✗：把"**跨视图记录 = 0**"也写进**生成器出口** ✓（现在只在交付前用 `fz_deglue_records --check` 守 ✓）；
+3. **`net_group_check` 的 A 判据只覆盖 PCB 视图** ✓：面包板/原理图两视图各有自己的探针 ✓
+   （`tools\bb_probe.py` ✓／`_work\sch_probe.py` ✓）⇒ 不重复查 ✓（层次写进两边表头 ✓）；
+4. **`fz_exact.py`（第四十手的"照源码实现"✓）已过时** ✗：它在 v59 上就报「9 of 9 - 0」✗（用户实测是 2 ✗）
+   ⇒ 本轮**没删**它 ✗ 但也在 README 里**不引用**它 ✓；要不要清理 ⇒ 用户定 ✓。
+
