@@ -98,6 +98,30 @@
 `sch_geom.gap_pair_bad()` ✓（生成器闸门 `gap_hard_bad()` ✓ / 本机自检 ✓ / 验收探针 ⑪ ✓
 三处共用 ✓）；**并入导体** `sch_geom.merge_conductors()` ✓ 也是唯一一份 ✓。
 
+### ★ 测试在哪 / 怎么跑（**仓规** ✓，2026-10-09 用户定 ✓ ⇒ 见 §六十四 ✓）
+
+上面 ①–⑧ 是**在真交付件上**跑的**出厂检查** ✓；与它们并列的另一类 = **判据单元自测** ✓
+（**不用任何 `.fzz`** ✓，在内存里摆正反样例把**判据**钉死 ✓）——★ **它们现在入库了** ✓：
+- **项目自己的测试 = 本目录 `tests/`** ✓（`hardware/pixel/tests/` ✓）；
+- **通用工具的测试 = 库仓 `fritzing-parts-langhua/tools/tests/`** ✓
+  （✗ 不再散在 `_work/` 那种**被忽略**的目录里 ✗ —— 两份真源 ✓）；
+- 每个脚本**自带 `exit 0/1`** ✓、**零第三方依赖** ✓（只用标准库 ✓）；
+- 命名保留 **`*_selftest.py`** ✓ —— ✗ **故意不叫 `test_*.py`** ✗（pytest 会收集它、
+  被模块级 `SystemExit` 打崩 ✓）；
+- **一行跑全部** ✓：
+
+```bat
+py -X utf8 tests\run_all.py                 # 本仓（hardware/pixel）全部 ⇒ 全过 ✓ 全过 ＋ exit 0 ✓
+py -X utf8 tests\run_all.py --with-lib      # 顺带把库仓那套（tools/tests/run_all.py）也跑一遍 ✓
+```
+
+| 测试 ✓ | 在哪 ✓ | 钉住什么 ✓ |
+|---|---|---|
+| `tests/tie_cands_selftest.py` ✓ | **本仓** ✓ | `gen_schematic_wires.tie_cands()` ✓（同网搭接候选 ✓：正例 ✓／`b` 不在同网上 ⇒ 0 条 ✓／异网不算 ✓／退化段不参与 ✓／**反向那一支** ✓／`plen` ✓）|
+| `tools/tests/sch_geom_gap_selftest.py` ✓ | 库仓 ✓ | `sch_geom` 的**线距判据** ✓（合并导体 ✓／接头放行 ✓／横穿不计 ✓／**共线同侧重叠不放行** ✓）|
+| `tools/tests/sch_body_selftest.py` ✓ | 库仓 ✓ | `sch_body` 的**本体外形**判据 ✓（区域/描边/`A` 弧/旋转/「整段豁免」必须失效 ✓）|
+| `tools/tests/pcb_curve_selftest.py` ✓ | 库仓 ✓ | PCB **弧几何**判据 ✓（弦看不见、弧看得见 ✓）|
+
 **②在查什么** ✓（几何 vs 连接表 ✓，两侧都要看 ✓）：**(A)** 表里声明接了某脚 ✗ 而线
 **根本没画到**那只脚上 ⇒ 图上看着**断开** ✗；**(B)** 线**画在**某脚上（端点落在脚上 ✓
 或**线身穿心** ✓）而表里**没那条** ✗ ⇒ 图上像接上 ✓、**电气上是断的** ✗（最阴的一种 ✓）。
@@ -5902,7 +5926,7 @@ py tools\diff_revs.py a.svg b.svg                    # 两个 svg 也行
 | 新开关 | **`--bodyoutline`** ✓（**默认关** ✓ ⇒ 不给它时行为**一字不差** ✓，见 ⑥ ✓）。打开后 `body_hard_bad()` 整体改道 ✓、`body_strict_bad()`（补线那道）同改 ✓、`route_pair` 的硬闸门 ＋ `--mst-merge` 主干 ＋ 所有支线/落点闸门**一处不落** ✓ |
 | 件的**移动** | 外形**按当前位置现算** ✓（`body_shapes_now()` ✓）—— 件会被 `--decoup` / `--snaprails` / `--symmerge` 挪 ✗ ⇒ 载入时烤好的坐标**会过期** ✗（过期 = 闸门对那件**看不见** ✗）|
 | 判据只一份 | **生成器闸门** `body_face_bad()` ✓／**渲染器 ④b** ✓／**验收探针 ⑨** ✓ 全调 `sch_body.seg_hit` ✓ |
-| 机器自测 | 库仓新增 **`tools/sch_body_selftest.py`** ✓（**不用任何 `.fzz`** ✓，正反 20 条 ✓）：区域判据 ✓、容差内不算 ✓、描边判据 ✓、`A` 弧（旧 `shape_bbox` 看不见的那条 ✓）、**旋转 180°** ✓、**"整段豁免"必须失效**（从脚上横穿 60 单位 ⇒ **必须命中** ✗✓）、引脚引线算墨迹 ✓、空外形永不命中 ✓ |
+| 机器自测 | 库仓 **`tools/tests/sch_body_selftest.py`** ✓（**不用任何 `.fzz`** ✓，正反 20 条 ✓）：区域判据 ✓、容差内不算 ✓、描边判据 ✓、`A` 弧（旧 `shape_bbox` 看不见的那条 ✓）、**旋转 180°** ✓、**"整段豁免"必须失效**（从脚上横穿 60 单位 ⇒ **必须命中** ✗✓）、引脚引线算墨迹 ✓、空外形永不命中 ✓（★ 位置 2026-10-09 收进 `tools/tests/` ✓，见 §六十四 ✓）|
 
 ★ **覆盖度**（验收探针 ⑨ 自己打印 ✓）：**13 件 × 48 根线 = 624 组** ✓（有外形的件：
 `C1 C2 D3 Ground1 Ground2 J1 J2 L1 LED2 R1 RC RC U1` ✓）。
@@ -6344,3 +6368,58 @@ v40** 三次实测留档 ✓）。
   「本项目仓的 tests 放哪」✓（§六十二 ⑦ 同一条 ✓）。
 - ★ **`--wire-gap` 只调「已有闸门里的那一格」** ✗：它**不改**档位次序 ✓、**不改**代价函数 ✓
   —— 若哪天想让它**参与软代价**（比如“尽量 ≥ 1.5 mm”）✗，先量交叉账再动 ✓。
+
+**六十四、第四十七轮（2026-10-09 ✓）：把两个单元自测**入库** ✓ ⇒ 定仓规「**测试在哪 / 怎么跑**」✓**
+（**先做的一件小事** ✓ —— 主任务是 §六十五 的降交叉 ✓）
+
+### ① 用户要的是什么 ✓
+
+用户原话 ✓：「`_ut_gap.py`（测 `tools/sch_geom.py` 的判据 ✓）与 `_ut_tie.py`（测
+`gen_schematic_wires.py` 的 `tie_cands` ✓）现在只在**被忽略目录**里 ✗ ⇒ 请**定一个仓规的
+测试位置**并入库 ✓（建议：工具库放 `tools/tests/`、项目仓放 `hardware/pixel/tests/` ✓；
+把既有的 `tools/sch_body_selftest.py` 一并归到同一约定里 ✓），保持**零第三方依赖** ✓、
+每个测试脚本自带 `exit 0/1` ✓，并给一个**一行命令跑全部**的 runner ✓；
+入库后 `_work/` 里那两份**删掉** ✓；README 相应位置写明「**测试在哪、怎么跑**」✓」。
+
+### ② 定下来的仓规 ✓（一句话）
+
+| 项 ✓ | 口径 ✓ |
+|---|---|
+| **位置** ✓ | **通用工具的测试 = 库仓 `fritzing-parts-langhua/tools/tests/`** ✓；**项目自己的测试 = 本仓 `hardware/pixel/tests/`** ✓ —— ✗ 不再放 `_work/`（**被忽略** ✗ ⇒ 两份真源 ✓）✗ |
+| **命名** ✓ | 保留 **`*_selftest.py`** ✓ —— ✗ **故意不叫 `test_*.py`** ✗（pytest 会收集它、被模块级 `SystemExit` 打崩 ✓；这条从 `pcb_curve_selftest.py` 头上就有 ✓，现在收进仓规 ✓）|
+| **依赖** ✓ | **零第三方依赖** ✓（只用标准库 ✓）；每个脚本**自带 `exit 0/1`** ✓（全过 0 ✓、任一不过 1 ✓ 并逐条报出 ✓）|
+| **路径** ✓ | 一律**按 `__file__` 相对定位** ✓（✗ 不写死机器路径 ✗）；项目侧找库仓工具**只走 `toolpaths.py`** ✓（唯一实现 ✓，`FRITZING_TOOLS` 可覆盖 ✓）|
+| **一行跑全部** ✓ | `py -X utf8 tests\run_all.py` ✓（本仓 ✓）／`py -X utf8 tools\tests\run_all.py` ✓（库仓 ✓）；项目那个加 **`--with-lib`** ⇒ 顺带把库仓整套也跑 ✓ |
+
+### ③ 动了什么 ✓（入库清单 ✓）
+
+| 从 ✓ | 到 ✓ |
+|---|---|
+| `_work/_ut_gap.py` ✗（被忽略 ✓）| **库仓 `tools/tests/sch_geom_gap_selftest.py`** ✓（测 `tools/sch_geom.py` 的线距判据 ✓）|
+| `_work/_ut_tie.py` ✗（被忽略 ✓）| **本仓 `tests/tie_cands_selftest.py`** ✓（测 `gen_schematic_wires.tie_cands()` ✓）|
+| `tools/sch_body_selftest.py` ✓ | **库仓 `tools/tests/sch_body_selftest.py`** ✓（同一约定 ✓）|
+| `tools/pcb_curve_selftest.py` ✓ | **库仓 `tools/tests/pcb_curve_selftest.py`** ✓（同一约定 ✓）|
+| — | **新** `tools/tests/run_all.py` ✓ ＋ **新** `tests/run_all.py` ✓（两个 runner ✓）|
+
+★ `_work/_ut_gap.py` / `_work/_ut_tie.py` **已删掉** ✓（`_work/` 里不再有第二份真源 ✓）；
+★ 三个测试脚本的**头部用法**也改了 ✓（写清「测试在哪、怎么跑」✓）。
+
+### ④ 验收 ✓（两个 runner 各 **exit 0** ✓ —— 原始输出见 `_work/_r79_accept.txt` ✓）
+
+```bat
+py -X utf8 tools\tests\run_all.py                       # 库仓：3 个脚本 ⇒ ✓ 全过 ＋ exit 0 ✓
+py -X utf8 hardware\pixel\tests\run_all.py --with-lib    # 本仓 1 个 ＋ 库仓 3 个 ⇒ ✓ 全过 ＋ exit 0 ✓
+```
+
+| runner ✓ | 结果 ✓ |
+|---|---|
+| 库仓 `tools/tests/run_all.py` ✓ | ✓ **全过（3 个 ✓）** ✓：`sch_body_selftest.py` exit 0 ✓／`sch_geom_gap_selftest.py` exit 0 ✓（⑧ 条判据全过 ✓）／`pcb_curve_selftest.py` exit 0 ✓ |
+| 本仓 `tests/run_all.py` ✓ | ✓ **全过（1 处 ✓）** ✓：`tie_cands_selftest.py` exit 0 ✓（含「反向那一支」✓）|
+
+### ⑤ 复现命令 ✓
+
+```bat
+py -X utf8 F:\git\fritzing-parts-langhua\tools\tests\run_all.py
+py -X utf8 tests\run_all.py --with-lib
+```
+
