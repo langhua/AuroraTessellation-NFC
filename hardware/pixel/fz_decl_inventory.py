@@ -7,7 +7,7 @@ import sys
 import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-# ★ 兄弟仓相对推导 ✓（同 `fz_exact.py` ✓）
+# ★ 兄弟仓相对推导 ✓（同本目录其它 `fz_*.py` ✓）
 ROOT2 = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
 sys.path.insert(0, os.path.join(ROOT2, "fritzing-parts-langhua", "tools"))
 sys.path.insert(0, os.path.dirname(HERE))

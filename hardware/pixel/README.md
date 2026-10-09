@@ -79,9 +79,10 @@
 | ⑦ | **多余接线点（共线切分）** ✓（新增 ✓，2026-09-30 ✓） | `py -3.13 check_junctions.py <sketch.fzz>` | **共线切分 = 0** ✓（**退出码非 0 = 不合格** ✓）：某点恰好两个线端、两线**严格反向** ⇒ 那是把一根直线切成两段 ✗（Fritzing 会在切口画个圆点 ✓）；**落在脚上的接头不算** ✓（脚本来就是要汇点 ✓）；没有导线时**拒判**并退 2 ✗） |
 
 | ⑧ | **硬规则**：**线↔线最小净距** ✓（新增 ✓，2026-10-09 ✓，见 §六十三） | `py -3.13 gen_schematic_wires.py … [--wire-gap=<mm>]` | 「**线与线的净距 ≥ `--wire-gap`**」✓（缺省 **1.0 mm** ✓、范围 **[0.254, 2.54] mm** ✓）；**低于阈值的对数非 0 ⇒ 退出码 1** ✓（**文件照常写出** ✓）。**同网接头**（搭接/并线/T 形/接管 ✓）与**横穿**（真交叉 ✓）**放行** ✓；`--wire-gap=0` ⇒ **关掉** ✓（= 旧行为 ✓，实测逐字节相同 ✓） |
+| ⑨ | **状态栏可信度** ✓（新增 ✓，2026-10-10 ✓，见 §五十二） | `py -X utf8 tools\pcb_status.py <sketch.fzz>` ✓（**在本项目目录里直接跑** ✓；它就是库仓那件的**薄入口** ✓ ⇒ 通用件只有一份 ✓）＋ `--sens` ✓（**只读** ✓；逐网明细版 = `tools\pcb_rats_probe.py` ✓，**同一个引擎** ✓） | **A**：**每张网在三个视图里都"成型"** ✓（节点数 ≥ 2 ⇒ 不会被 Fritzing 丢弃 ✗）；**B**：**每张网在每个视图里都连通** ✓（`K = 0` ⇒ 状态栏「还剩 0 条」✓）；**C**：**PCB 视图 M = 网表张数** ✓；★ **判据不用 Fritzing 的文案** ✗ —— 上游 `scoreOneNet`／`updateRoutingStatus` 口径下，**删掉任意一根导线后状态栏仍可能显示「布线完成」** ✗（`≤ 1 只零件脚`的连通片被 `sketchwidget.cpp:7013` 丢弃 ⇒ `K` 恒 0 ✓）⇒ **手工"删线看反应"不能当验收判据** ✗；**退出码非 0 = 不合格** ✓ |
 
-★ 其中 **② ③ ④ ⑤ ⑥ ⑦ ⑧ 都是真闸门** ✓（**退出码非 0 = 不合格** ✓、可直接进 CI ✓）；
-  区别只在“**要不要写文件**” ✓：③ **照写** ✓（要能打开图看哪儿压了 ✓）、②④⑤ 照跑 ✓。
+★ 其中 **② ③ ④ ⑤ ⑥ ⑦ ⑧ ⑨ 都是真闸门** ✓（**退出码非 0 = 不合格** ✓、可直接进 CI ✓）；
+  区别只在“**要不要写文件**” ✓：③ **照写** ✓（要能打开图看哪儿压了 ✓）、②④⑤⑨ 照跑 ✓。
 
 ★★ **③ 的来历** ✓（2026-09-28 实测发现 ✓，2026-09-30 口径改准 ✓）：它一开始**只打印一行** ✗
 （`── ★★ 规则自检：不同的导线重叠 N 对 ✗✗ 必须 0 ✓`）—— **不停、也不影响写文件** ✗
@@ -98,9 +99,55 @@
 `sch_geom.gap_pair_bad()` ✓（生成器闸门 `gap_hard_bad()` ✓ / 本机自检 ✓ / 验收探针 ⑪ ✓
 三处共用 ✓）；**并入导体** `sch_geom.merge_conductors()` ✓ 也是唯一一份 ✓。
 
+★★ **⑨ 的来历（「状态栏可信度」✓，2026-10-10 ✓ 第五十二轮 ✓）** —— 下面这段**就是这一条验收的判据原文** ✓：
+
+> **⑨ 状态栏可信度**
+>
+> 起因 ✓：用户报「`pixel-pcb-v83.fzz` 三个视图**都显示布线完成**，可我在三个视图里**随意删掉
+> 任意一根导线，也还是布线完成**」✗。
+>
+> **A**：**每张网在三个视图里都"成型"** ✓ = 节点数 ≥ 2 ✓ —— 少于 2 只**零件脚**的连通片会被
+> `collectParts` 之后的 `partConnectorItems.count() <= 1 ⇒ 整片跳过` ✗（`sketch/sketchwidget.cpp:7013` ✓）
+> ⇒ 那张网在 Fritzing 眼里**根本不存在** ✗（网退化成 1 只脚 = "剥瘦底图"那一类病 ✓，v69/v77 就是它 ✓）。
+>
+> **B**：**每张网在每个视图里都连通** ✓ = `K = 0` ✓（状态栏「还剩 0 条」✓）。★ `K` = 该网
+> **连通片数 − 1** ✓（`utils/graphutils.cpp:447`、`573` ✓ —— **不是**"没连上的脚数" ✗）。
+>
+> **C**：★★ **判据不用 Fritzing 的文案** ✗ —— **这条是上游限制，已实测可证** ✓：
+> 在 `scoreOneNet`／`updateRoutingStatus` 的口径下，**删掉任意一根导线后状态栏仍可能显示
+> 「布线完成」** ✗ —— 单刀切开一张网 ⇒ 每片**各自内部连通** ⇒ 每片 `K = 0` ✓，而**只有 1 只
+> 零件脚**的碎片被 `sketchwidget.cpp:7013` **整片丢弃** ✗ ⇒ `netCount == routedCount` **恒成立** ✓。
+> 实测 ✓：三视图合计 **133** 根线**全部虚拟删过** ⇒ **0/133** 有反应 ✗（面包板 36／原理图 45／
+> PCB 52 ✓；其中**真断铜**的 27／44／48 根也一样一声不响 ✗）⇒ **手工"删线看反应"不能作为验收
+> 判据** ✗（**任何**文件都过不了 ✗，不是本文件的病 ✗）—— 要判"线有没有断"，**用 A/B/C 这三把尺子** ✓。
+>
+> **怎么跑** ✓（cwd = 本目录 ✓；`tools\pcb_status.py` = 库仓那件的**薄入口** ✓，通用件只有一份 ✓，
+> 本体在 `F:\git\fritzing-parts-langhua\tools\pcb_status.py` ✓）：
+> ```bat
+> py -X utf8 tools\pcb_status.py pixel-pcb-v83.fzz          rem 逐视图 M/K ＋ 文案 ⇒ exit 0
+> py -X utf8 tools\pcb_status.py pixel-pcb-v83.fzz --sens   rem 虚拟删线灵敏度 ⇒ exit 0
+> py -X utf8 tools\pcb_rats_probe.py pixel-pcb-v83.fzz      rem 逐网明细版（同一引擎 ✓）
+> ```
+> ★ **校准证据** ✓（**逐字对上** ✓ —— 这把尺子可信的立足点 ✓，见 §五十二 ② ✓）：
+> `v68 → M=9/K=0` ✓、`v81 → M=7/K=2` ✓（= 用户读到的「5 of 7 … 2 connector(s) still to be routed」✓）、
+> `_work/v76.4_byHand → M=7/K=2` ✓、`v82 → M=9/K=0` ✓、`v83 → M=9/K=0` ✓（用户读到「三视图都布线完成」✓）。
+> ★ 工具库侧登记 ✓ = `fritzing-parts-langhua\tools\README.md` 里 `pcb_status.py` 那一行 ✓
+> （用途 ✓／参数 ✓／退出码 ✓ ＋「对应本清单 **⑨**」✓）。
+
+### ★ 工具沿革 · 退役记录（2026-10-10 ✓）
+
+- ★ **`fz_exact.py`（第四十手"照 Fritzing 源码逐条实现"的那份判据 ✓；原在本目录 ✓）已退役** ✗：
+  ① **会误报** ✗ —— 它在 `pixel-pcb-v59.fzz` 上就报「**9 of 9 - 0**」✗，而用户实测是 **2** ✗；
+  ② **已被取代** ✓ —— 同一件事现在由库仓 `tools\pcb_status.py` ✓（引擎**唯一一份** ✓）＋ 本仓
+  `tools\pcb_rats_probe.py` ✓（逐视图 ＋ 灵敏度 ✓）做 ✓，且**在 v68／v81／v76.4／v82／v83 上逐字对上** ✓；
+  ③ ⇒ 2026-10-10 用户定 ✓：**删掉该文件 ＋ 清掉所有指向它的引用 / 说明** ✓（本仓 `fz_decl_inventory.py`
+  ／`fz_pad_probe.py` 的头注释 ✓、库仓 `pcb_check.py`／`pcb_pads.py`／`docs/fritzing-fz-notes.md` ✓）。
+  ★ 本记录**是它名字的唯一去处** ✓；历史轮次里它量出的数字（如第四十／四十一手那两个「9 of 9 - 0」✓）
+  **一律不作验收判据** ✗。
+
 ### ★ 测试在哪 / 怎么跑（**仓规** ✓，2026-10-09 用户定 ✓ ⇒ 见 §六十四 ✓）
 
-上面 ①–⑧ 是**在真交付件上**跑的**出厂检查** ✓；与它们并列的另一类 = **判据单元自测** ✓
+上面 ①–⑨ 是**在真交付件上**跑的**出厂检查** ✓；与它们并列的另一类 = **判据单元自测** ✓
 （**不用任何 `.fzz`** ✓，在内存里摆正反样例把**判据**钉死 ✓）——★ **它们现在入库了** ✓：
 - **项目自己的测试 = 本目录 `tests/`** ✓（`hardware/pixel/tests/` ✓）；
 - **通用工具的测试 = 库仓 `fritzing-parts-langhua/tools/tests/`** ✓
@@ -2656,7 +2703,7 @@ py -3.13 f:\git\fritzing-parts-langhua\tools\render_pcb.py pixel-pcb-v60.fzz pix
 `v60` 里那两根 `C2` 补线**多余** ✗。同理，把「文件里声明的 358 条连接」逐条对几何
 （`fz_decl_inventory.py` ✓）⇒ **没有一条"声明了却碰不上"** ✓。
 
-#### 2. ★★ 判据改成**照 Fritzing 源码逐条实现** ✓（`fz_exact.py` ✓，只读 ✓）
+#### 2. ★★ 判据改成**照 Fritzing 源码逐条实现** ✓（**只读** ✓；现役实现 = 库仓 `tools\pcb_status.py` ✓ ＋ 本仓 `tools\pcb_rats_probe.py` ✓，第四十手那份旧实现已退役 ✗ ⇒ 见 §★ 工具沿革 · 退役记录 ✓）
 
 用户 2026-10-02 定的规矩（`AGENTS.md` §13 ✓）：**判据必须与 Fritzing 同源同语义** ✓ ——
 不然我报的问题他在 Fritzing 里找不到 ✓ = 两个声音 ✓。逐条对应（行号都在文件头表里 ✓）：
@@ -2687,7 +2734,7 @@ py -3.13 f:\git\fritzing-parts-langhua\tools\render_pcb.py pixel-pcb-v60.fzz pix
 ⚠ **还没读到的一条规则** ✗：我的判据仍给 **9 个网 / 全通** ✗，用户 Fritzing 是 **7 个网 / 还有 2 个** ✓
 ⇒ 差两条：① 网数 9≠7（Fritzing 少数的 2 个是怎么并的 ✓）；② "过孔换层算不算边" ✓。
 ✗ 试过"线↔过孔层必须一致"的规则 ⇒ 实测网数 9→**16**、方向反了 ⇒ 已**撤回** ✓
-（教训写进 `fz_exact.py` 注释 ✓：过拟合信号 = 停手信号 ✓）。
+（教训写进旧实现的注释 ✓ 并随它一并归档 ✓：过拟合信号 = 停手信号 ✓）。
 
 #### 4. 这一手的改动：把两颗孔**当成全新实例**重写 ⇒ `v61`（**可回退** ✓）
 
@@ -2700,7 +2747,7 @@ py -3.13 f:\git\fritzing-parts-langhua\tools\render_pcb.py pixel-pcb-v60.fzz pix
 | 复核 ✓ | 结果 |
 |---|---|
 | 改动范围 | **纯字符串替换** ✓：`90013946 → 90014167`（3 处 ✓）、`90013953 → 90014168`（6 处 ✓）⇒ 其余**逐字节不变** ✓（构造上保证 ✓） |
-| 连通性（`fz_exact.py` ✓） | 与 v59 **完全一样**：45 脚 / 168 线 / 16 孔｜**9 of 9 - 0** ✓（几何没动 ✓，当然一样 ✓） |
+| 连通性（旧实现 ✗，**已退役** ⇒ 数字不作验收判据 ✗，见 §★ 工具沿革 ✓） | 与 v59 **完全一样**：45 脚 / 168 线 / 16 孔｜**9 of 9 - 0** ✓（几何没动 ✓，当然一样 ✓） |
 | 渲染（`render_pcb.py` ✓） | 45 盘 / 168 线 / 18 孔 / 板框 25.00×25.00 mm ✓（与 v59 同 ✓） |
 
 ★ **回退** ✓：不用回退 —— `pixel-pcb-v59.fzz` **原样没动** ✓；不认可 `v61` 就继续用 `v59` ✓。
@@ -2708,7 +2755,7 @@ py -3.13 f:\git\fritzing-parts-langhua\tools\render_pcb.py pixel-pcb-v60.fzz pix
 复现 ✓：
 ```bash
 py -3.13 hardware\pixel\fz_recreate_vias.py pixel-pcb-v59.fzz pixel-pcb-v61.fzz Via1 Via8
-py -3.13 hardware\pixel\fz_exact.py pixel-pcb-v61.fzz                 # ⇒ 9 of 9 - 0（与 v59 同）
+py -3.13 hardware\pixel\tools\pcb_rats_probe.py pixel-pcb-v61.fzz     # ⇒ M=9 / K=0（现役口径 ✓）
 py -3.13 hardware\pixel\fz_via_short.py pixel-pcb-v61.fzz Via1 Via8   # ⇒ 没有短路 ✓
 py -3.13 f:\git\fritzing-parts-langhua\tools\render_pcb.py pixel-pcb-v61.fzz pixel-pcb-v61_preview.svg --png
 ```
@@ -2742,7 +2789,7 @@ py -3.13 f:\git\fritzing-parts-langhua\tools\render_pcb.py pixel-pcb-v61.fzz pix
 |---|---|
 | 叠死的孔对（`fz_via_dup.py` ✓） | 2 对 → **0 对** ✓✓ |
 | 过孔数 | 18 → **16** ✓（与判据里一直用的 16 一致 ✓） |
-| 连通性（`fz_exact.py` ✓） | 45 脚 / 168 线 / 16 孔｜**9 of 9 - 0** ✓（与 v59/v61 完全一样 ✓） |
+| 连通性（旧实现 ✗，**已退役** ⇒ 数字不作验收判据 ✗，见 §★ 工具沿革 ✓） | 45 脚 / 168 线 / 16 孔｜**9 of 9 - 0** ✓（与 v59/v61 完全一样 ✓） |
 | 渲染（`render_pcb.py` ✓） | 45 盘 / 168 线 / **16 孔** ✓ / 板框 25.00×25.00 mm ✓ |
 
 ★ 另查明一件事 ✓（免得白忙 ✓）：`<instance` 300 / `</instance>` 299 这种"**差 1**"在
@@ -2760,7 +2807,7 @@ py -3.13 f:\git\fritzing-parts-langhua\tools\render_pcb.py pixel-pcb-v61.fzz pix
 py -3.13 hardware\pixel\fz_via_dup.py pixel-pcb-v61.fzz                             # ⇒ 2 对叠死 ✗
 py -3.13 hardware\pixel\fz_fix_dup_vias.py pixel-pcb-v61.fzz pixel-pcb-v62.fzz       # ⇒ 删 2 颗 ✓
 py -3.13 hardware\pixel\fz_via_dup.py pixel-pcb-v62.fzz                             # ⇒ 0 对 ✓
-py -3.13 hardware\pixel\fz_exact.py pixel-pcb-v62.fzz                               # ⇒ 9 of 9 - 0 ✓
+py -3.13 hardware\pixel\tools\pcb_rats_probe.py pixel-pcb-v62.fzz     # ⇒ M=9 / K=0 ✓（现役口径 ✓）
 ```
 
 ### 第四十二手 ✅：**按用户手画的底图重布原理图** ⇒ **`pixel-schematic-v39.fzz`** 交付 ✓（2026-10-04 ✓）
@@ -7071,8 +7118,8 @@ py -3.13 -X utf8 %TOOLS%\render_bb.py  pixel-pcb-v82.fzz pixel-pcb-v82_bb.png  2
 2. **顺手可做** ✗：把"**跨视图记录 = 0**"也写进**生成器出口** ✓（现在只在交付前用 `fz_deglue_records --check` 守 ✓）；
 3. **`net_group_check` 的 A 判据只覆盖 PCB 视图** ✓：面包板/原理图两视图各有自己的探针 ✓
    （`tools\bb_probe.py` ✓／`_work\sch_probe.py` ✓）⇒ 不重复查 ✓（层次写进两边表头 ✓）；
-4. **`fz_exact.py`（第四十手的"照源码实现"✓）已过时** ✗：它在 v59 上就报「9 of 9 - 0」✗（用户实测是 2 ✗）
-   ⇒ 本轮**没删**它 ✗ 但也在 README 里**不引用**它 ✓；要不要清理 ⇒ 用户定 ✓。
+4. **旧实现（第四十手那份"照源码实现" ✗）已退役** ✓（2026-10-10 用户定 ✓ ⇒ 删件 ＋ 清引用 ✓，
+   见 §★ 工具沿革 · 退役记录 ✓）。
 
 ---
 
@@ -7192,7 +7239,7 @@ but it's there so connections can be more easily synched between views」✓）�
 原理图视图里有 2 个 `RC` 网标签 ＋ 3 个接地符号 ✓（它们**也**是"脚" ✓）⇒ 网被切细 ✓。
 **三视图 K 都是 0** ✓ ⇒ 三处「布线完成」**都是真的** ✓。
 
-### ⑥ 验收清单新增一条 ✓（**"状态栏可信度"** ✓）
+### ⑥ 验收清单新增一条 ✓（**"状态栏可信度"** ✓ ⇒ ★ 已并入上面的出厂检查，编号 **⑨** ✓ —— 判据原文见该处 ✓）
 
 > **六十八、状态栏可信度**（第五十二轮 ✓）
 > 1. `tools\pcb_rats_probe.py <交付件>` ⇒ **三视图 K 都是 0** ✓、**每张网 ≥2 只零件脚** ✓、
@@ -7219,6 +7266,8 @@ py -3.13 -X utf8 tools\pcb_rats_probe.py           pixel-pcb-v83.fzz --sens     
 py -3.13 -X utf8 tools\bb_probe.py                 pixel-pcb-v83.fzz                        rem ⑤a exit 0
 py -3.13 -X utf8 _work\sch_probe.py                pixel-pcb-v83.fzz --nets=pixel_nets.py   rem ⑤b exit 0
 py -3.13 -X utf8 tests\run_all.py --with-lib                                                rem ⑥ 两个 runner ✓
+py -3.13 -X utf8 tools\pcb_status.py pixel-pcb-v83.fzz                                     rem ⑨ 三视图 K=0／PCB M=9 ✓（新 ✓）
+py -3.13 -X utf8 tools\pcb_status.py pixel-pcb-v83.fzz --sens                              rem ⑨ 灵敏度 ✓（新 ✓）
 py -3.13 -X utf8 _work\view_bytes_diff.py pixel-pcb-v82.fzz pixel-pcb-v83.fzz pcbView breadboardView schematicView
 py -3.13 -X utf8 %TOOLS%\render_pcb.py pixel-pcb-v83.fzz pixel-pcb-v83_preview.svg --px 12 --png
 py -3.13 -X utf8 %TOOLS%\render_sch.py pixel-pcb-v83.fzz pixel-pcb-v83_sch.png 2200
@@ -7234,5 +7283,6 @@ py -3.13 -X utf8 %TOOLS%\render_bb.py  pixel-pcb-v83.fzz pixel-pcb-v83_bb.png  2
    要删得用户点头 ✓）；按同样口径，面包板 9 根图例装饰线 ✓、原理图 1 根 ✓ 也都留账在原地 ✓；
 3. **面包板／原理图视图的 K** ✓ 是**本探针**算的 ✓（用户没有在它们上面读过状态栏 ✗ ⇒ 只有 v68/v81/v82
    三个 PCB 读数可核 ✓）⇒ 这两列是**推算**，如实标注 ✓；
-4. **`fz_exact.py` 仍然过时** ✗（第四十手那份 ✗）—— 本轮**用新探针**替它了 ✓，但**没删**旧件 ✗。
+4. **旧实现（第四十手那份 ✗）已退役** ✓（2026-10-10 ✓ ⇒ 删件 ＋ 清引用 ✓，
+   见 §★ 工具沿革 · 退役记录 ✓）。
 
