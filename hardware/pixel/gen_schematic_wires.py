@@ -335,6 +335,34 @@ LANE_EPS = 1e-2
 #     删到一条不剩 ⇒ 调用处保留旧候选集 + 告警 ✓（不许把端点接不上 ✗）。
 #   ★ 判据仍只有一份 ✓（`sch_geom.near_overlap` ✓）；`--noovl` 关掉 ⇒ A/B 对照 ✓。
 HARD_OVL = True
+# ★★★ 2026-10-09 ✓ **`WIRE_GAP`（`--wire-gap=<mm>`）：线↔线最小净距** ✓（第四十六轮 ✓ **用户定** ✓）
+#   用户原话 ✓：「**线距作为一个参数吧？缺省 1mm，线距最小值 0.254mm，最大值 2.54mm。**」✓
+#   ★ 病症（量出来的 ✓，**不许猜** ✗）：用户在原理图上看到**两处走线贴得比较近** ✗ ——
+#     `_work/_gap_measure.py`（临时量尺 ✓）实测那一版：全图最小净距 **0.378 单位 = 0.107 mm** ✗
+#     （`Wire90015363` LED2 的 GND 竖线 × `Wire90015365` C2 的 GND 横线 ✓ ——
+#      两条**同网**线在 `y=-57.60` 上**共线、差 0.38 单位、看着像接上了** ✗），
+#     低于 1.0 mm 的还有 **12 对** ✗（另一处 `0.282 mm`：`Wire90015377` 在 `y=18` ×
+#      `Wire90015382/383` 在 `y=17` ✓ —— 两条不同网的横线**平行贴 1.0 单位** ✗）。
+#   ★ 为什么是**闸门**（硬约束 ✓）而不是软代价 ✗：与 `HARD_OVL` / `HARD_CLEAR` **同一条教训** ✓
+#     —— 用户看得到的是「**贴住了**」✗，擦 0.x 单位在软代价里只值几分 ✗ ⇒ 拼不过“短一点” ✗
+#     ⇒ **只删候选** ✗、**不动**代价函数与档位次序 ✓（保住“重叠 0 / 贴脚 0”的机制 ✓）。
+#   ★ 优先级（**用户定** ✓）：`不穿体 > 形状(拐点/折返/进脚方向) > 交叉数 > 总长` 里，
+#     **“不重叠(=0)”升级为“≥ `WIRE_GAP`”** ✓ —— 即线距不足**等同于否决** ✓、
+#     位置**仍在交叉数之前** ✓（与 `HARD_OVL` 同一格 ✓）。
+#   ★★ **例外（务必实现 ✓，用户点名 ✓）**：**合法的“搭接/并线”** ✓（`tie_cands()` 的搭接 ✓、
+#     「簇主干」合并 ✓、电源轨的 T 形接头 ✓、连续段 ✓）**必须放行** ✗ ——
+#     判据：**同网**且 `sch_geom.joined()`（共端点 / 端点搭在对方上且**不平行** ✓）
+#     ⇒ 那是**电气接头** ✓ ⇒ **不施加间距** ✗（否则会把搭接功能打死 ✗✗）。
+#     横穿（真交叉 ✓）也不施加 ✓ —— 那是「**交叉**」✓、另有账 ✓（用户只罚“**平行/邻近**”✓）。
+#   ★ 范围与夹取（**用户定** ✓）：缺省 **1.0 mm** ✓、允许 **[0.254, 2.54] mm** ✓；
+#     超出范围 ⇒ **夹到边界 ＋ 打印警告** ✓（不静默 ✗、也不崩 ✗）；`--wire-gap=0` = **关掉** ✓
+#     （= 一键复现**旧行为** ✓ —— 老命令想一字不差就加它 ✓）。
+WIRE_GAP_MM = 1.0            # 缺省 1.0 mm ✓（用户定 ✓）
+WIRE_GAP_MIN_MM = 0.254      # 允许下限 ✓（用户定 ✓）
+WIRE_GAP_MAX_MM = 2.54       # 允许上限 ✓（用户定 ✓）
+U_PER_MM = 90.0 / 25.4       # 1 mm = 3.54331 sketch 单位 ✓（1 单位 = 1/90 in ✓）
+WIRE_GAP = WIRE_GAP_MM * U_PER_MM   # ★ 内部一律用**单位** ✓（与 `used` / 判据同一把尺子 ✓）
+HARD_GAP = True              # ★ 默认**开** ✓（这是本轮的新缺省 ✓；`--wire-gap=0` 关 ✓）
 # ★★ `HARD_CLEAR`：**贴脚零容忍** ✓（2026-09-28 ✓ **用户定**：「**贴脚的容忍度也是 0，
 #   所以，这一项必须改。**」✗）
 #   ★ 病症（用仓里**唯一那份**判据量的 ✓）：`Wire90012757`（GND ✓）在 `x=202.53` 竖走 89 单位 ✓
@@ -1076,7 +1104,8 @@ def candidates(a, b, chx, chy):
     return [dedup_path(pp) for pp in out]
 
 
-def tie_cands(a, b, used, net, tol=0.05, cap=16, span=40.0):
+def tie_cands(a, b, used, net, tol=0.05, cap=16, span=40.0, chx=None, chy=None,
+              nch=2):
     r"""★ **同网「搭接」候选** ✓（`--mst-shape` ✓，2026-10-09 ✓）—— 「**合并到同一主干**」✓
 
     ★ 病（用户红箭头 ① ✗，见 `MST_SHAPE` 的定义处 ✓）：两条同网并线各自跑完同一条走廊 ✗
@@ -1147,8 +1176,31 @@ def tie_cands(a, b, used, net, tol=0.05, cap=16, span=40.0):
             if _d > lim or n_ok >= cap:
                 break
             n_ok += 1
-            for _shape in ([anchor, E], [anchor, (E[0], anchor[1]), E],
-                           [anchor, (anchor[0], E[1]), E]):
+            _shapes = [[anchor, E], [anchor, (E[0], anchor[1]), E],
+                       [anchor, (anchor[0], E[1]), E]]
+            # ★★★ 2026-10-09 ✓ **`--wire-gap` 逼出来的第三条腿** ✓：**借通道拐到 `E`** ✓
+            #   ✗ 病（实测 ✓，第四十六轮 ✓）：`LED2.connector1 ↔ J2.connector1` 的并线对
+            #     —— 只给上面三种形状时，**能过“线距 ≥ 1 mm”的那条路**（先横到 `x=201.4`
+            #     再竖到 `y=9`、然后**横到 `E=(235.4,9)`** ✓）**根本不在候选里** ✗
+            #     ⇒ 硬闸门删到没候选 ⇒ 退回旧集 ⇒ 选出「一路横到 `J2.connector1`」✗
+            #     ⇒ 与 `J2.c1` 那条轨支线**共线重叠 9.2 单位** ✗✗（自检报「重叠 1 对」✗）。
+            #   ✓ 加上「**借已有通道拐弯到 E**」✓：`[a, (x,a.y), (x,E.y), E]`（竖着借 `chy` ✓）。
+            #     与既有三形状**同一个安全口径** ✓（末端仍是 `E` ✓ ⇒ 依旧与 `b` 同导体 ✓）；
+            #     ★ 只是**多给候选** ✗ ⇒ 老形状一条不少 ✓（单调 ✓）。
+            #   ★ 取**夹在 anchor 与 E 之间**、离 anchor 最近的 `nch` 条通道 ✓（限制候选数 ✓）。
+            if chx:
+                _lo, _hi = sorted((anchor[0], E[0]))
+                _mid = sorted((v for v in chx if _lo + tol < v < _hi - tol),
+                              key=lambda v: abs(v - anchor[0]))[:nch]
+                for _x in _mid:
+                    _shapes.append([anchor, (_x, anchor[1]), (_x, E[1]), E])
+            if chy:
+                _lo2, _hi2 = sorted((anchor[1], E[1]))
+                _mid2 = sorted((v for v in chy if _lo2 + tol < v < _hi2 - tol),
+                               key=lambda v: abs(v - anchor[1]))[:nch]
+                for _y in _mid2:
+                    _shapes.append([anchor, (anchor[0], _y), (E[0], _y), E])
+            for _shape in _shapes:
                 _p = dedup_path(_shape)
                 out.append(list(reversed(_p)) if reverse else _p)
 
@@ -1742,6 +1794,51 @@ def ovl_partners(path, used, limit=4):
             p2, q2 = _u[0], _u[1]
             if SG.near_overlap(path[k], path[k + 1], p2, q2):
                 out.append((path[k], path[k + 1], p2, q2))
+                if len(out) >= limit:
+                    return out
+    return out
+
+
+def gap_hard_bad(path, net, used, gap=None, used_merged=None):
+    r"""★★ 2026-10-09 ✓ **线距硬闸门** ✓（第四十六轮 ✓）：这条路径与 `used` 里**别的导线**的
+    **最小净距必须 ≥ `WIRE_GAP`** ✓（`--wire-gap=<mm>` ✓，缺省 1.0 mm ✓）。
+
+    ★ 与 `HARD_OVL` / `HARD_CLEAR` / `HARD_PIN` **同一套路** ✓：**只删候选** ✗、
+      **不动**代价函数与档位次序 ✓；删到一条不剩 ⇒ 调用处保留旧候选集 + 告警 ✓（不许接不上 ✗）。
+    ★ 判据**只有一份** ✓：`sch_geom.gap_pair_bad` ✓（**接头放行** ✓ / **横穿不算** ✗ /
+      其余 `< gap` ⇒ 不足 ✗）—— 生成器闸门 ✓＋**验收探针 ⑪** ✓ 共用同一把尺子 ✓
+      （抄第二份早晚对不上 ✗ —— 面包板那天的教训 ✓）。
+    ★ **例外**（用户点名 ✓）：**同网接头**（搭接/并线/簇主干/T 形/接管 ✓）**放行** ✗✓ ——
+      判据里的 `same_net` 就是为此 ✓（见 `sch_geom.joined` ✓）。
+    ★ `gap=None` ⇒ 用全局 `WIRE_GAP` ✓；`HARD_GAP` 关（`--wire-gap=0` ✓）⇒ 调用处不进来 ✓。
+    """
+    g = WIRE_GAP if gap is None else gap
+    # ★★ 先 `merge_conductors` ✓：同一条**导体**的几节（轨是一串 `<instance>` ✓）并成一条 ✗
+    #   —— ✗ 不并的话，一条轨**自己那几节之间**会报「净距 0.107 mm」✗（假警报 ✗，
+    #     量出来的正是本轮 `365`×`367` 那一对 ✓；见 `sch_geom.merge_conductors` 的文档串 ✓）。
+    um = used_merged if used_merged is not None else SG.merge_conductors(used)
+    for k in range(len(path) - 1):
+        for _u in um:
+            if SG.gap_pair_bad(path[k], path[k + 1], _u[0], _u[1], g,
+                               len(_u) > 2 and _u[2] == net):
+                return True
+    return False
+
+
+def gap_partners(path, net, used, gap=None, limit=4):
+    r"""★ **诊断**：这条路径与 `used` 里**哪几段**净距不足 ✓（连双方坐标 / 网名一起报 ✓）
+
+    ★ 与 `ovl_partners` 同一手法 ✓（2026-09-28 ✓）：报告里直接写“跟谁贴、同网还是异网”✓，
+      免得再去猜 ✗。判据仍调**唯一一份** `sch_geom.gap_pair_bad` ✓。
+    """
+    g = WIRE_GAP if gap is None else gap
+    out = []
+    for k in range(len(path) - 1):
+        for _u in SG.merge_conductors(used):
+            if SG.gap_pair_bad(path[k], path[k + 1], _u[0], _u[1], g,
+                               len(_u) > 2 and _u[2] == net):
+                out.append((path[k], path[k + 1], _u[0], _u[1],
+                            _u[2] if len(_u) > 2 else "?"))
                 if len(out) >= limit:
                     return out
     return out
@@ -2475,6 +2572,51 @@ def main(argv):
         global HARD_CLEAR
         HARD_CLEAR = False
         print("硬闸门 HARD_CLEAR：**关闭** ✓（`--noclear` ⇒ 回到“贴脚只靠软代价”= v23 ✓）")
+    # ★★★ 2026-10-09 ✓ **`--wire-gap=<mm>`：线↔线最小净距** ✓（第四十六轮 ✓ **用户定** ✓）——
+    #   两种写法都收 ✓（`--wire-gap=1.0` ✓ / `--wire-gap 1.0` ✓ —— `--label` 那条教训 ✓）。
+    #   ★ 缺省 **1.0 mm** ✓；允许 **[0.254, 2.54] mm** ✓；超范围 ⇒ **夹到边界 ＋ 警告** ✓
+    #     （不静默 ✗、不崩 ✗）；`0`（或负数 ✓）⇒ **关掉本闸门** ✓ = 一键复现**旧行为** ✓。
+    _wv = None
+    for _i, _a in enumerate(argv):
+        if _a.startswith("--wire-gap="):
+            _wv = _a.split("=", 1)[1]
+        elif _a == "--wire-gap" and _i + 1 < len(argv):
+            _wv = argv[_i + 1]
+    if _wv is not None:
+        global WIRE_GAP, HARD_GAP
+        try:
+            _wmm = float(_wv)
+        except ValueError:
+            print("   ⚠ **`--wire-gap=%s` 不是数** ✗ ⇒ 退回缺省 %.3f mm ✓（不静默 ✗）"
+                  % (_wv, WIRE_GAP_MM))
+            _wmm = WIRE_GAP_MM
+        if _wmm <= 0:
+            HARD_GAP = False
+            print("★ **`--wire-gap=%g` ⇒ 线距闸门关掉** ✓（= **旧行为** ✓："
+                  "不给这条约束 ⇒ 想一字不差复现旧命令就加它 ✓）" % _wmm)
+        else:
+            if _wmm < WIRE_GAP_MIN_MM:
+                print("   ⚠ **`--wire-gap=%.4f mm` 小于下限 %.3f mm** ✗ ⇒ **夹到 %.3f mm** ✓"
+                      "（用户定的范围 [%.3f, %.3f] ✓；不静默 ✗）"
+                      % (_wmm, WIRE_GAP_MIN_MM, WIRE_GAP_MIN_MM,
+                         WIRE_GAP_MIN_MM, WIRE_GAP_MAX_MM))
+                _wmm = WIRE_GAP_MIN_MM
+            elif _wmm > WIRE_GAP_MAX_MM:
+                print("   ⚠ **`--wire-gap=%.4f mm` 大于上限 %.3f mm** ✗ ⇒ **夹到 %.3f mm** ✓"
+                      "（用户定的范围 [%.3f, %.3f] ✓；不静默 ✗）"
+                      % (_wmm, WIRE_GAP_MAX_MM, WIRE_GAP_MAX_MM,
+                         WIRE_GAP_MIN_MM, WIRE_GAP_MAX_MM))
+                _wmm = WIRE_GAP_MAX_MM
+            WIRE_GAP = _wmm * U_PER_MM
+            HARD_GAP = True
+            print("★★ **线↔线最小净距 `--wire-gap`** ✓ = **%.4f mm** = %.4f 单位 ✓"
+                  "（缺省 %.3f mm ✓，范围 [%.3f, %.3f] mm ✓）—— **硬闸门** ✓："
+                  "线与线的净距不足（且**不是同网接头** ✗、**不是横穿** ✗）⇒ 候选**否决** ✗"
+                  % (_wmm, WIRE_GAP, WIRE_GAP_MM, WIRE_GAP_MIN_MM, WIRE_GAP_MAX_MM))
+    else:
+        print("★★ **线↔线最小净距 `--wire-gap`** ✓ = **%.4f mm（缺省）** = %.4f 单位 ✓"
+              "（范围 [%.3f, %.3f] mm ✓；`--wire-gap=0` ⇒ 关掉 = 旧行为 ✓）"
+              % (WIRE_GAP_MM, WIRE_GAP, WIRE_GAP_MIN_MM, WIRE_GAP_MAX_MM))
     if "--nofj" in argv:                       # A/B 用 ✓：关掉“跨网假接头”判据 ✓
         global HARD_FJ
         HARD_FJ = False
@@ -3081,6 +3223,8 @@ def main(argv):
         print("外圈环廊 ✓：UBOX 外各加 %d 条通道（x %d / y %d ✓）"
               % (len(RING_OFFS), len(chx), len(chy)))
     used, nets_segs, warn = [], {}, []
+    # ★ 2026-10-09 ✓ 线距闸门（`--wire-gap` ✓）的**账面** ✓：[被它删掉的候选数 ✓, “一条都不剩 ⇒ 退回旧集”的次数 ✓]
+    GAP_STAT = [0, 0]
     _orph = []                      # ★★★ 2026-10-04 ✓ “车道接不上轨”的簇 ✓（(网, x, 轨 y, 卡在哪) ✓）
     #   ★ 为什么单开一个表 ✗：它发生在**很深的网内循环**里 ✓，而退出码在 `main` 末尾算 ✓
     #     ⇒ 必须有个东西把它带出来 ✓（✗ 只 print 一句 ⇒ 跑完退出码还是 0 ✗，实测踩过 ✓）。
@@ -3350,7 +3494,7 @@ def main(argv):
         #   ⇒ 与直连/L 形撞车的那些形状自动并掉 ✓（`dedup_path` 与下面这遍去重同一口径 ✓）。
         #   ★ 只加候选、**不删**候选 ✓ ⇒ 老行为永远是候选集里的一个 ✓（单调 ✓）。
         if shape and MST_SHAPE:
-            _tc = tie_cands(a, b, used, net)
+            _tc = tie_cands(a, b, used, net, chx=_cx, chy=_cy)
             if _tc:
                 cands = cands + _tc
                 esc_ids |= {id(p) for p in _tc}
@@ -3393,6 +3537,20 @@ def main(argv):
             else:
                 warn.append("%s：**没有一条候选**能与已布的线不重叠 ✗（保留旧候选集 ✓ 否则接不上 ✗）"
                             % tag)
+        if HARD_GAP:                   # ★ 用户定（2026-10-09 ✓）：**线↔线净距 ≥ `--wire-gap`** ✓
+            #   ★ “不重叠(=0)”**升级**为“≥ `WIRE_GAP`” ✓（用户定的优先级：仍在**交叉数之前** ✓）；
+            #     **同网接头**（搭接/并线/T 形/接管 ✓）与**横穿**（真交叉 ✓）由判据放行 ✗✓
+            #     —— 见 `sch_geom.gap_pair_bad` ✓（否则会把搭接功能打死 ✗✗）。
+            _um = SG.merge_conductors(used)     # ★ 一次一算 ✓（`used` 在本次 `route_pair` 内不变 ✓）
+            ok3g = [p for p in cands if not gap_hard_bad(p, net, used, used_merged=_um)]
+            if ok3g:
+                if len(ok3g) < len(cands):
+                    GAP_STAT[0] += len(cands) - len(ok3g)
+                cands = ok3g
+            else:
+                GAP_STAT[1] += 1
+                warn.append("%s：**没有一条候选**能与已布的线净距 ≥ %.3f mm ✗"
+                            "（保留旧候选集 ✓ 否则接不上 ✗）" % (tag, WIRE_GAP / U_PER_MM))
         if HARD_CLEAR:                 # ★ 用户定（2026-09-28 ✓）：**贴脚 = 0**（零容忍 ✓）
             ok4 = [p for p in cands if seg_pin_intr(p) == 0]
             if ok4:
@@ -4024,7 +4182,8 @@ def main(argv):
                         _seg2 = [(_x, _ry2), _end2]
                         if (not body_rail_bad(_seg2, boxes, PIN_ALL)
                                 and pin_intr(_seg2, set(), PIN_ALL) == 0
-                                and not ovl_hard_bad(_seg2, used)):
+                                and not ovl_hard_bad(_seg2, used)
+                                and not (HARD_GAP and gap_hard_bad(_seg2, net, used))):
                             if _dir2 == 'up':
                                 _tr = [(_x, _ry2)] + _tr
                             else:
@@ -4049,7 +4208,9 @@ def main(argv):
                                 _gts.append("压别人的脚 %d 处" % _npi)
                             if ovl_hard_bad(_seg2, used):
                                 _gts.append("与已布线**重叠**")
-                            _why = "、".join(_gts) if _gts else "？（三道都没报 ⇒ 看下面的明细 ✓）"
+                            if HARD_GAP and gap_hard_bad(_seg2, net, used):
+                                _gts.append("线距 **< %.3f mm**" % (WIRE_GAP / U_PER_MM))
+                            _why = "、".join(_gts) if _gts else "？（各道都没报 ⇒ 看下面的明细 ✓）"
                             # ★★★ 2026-10-04 ✓ **直着走不通 ⇒ 试 L 形绕过去** ✗✓（修 bug ✓）
                             #   ✗ 病（实测 ✓，`--vlanes=GND,5V@45.83` ✓）：车道下端 y=43.2
                             #     直落到 5V 轨 y=-45.0 ⇒ **压别人的脚 1 处** ✗ ⇒ 整簇留在孤岛上 ✓
@@ -4075,6 +4236,8 @@ def main(argv):
                                 if any(pin_intr(_s9, set(), PIN_ALL) for _s9 in (_s2a, _s2b)):
                                     continue
                                 if any(ovl_hard_bad(_s9, used) for _s9 in (_s2a, _s2b)):
+                                    continue
+                                if HARD_GAP and any(gap_hard_bad(_s9, net, used) for _s9 in (_s2a, _s2b)):
                                     continue
                                 _ok = _x2
                                 break
@@ -4209,7 +4372,8 @@ def main(argv):
                 if (not body_rail_bad(_vl_path, boxes, PIN_ALL)
                         and not pin_hard_bad(_vl_path, PIN_ALL, own_pins)
                         and pin_intr(_vl_path, own_pins, PIN_ALL) == 0
-                        and not ovl_hard_bad(_vl_path, used)):
+                        and not ovl_hard_bad(_vl_path, used)
+                        and not (HARD_GAP and gap_hard_bad(_vl_path, net, used))):
                     _L = _vl_path
                     print("   ★ 支线 **横到车道（0 拐）** ✓：%-16s 沿脚行到 x=%.3f ✓"
                           "（贴脚 0 ✓ 不重叠 ✓ 不穿体 ✓）" % (tt, b[0]))
@@ -4376,6 +4540,7 @@ def main(argv):
                                     if (not body_hard_bad(_c4, boxes, PIN_ALL)
                                             and not pin_hard_bad(_c4, PIN_ALL, own_pins)
                                             and not ovl_hard_bad(_c4, used)
+                                            and not (HARD_GAP and gap_hard_bad(_c4, net, used))
                                             and pin_intr(_c4, own_pins, PIN_ALL) == 0):
                                         _L = _c4
                                         break
@@ -4387,6 +4552,7 @@ def main(argv):
                                 if (not body_hard_bad(_c4, boxes, PIN_ALL)
                                         and not pin_hard_bad(_c4, PIN_ALL, own_pins)
                                         and not ovl_hard_bad(_c4, used)
+                                        and not (HARD_GAP and gap_hard_bad(_c4, net, used))
                                         and pin_intr(_c4, own_pins, PIN_ALL) == 0):
                                     _L = _c4
                                     break
@@ -4396,6 +4562,7 @@ def main(argv):
                             if (not body_hard_bad(_cand, boxes, PIN_ALL)
                                     and not pin_hard_bad(_cand, PIN_ALL, own_pins)
                                     and not ovl_hard_bad(_cand, used)
+                                    and not (HARD_GAP and gap_hard_bad(_cand, net, used))
                                     and pin_intr(_cand, own_pins, PIN_ALL) == 0):
                                 # ★★ 2026-09-28 ✓ **不立刻定案** ✗ —— 这是「自己竖一趟」的形状 ✓，
                                 #   先记下来当**兜底** ✓，继续往后（k 更大 / 另一方向）找
@@ -4590,16 +4757,19 @@ def main(argv):
                         if (not body_hard_bad(_c3, boxes, PIN_ALL)
                                 and not pin_hard_bad(_c3, PIN_ALL, own_pins)
                                 and not ovl_hard_bad(_c3, used)
+                                and not (HARD_GAP and gap_hard_bad(_c3, net, used))
                                 and pin_intr(_c3, own_pins, PIN_ALL) == 0):
                             _L = _c3
                         else:
                             print("   · 支线**法线不是水平** ⇒ L 形不适用 ✓、直连也不合格 ✗："
-                                  "%-22s 法线 (%.3f,%.3f) ✓ 脚 (%.1f,%.1f) ✓ ｜ 四个闸门 = "
-                                  "穿体 %s ｜ 压别人脚 %s ｜ 与已布线重叠 %s ｜ **贴脚数 %d** ✓"
+                                  "%-22s 法线 (%.3f,%.3f) ✓ 脚 (%.1f,%.1f) ✓ ｜ 各闸门 = "
+                                  "穿体 %s ｜ 压别人脚 %s ｜ 与已布线重叠 %s ｜ 线距不足 %s ｜ "
+                                  "**贴脚数 %d** ✓"
                                   % (tt, _n2[0], _n2[1], a[0], a[1],
                                      body_hard_bad(_c3, boxes, PIN_ALL),
                                      pin_hard_bad(_c3, PIN_ALL, own_pins),
                                      ovl_hard_bad(_c3, used),
+                                     (HARD_GAP and gap_hard_bad(_c3, net, used)),
                                      pin_intr(_c3, own_pins, PIN_ALL)))
                 # ★★★ `_L` **必须在这里再判一次** ✓（2026-09-28 ✓ 修死代码 ✗）：
                 #   ✗ 上一版把"用 `_L`"写在 `if _L is not None:`（在本块**之前**）里 ✗
@@ -4754,7 +4924,8 @@ def main(argv):
                 _nv_b = 1 if (_vp_pre and body_hard_bad(_vp_pre, boxes, PIN_ALL)) else 0
                 _nv_p = pin_intr(_vp_pre, set(), PIN_ALL) if _vp_pre else 0
                 _nv_o = 1 if (_vp_pre and ovl_hard_bad(_vp_pre, used)) else 0
-                if _vp_pre and not (_nv_b or _nv_p or _nv_o):
+                _nv_g = 1 if (_vp_pre and HARD_GAP and gap_hard_bad(_vp_pre, net, used)) else 0
+                if _vp_pre and not (_nv_b or _nv_p or _nv_o or _nv_g):
                     _vx, _x0 = _lane, _lane
                     print("   ★ 轨间互连**与最外侧支线共用** ✓：车道 x=%.3f ✓"
                           "（截短 %d 条支线 ✓、交界点 %s ✓；老法是 x=%.3f ✗）"
@@ -4783,7 +4954,8 @@ def main(argv):
                             break
                         if (not body_hard_bad(_c5, boxes, PIN_ALL)
                                 and pin_intr(_c5, set(), PIN_ALL) == 0
-                                and not ovl_hard_bad(_c5, used)):
+                                and not ovl_hard_bad(_c5, used)
+                                and not (HARD_GAP and gap_hard_bad(_c5, net, used))):
                             _hit = (_v5, _k5)
                             break
                     if _hit:
@@ -4795,8 +4967,8 @@ def main(argv):
                         print("   ⚠ 兜底位置**四档都不合格** ✗ ⇒ 仍用老位置 x=%.3f ✓（请人看一眼 ✓）"
                               % _vx)
                     print("   · 轨间互连**不能共用** ✗（车道 x=%.3f：穿体 %d ｜ 贴脚 %d ｜ "
-                          "与已布线重叠 %d ｜ 可搭支线 %d 条 ✗）⇒ 用老位置 x=%.3f ✓"
-                          % (_lane, _nv_b, _nv_p, _nv_o, len(_p0), _vx))
+                          "与已布线重叠 %d ｜ 线距不足 %d ｜ 可搭支线 %d 条 ✗）⇒ 用老位置 x=%.3f ✓"
+                          % (_lane, _nv_b, _nv_p, _nv_o, _nv_g, len(_p0), _vx))
                     for (_r4, _c4n, _x4, _y4) in (pin_intr_list(_vp_pre, set(), PIN_ALL)
                                                   if _vp_pre else []):
                         _d4 = min(SG.p2seg((_x4, _y4), _vp_pre[_k4], _vp_pre[_k4 + 1])
@@ -5452,6 +5624,8 @@ def main(argv):
                         _why = "pin"
                     elif ovl_hard_bad(_np, used):
                         _why = "ovl"
+                    elif HARD_GAP and gap_hard_bad(_np, net, used):
+                        _why = "gap"
                     elif seg_pin_intr(_np) != 0:
                         _why = "clear"
                     elif fj_path_bad(_np, net, used):
@@ -5564,6 +5738,82 @@ def main(argv):
     # ✗ “抽出重排后再清理一次”**已取消** ✓（2026-09-28 ✓）：现在重排**跳过**“脚→轨”支线 ✗
     #   ⇒ 它们自始至终没被改过 ✓ ⇒ 不需要再清 ✓（也就不会因为“落点变了”而要重建轨 ✓）。
 
+    # ── ★★★ 2026-10-09 ✓ **同网共线重叠 ⇒ 把重复那一截剪掉** ✓（第四十六轮 ✓ 收尾修复 ✓）──
+    #   ★ 起因（实测 ✓，`--wire-gap` 换候选集之后暴露 ✓）：`LED2.connector1 ↔ J2.connector1`
+    #     那条**母线**被逼着**一路横到 `J2.c1`**（`x 201.4 → 244.6` 在 `y=9` ✓），而 `J2.c1`
+    #     **本来已经有一条轨支线** `(244.6,9)→(235.4,9)` ✗ ⇒ 尾巴 **9.2 单位共线重叠** ✗✗
+    #     （自检当场报「重叠 1 对」✗ ⇒ 退出码 1）。
+    #   ★ 为什么**剪尾巴**是对的 ✓：重叠的那一截**两端都落在**（母线端点 = `J2.c1` ✓、
+    #     剪点 = 支线另一端 `(235.4,9)` ✓）⇒ 剪完母线**仍然**端点到端点接在支线上 ✓、
+    #     `J2.c1` 的铜由支线提供 ✓ ⇒ **连通性一点没变** ✓，只是把**重复的铜**去掉 ✓。
+    #   ★ 保守口径（只做**能证明无损**的那一种 ✓，其余如实报警 ✗ 不硬来 ✓）：
+    #     ① 只处理**同一张网**的 `near_overlap` 对 ✓（不同网重叠另有账 ✗）；
+    #     ② 必须**一条完整落在另一条里**（T ⊆ S ✓）且**共用一只端点** ✓；
+    #     ③ 被剪的必须是 S 的**尾巴那一段**（= 它 `path` 的最后一段 ✓），剪点 = T 那只**内点** ✓。
+    def _trim_overlap_tails():
+        _n_trim = 0
+        for _rnd in range(20):
+            _flat = []
+            for _nn, _lst in nets_segs.items():
+                for _ee in _lst:
+                    _pp = _ee.get("path") or []
+                    for _kk in range(len(_pp) - 1):
+                        _flat.append((_nn, _ee, _kk, _pp[_kk], _pp[_kk + 1]))
+            _hit = None
+            for _i in range(len(_flat)):
+                _n1, _e1, _k1, _p, _q = _flat[_i]
+                _pp1 = _e1.get("path") or []
+                if _k1 != len(_pp1) - 2:
+                    continue                      # ★ 只剪**尾巴那一段** ✓
+                for _j in range(len(_flat)):
+                    if _i == _j:
+                        continue
+                    _n2, _e2, _k2, _c, _d = _flat[_j]
+                    if _n2 != _n1 or _e2 is _e1:
+                        continue
+                    if not SG.near_overlap(_p, _q, _c, _d):
+                        continue
+                    _dx, _dy = _q[0] - _p[0], _q[1] - _p[1]
+                    _l2 = _dx * _dx + _dy * _dy
+                    if _l2 < 1e-12:
+                        continue
+
+                    def _t(_pt):
+                        return ((_pt[0] - _p[0]) * _dx + (_pt[1] - _p[1]) * _dy) / _l2
+
+                    _tc, _td = sorted((_t(_c), _t(_d)))
+                    if not (_tc > -0.02 and _td < 1.02):
+                        continue                      # T 必须**整条落在** S 上 ✓
+                    _inner = [_pt for _pt in (_c, _d) if 0.02 < _t(_pt) < 0.98]
+                    if len(_inner) != 1:
+                        continue                      # 要**恰好一只内点**（= 剪点 ✓）
+                    _hit = (_n1, _e1, _p, _q, _inner[0])
+                    break
+                if _hit:
+                    break
+            if not _hit:
+                break
+            _nn2, _e1, _p, _q, _trim = _hit
+            _e1["path"] = list(_e1["path"][:-1]) + [_trim]
+            _e1["b"] = _trim
+            _e1["a"] = _e1["path"][0]
+            if _e1.get("to") and math.dist(_q, _trim) > 0.05:
+                # ★ 剪掉的那一端本来写着“接到某只脚”✓ ⇒ 那只脚现在由**留着的那条**声明 ✓
+                _e1["to"] = None
+            for _sg in list(used):
+                if (len(_sg) > 2 and _sg[2] == _nn2
+                        and math.dist(_sg[0], _p) <= 0.05
+                        and math.dist(_sg[1], _q) <= 0.05):
+                    used.remove(_sg)
+            used.append((_e1["path"][-2], _trim, _nn2))
+            print("   ✂ **共线重叠剪尾** ✓：`%s` 那一截 (%.1f,%.1f)→(%.1f,%.1f) 与同网"
+                  "已布线重复 ⇒ 剪到 (%.1f,%.1f)（**端点仍落在对方端点上** ✓ 连通性不变 ✓）"
+                  % (_nn2, _p[0], _p[1], _q[0], _q[1], _trim[0], _trim[1]))
+            _n_trim += 1
+        return _n_trim
+
+    _trim_overlap_tails()
+
     # ── ★ 规则自检（闸门 ✓）：“**不同的导线不能重叠**” ✓（2026-09-27 用户定 ✓）──
     #   ★★ 次序很重要 ✗（面包板那天的教训 ✓）：**先查“有没有重叠” ✓、再查连通 ✓** ——
     #     反了就会报假通过 ✗（“网连上了”与“两根线叠在一起”是两件事 ✓）。
@@ -5591,6 +5841,27 @@ def main(argv):
     #     ★ 文件**仍然写出** ✓（我们要能打开图看是哪儿压了 ✓）；口径与 `check_fake_wires.py`
     #       「机器守用退出码说话」一致 ✓。
     ov_fail = 1 if ov_pairs else 0
+    # ★★★ 2026-10-09 ✓ **线↔线净距**也要**真闸门** ✓（用户定 ✓：线距是**硬约束** ✓ ——
+    #   与“重叠 0”同一格 ✓）。判据**只有一份** ✓：`sch_geom.conductor_clearance` ✓
+    #   （与验收探针 ⑪ 同一把尺子 ✓）；`--wire-gap=0`（`HARD_GAP=False`）⇒ 本条**不判** ✗（旧行为 ✓）。
+    if HARD_GAP:
+        _gmd, _gmp, _gbad, _gncr, _gms = SG.conductor_clearance(used, gap=WIRE_GAP)
+        print("── ★★ 规则自检：**线↔线最小净距 %.4f 单位 = %.4f mm** ✓（`--wire-gap` = %.3f mm"
+              " = %.4f 单位 ✓）｜ **低于阈值的对数 %d 对** %s ｜ 横穿 %d 对 ✓"
+              % (_gmd if _gmd is not None else -1.0,
+                 (_gmd * 25.4 / 90.0) if _gmd is not None else -1.0,
+                 WIRE_GAP / U_PER_MM, WIRE_GAP, len(_gbad),
+                 "✓✓" if not _gbad else "✗✗ 必须 0 ✓", _gncr))
+        for _gd, _gi, _gj in sorted(_gbad)[:6]:
+            print("      ✗ %.4f 单位 = %.4f mm：[%s] (%.1f,%.1f)→(%.1f,%.1f) 与 [%s] "
+                  "(%.1f,%.1f)→(%.1f,%.1f)"
+                  % (_gd, _gd * 25.4 / 90.0, _gms[_gi][2], _gms[_gi][0][0], _gms[_gi][0][1],
+                     _gms[_gi][1][0], _gms[_gi][1][1], _gms[_gj][2], _gms[_gj][0][0],
+                     _gms[_gj][0][1], _gms[_gj][1][0], _gms[_gj][1][1]))
+        if _gbad and not ov_fail:
+            ov_fail = 1
+            print("── ★★ ⇒ **退出码 1** ✓（“线↔线净距 ≥ `--wire-gap`”是用户 2026-10-09 定的"
+                  "**硬约束** ✓；文件已照常写出 ✓）")
     if ov_fail:
         print("── ★★ ⇒ **退出码 1** ✓（“不同的导线重叠”必须 0 ✓；文件已照常写出 ✓ 供你打开看哪儿压了 ✓）")
     # ★★★ 2026-10-09 ✓ **“`--complete-islands` 补不成一个岛”也是真闸门** ✗（用户定的硬规矩 ✓）——
