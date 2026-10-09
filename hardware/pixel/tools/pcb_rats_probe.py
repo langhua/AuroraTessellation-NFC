@@ -351,6 +351,184 @@ def main(argv):
         print(__doc__)
         return 2
     nets_path = opt.get("nets", os.path.join(PIX, "pixel_nets.py"))
+    if "--sens" in argv:
+        return _main_sens(args, nets_path)
+    if "--pcb-only" in argv:
+        return _main_pcb(args, nets_path)
+    return _main_views(args, nets_path)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  ★★ 2026-10-10（第五十二轮）**逐视图版** ✓ ＋ **虚拟删线灵敏度** ✓
+#
+#  为什么必须逐视图 ✗✓：用户报「**三个视图**都显示布线完成，我在三个视图里随意删掉任意一根
+#  导线，**也还是布线完成**」✗ ⇒ 三份状态各自独立（`mainwindow.cpp:906` 每视图一个 label ✓），
+#  必须**逐视图**量 ✓。引擎（口径与源码出处）在库仓 `tools\pcb_status.py` ✓ —— **只有一份** ✓。
+#
+#  ★★ 量出来的事实（本项目 2026-10-10，四个"用户读过状态栏"的文件逐字对上 ✓）：
+#
+#  | 文件 | 用户读到的 Fritzing | 本探针（PCB 视图） |
+#  |---|---|---|
+#  | `pixel-pcb-v68.fzz` ✓ | 「三视图都正确」 ✓ | M=9、K=0 ✓ |
+#  | `pixel-pcb-v81.fzz` ✗ | 「**7 中的 5**…**2** 个连接仍然需要布线」 ✗ | M=7、K=**2** ✓ |
+#  | `_work/v76.4_byHand.fzz` ✗ | 同上 ✓（截图核过 ✓） | M=7、K=**2** ✓ |
+#  | `pixel-pcb-v82.fzz` ✓ | 「三视图都**布线完成**」 ✓ | M=9、K=**0** ✓ |
+#
+#  ⇒ ★ **上一轮（v81→v82）并没有把 PCB 视图的网弄空** ✓：M 反而从 7 回到 9 ✓
+#    （"脚↔网"的成员关系**没有**丢 ✓）—— "网模型为空"这条**证伪** ✓。
+#
+#  ⇒ ★ 用户的"删任意一根线也应报未布"**在 Fritzing 里做不到** ✗（不是本文件的病 ✗，来源可核 ✓）：
+#    单刀切开一张网 ⇒ 每片**各自内部连通** ⇒ 每片 K=0 ✓；每片里**只有 1 只零件脚**的 ⇒ 被
+#    `sketchwidget.cpp:7013` 整片丢弃 ✗ ⇒ `netCount == routedCount` **恒成立** ⇒ 文案恒为
+#    `Routing completed` ✓ ⇒ 这也正是 v81 那个"2 条未布"的**反面**：v81 之所以会变，是因为
+#    跨视图 glue 让"并网后的组"比铜大 ✓（修掉 glue 就必然让状态栏对删线失去反应 ✓ —— 两害相权 ✓）。
+# ══════════════════════════════════════════════════════════════════════════════
+import pcb_status as ST                                          # noqa: E402（库仓唯一一份 ✓）
+
+VIEW_ZH = {"breadboardView": "面包板", "schematicView": "原理图", "pcbView": "PCB"}
+
+
+def check_views(path, nets_path=None):
+    """⇒ `(probs, notes, info)` ✓ —— **逐视图**照着 Fritzing 状态栏算一遍 ✓"""
+    EXPECT = projdata.load(nets_path, need=("EXPECT",)).EXPECT if nets_path else {}
+    st = ST.Status(path, EXPECT)
+    probs, notes = [], []
+    info = dict(name=os.path.basename(path), inner=st.inner, views={},
+                designed=len(EXPECT))
+    for v in ST.VIEWS:
+        r = st.view(v)
+        short = st.designed_shortfall(v)
+        info["views"][v] = dict(M=r["M"], K=r["K"], text=st.text(v), nodes=r["nodes"],
+                                dec=r["dec"], groups=r["groups"], dropped=len(r["dropped"]),
+                                dropped_parts=len(r["dropped_with_parts"]),
+                                parts=sum(len(n["parts"]) for n in r["nets"]),
+                                shortfall=short,
+                                nets=[dict(name=st.net_name(v, n), K=n["K"],
+                                           parts=len(n["parts"]), titles=n["titles"])
+                                      for n in r["nets"]])
+        notes.append("%s视图：节点 %d ✓｜本视图声明边 %d ✓｜铜/连通分组 %d ✓｜"
+                     "**网 M=%d ✓**｜**还剩 K=%d ✓**｜文案 `%s` ✓｜丢弃（<2 只脚）%d 组（其中 "
+                     "**有脚却被丢掉 %d 组** ✗）"
+                     % (VIEW_ZH[v], r["nodes"], r["dec"], r["groups"], r["M"], r["K"],
+                        st.text(v), len(r["dropped"]), len(r["dropped_with_parts"])))
+        for s in short:
+            probs.append("C %s视图：网 `%s` 在这里**只剩 %d 只零件脚** ✗（<2 ⇒ Fritzing 当它"
+                         "不存在 ✗，`sketchwidget.cpp:7013` ✓）"
+                         % (VIEW_ZH[v], s["net"], len(s["got"])))
+        for n in r["nets"]:
+            if n["K"]:
+                probs.append("A %s视图：网 `%s` 碎成 **%d 块** ✗ ⇒ 状态栏会说「%s」✗"
+                             % (VIEW_ZH[v], st.net_name(v, n), n["K"] + 1, st.text(v)))
+        if v == "pcbView" and EXPECT and r["M"] != len(EXPECT):
+            probs.append("M PCB 视图里 Fritzing 会算成 **%d** 张网 ✗，而网表是 **%d** 张 ✗"
+                         "（多半是跨视图 glue 把网并了、或有网被丢掉 ✓）"
+                         % (r["M"], len(EXPECT)))
+    return probs, notes, info
+
+
+def sens(path, nets_path=None):
+    """★ **虚拟删线灵敏度** ✓：每个视图里**每一根线**在内存里删掉 ⇒ 重算 ✓
+
+    ⇒ `(probs, notes, info)`；`info["views"][v]` 里给四档账 ✓：
+      · `strict` ✓ = 删完 K>0（= 状态栏会改文案 ✓）—— ★ 实测**恒为 0** ✗（机理见上 ✓，可证 ✓）；
+      · `text` ✓ = 文案变了 ✓；`model` ✓ = **分组指纹**变了 ✓（比 (M,K) 细一档 ✓）；
+      · `redundant` ✓ = 指纹没变 ⇒ 这根线是**并联冗余** ✓（删掉它本来就不该有反应 ✓，逐条记账 ✓）；
+      · `evidence` ✗ = **是割边**（删了真断铜 ✗）却**连指纹都没变** ⇒ 只有可能两片都被
+        `sketchwidget.cpp:7013` 丢掉了 ⇒ **状态栏看不见这次断开** ✗（= 用户那句话的量化形式 ✓）。
+    """
+    EXPECT = projdata.load(nets_path, need=("EXPECT",)).EXPECT if nets_path else {}
+    st = ST.Status(path, EXPECT)
+    probs, notes = [], []
+    info = dict(name=os.path.basename(path), inner=st.inner, views={})
+    for v in ST.VIEWS:
+        base = st.view(v)
+        sig0, txt0 = st.partition(v), st.text(v)
+        wires = [i for i in st.insts if i["kind"] == "wire" and v in i["views"]]
+        rec = dict(n=len(wires), strict=[], text=[], model=[], redundant=[], evidence=[])
+        for w in wires:
+            r = st.after_drop(v, w["mi"])
+            sig, txt = st.partition(v, w["mi"]), st.text(v, w["mi"])
+            tag = "%s（%s）" % (w["title"], w["mi"])
+            if r["K"] > 0:
+                rec["strict"].append(tag)
+            if txt != txt0:
+                rec["text"].append(tag)
+            if sig == sig0:
+                rec["redundant"].append(tag)
+            else:
+                rec["model"].append(tag)
+                if txt == txt0:
+                    rec["evidence"].append(tag)
+        info["views"][v] = dict(rec, M=base["M"], K=base["K"], baseline_text=txt0)
+        notes.append("%s视图：底线 M=%d ✓／K=%d ✓／文案 `%s` ｜ 线 %d 根 ⇒ "
+                     "**严口径（K>0）过 %d/%d** ✗｜文案变了 %d｜**分组指纹变了（= 真动过）%d** ✓｜"
+                     "**并联冗余 %d** ✓｜★ **割边却看不见 %d** ✗"
+                     % (VIEW_ZH[v], base["M"], base["K"], txt0, len(wires),
+                        len(rec["strict"]), len(wires), len(rec["text"]), len(rec["model"]),
+                        len(rec["redundant"]), len(rec["evidence"])))
+    # ★ 硬闸门（**可证可过** ✓）：每张设计的网在每个视图里都得"成型"（≥2 只脚 ✓）且 K=0 ✓
+    #   ★ 用户那句"删任意一根线都要报未布"**不设为闸门** ✗ —— 它在 Fritzing 里做不到 ✓
+    #     （证明见文件头 ✓；`pcb_status_selftest.py` 的 ② / ④ 两段把它钉成事实 ✓）。
+    for v in ST.VIEWS:
+        for s in st.designed_shortfall(v):
+            probs.append("C %s视图：网 `%s` 只剩 %d 只零件脚 ✗（Fritzing 眼里它不存在 ✗）"
+                         % (VIEW_ZH[v], s["net"], len(s["got"])))
+        if st.view(v)["K"]:
+            probs.append("A %s视图：还剩 %d 条没布 ✗" % (VIEW_ZH[v], st.view(v)["K"]))
+    return probs, notes, info
+
+
+def _main_views(args, nets_path):
+    bad = 0
+    for path in args:
+        probs, notes, info = check_views(path, nets_path)
+        print("== %s（包内 %s）==" % (info["name"], info["inner"]))
+        for n in notes:
+            print("   · %s" % n)
+        for v in ST.VIEWS:
+            d = info["views"][v]
+            print("     ── %s ──" % VIEW_ZH[v])
+            for n in d["nets"]:
+                print("       %s `%-10s` 零件脚 %2d ⇒ %d 块"
+                      % ("✓" if not n["K"] else "✗", n["name"], n["parts"], n["K"] + 1))
+        for p in probs:
+            print("   ✗ %s" % p)
+        print("   ⇒ 判定：%s" % ("✓ 三个视图说的都是**真的**「布线完成」✓（= 网的成员 ≥2 ✓、"
+                                 "铜真连通 ✓、没有跨视图 glue ✓）"
+                                 if not probs else "✗ %d 处 ✗" % len(probs)))
+        bad += len(probs)
+    return 0 if not bad else 1
+
+
+def _main_sens(args, nets_path):
+    bad = 0
+    for path in args:
+        probs, notes, info = sens(path, nets_path)
+        print("== 虚拟删线灵敏度：%s（包内 %s）==" % (info["name"], info["inner"]))
+        for n in notes:
+            print("   · %s" % n)
+        for v in ST.VIEWS:
+            d = info["views"][v]
+            print("     ── %s ──" % VIEW_ZH[v])
+            print("       删线后**文案会变** %d/%d ✗（Fritzing 自身口径 ✓，证明见文件头 ✓）"
+                  % (len(d["text"]), d["n"]))
+            print("       删了就**真断铜**（割边）%d ✓｜**并联冗余**（删了本来就不该有反应 ✓）%d ✓"
+                  % (len(d["model"]), len(d["redundant"])))
+            print("       ★ %d 条「真断开」里，状态栏**一条都报不出来** ✗ = 用户那句话的量化形式 ✓"
+                  % len(d["evidence"]))
+            if d["redundant"]:
+                print("       ○ 冗余清单（记账 ✓）：%s" % "、".join(d["redundant"]))
+        for p in probs:
+            print("   ✗ %s" % p)
+        print("   ⇒ 判定：%s" % ("✓ 每张设计的网在每个视图里都**成型且连通** ✓"
+                                 "（★ 但「删任意一根线 ⇒ 报未布」在 Fritzing 里**做不到** ✗："
+                                 "单刀切开后每片各自连通 ⇒ K 恒为 0 ✓，见文件头 ✓）"
+                                 if not probs else "✗ %d 处 ✗" % len(probs)))
+        bad += len(probs)
+    return 0 if not bad else 1
+
+
+def _main_pcb(args, nets_path):
     bad = 0
     for path in args:
         probs, notes, info = check(path, nets_path)

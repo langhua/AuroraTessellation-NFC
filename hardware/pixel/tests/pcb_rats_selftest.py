@@ -70,11 +70,17 @@ chk("点出被并的两对网（`BR+`、`GND` ✓ ＋ `COIL_A`、`RC` ✓）",
     str([r["names"] for r in info["nets"] if len(r["names"]) > 1]))
 
 print("\n== ② 治好要过：`pixel-pcb-v82.fzz` ⇒ M=9 / K=0 ✓、exit 0 ✓ ==")
-rc, out = run(PROBE, V82, "--nets=%s" % NETS)
+#   ★ 第五十二轮 ✓：探针默认改成**逐视图版** ✓（三视图一起报 ✓）⇒ 这一段要那套"PCB 单视图"的
+#     老文案 ⇒ 显式 `--pcb-only` ✓（口径是同一份 `check()` ✓，没换尺子 ✗）。
+rc, out = run(PROBE, V82, "--nets=%s" % NETS, "--pcb-only")
 chk("探针 exit 0 ✓", rc == 0, "" if rc == 0 else out[-800:])
 chk("M = 9 ✓（『9 中的 9 网络布线完成』✓）", "M（Fritzing 会算成几张网）= 9" in out)
 chk("K = 0 ✓（没有鼠线 ✓）", "K（还剩几条没布）= 0" in out)
 chk("**跨视图 glue 证据 0 条** ✓", "跨视图 glue 证据 0 条" in out)
+rc, out = run(PROBE, V82, "--nets=%s" % NETS)
+chk("**逐视图版** exit 0 ✓（三视图都 K=0 ✓）", rc == 0,
+    "" if rc == 0 else out[-800:])
+chk("逐视图版报了三视图 ✓", all(("── %s ──" % zh) in out for zh in ("面包板", "原理图", "PCB")))
 
 print("\n== ③ 网表闸门同步：`tools\\net_group_check.py`（用**同一份** `check()` ✓）==")
 rc1, o1 = run(GATE, V81)

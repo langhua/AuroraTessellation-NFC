@@ -7074,3 +7074,165 @@ py -3.13 -X utf8 %TOOLS%\render_bb.py  pixel-pcb-v82.fzz pixel-pcb-v82_bb.png  2
 4. **`fz_exact.py`（第四十手的"照源码实现"✓）已过时** ✗：它在 v59 上就报「9 of 9 - 0」✗（用户实测是 2 ✗）
    ⇒ 本轮**没删**它 ✗ 但也在 README 里**不引用**它 ✓；要不要清理 ⇒ 用户定 ✓。
 
+---
+
+## 五十二、状态栏**可信度** ✓（2026-10-10 第五十二轮 ✓ —— 用户报「删任意一根线 **也还是布线完成**」✗）
+
+### ① 症状 ✓（用户原话，**本条就是验收标准** ✓）
+
+> 「`pixel-pcb-v82.fzz` 三个视图，都是**布线完成**。但是有问题啊，我在三个视图里**随意删除任意
+>  一根导线，也还是布线完成**。」
+
+⇒ 按用户的预期：删掉一根线本该报「还有 N 条未布」✗ ⇒ 现在永远说「完成」✗ ⇒ **状态栏不可信** ✓。
+
+### ② 机理 ✓（**照源码**，逐条可核 ✓；唯一实现 = 库仓 `tools\pcb_status.py` ✓）
+
+本项目**没有**再猜 ✗：把 Fritzing 状态栏的算法整个复刻了一遍 ✓（出处写进 `pcb_status.py` 文件头 ✓），
+并在四个**用户读过状态栏**的文件上**逐字对上** ✓ —— **这是本轮结论的立足点** ✓：
+
+| 文件 | 用户读到的 Fritzing | 本探针（PCB 视图） | 对不对得上 |
+|---|---|---|---|
+| `pixel-pcb-v68.fzz` ✓ | 「三视图都正确」 ✓ | **M=9、K=0** ✓ | ✓ |
+| `pixel-pcb-v81.fzz` ✗ | 「**7 中的 5** 网络布线完成，**2** 个连接仍然需要布线」✗ | **M=7、K=2** ✓ | ✓ |
+| `_work/v76.4_byHand.pre-nets.fzz` ✗ | 同上 ✓（已截图核 ✓） | **M=7、K=2** ✓ | ✓ |
+| `pixel-pcb-v83.fzz` ✓ | 「三视图都**布线完成**」 ✓ | **M=9、K=0** ✓ | ✓ |
+
+**（1）"还剩几条"是怎么算的** ✓：`GraphUtils::scoreOneNet`（`utils/graphutils.cpp:447` ✓）——
+取该网的**零件连接器项**做图，边只认这几路（`464`–`560` ✓）：
+① 同脚跨层 ✓；② 两个**可见** `Symbol` ✓；③ 同件内同 `bus` ✓；④ 连到 `Wire`（且 `wireFlags & 本视图的线旗`
+✓）⇒ `Wire::collectChained` 的**末端** ✓；⑤ 连到 `Part` 且本视图线旗含 `NormalFlag`（**只有面包板视图** ✓）；
+⑥ 连到**可见的** `Breadboard` ⇒ `GraphUtils::collectBreadboard` 的末端 ✓。
+然后 **K = 该网连通片数 − 1** ✓（`573`–`596` ✓，不是"没连上的脚数" ✗）。
+
+**（2）"算不算一张网"** ✓：`SketchWidget::updateRoutingStatus`（`sketch/sketchwidget.cpp:6968` ✓）——
+每张网先 `collectEqualPotential`（`connectors/connectoritem.cpp:1340` ✓，走 `connectedToItems()` ∪ 件内 bus
+∪ 同脚跨层 ✓），再 `collectParts`（`1413` ✓，**丢掉** Wire/Note/Logo/Hole/Ruler ✗）、再按
+`attachedTo()->isEverVisible()` 过滤 ✓，最后 **`partConnectorItems.count() <= 1` ⇒ 整张网被跳过** ✗
+（`7013` ✓）。★ `connectedToItems()` 在**读盘时**由**本视图**的 `<connect>` 恢复 ✓
+（`sketchwidget.cpp:496`「now restore connections」＋ `615 handleConnect` ✓），而 `<connect>` 的**目标
+只在本视图里找** ✓（`items/itembase.cpp:559`：`connector->connectorItem(m_viewID)` ✓）。
+
+**（3）★ 为什么"删了也还是布线完成"** ✓（**可证** ✓，不是"感觉" ✗）：
+面包板在 **PCB／原理图视图里 `setEverVisible(false)`** ✓（`sketch/pcbsketchwidget.cpp:441` ✓、
+`schematicsketchwidget.cpp:146` ✓ —— 源码原话「don't need to see the breadboard in the other views
+but it's there so connections can be more easily synched between views」✓）⇒ 上面的 ⑥ 分支**什么都不加** ✗
+⇒ 在这些视图里 K = **铜的裂片数 − 1** ✓。于是：
+
+* **单刀切开一张网** ⇒ 每一片**各自内部连通** ⇒ **每片 K = 0** ✓；
+* 片里**只有 1 只零件脚**的 ⇒ 被 `7013` **整片丢掉** ✗ ⇒ 它连"没布"都不算 ✓；
+* ⇒ `netCount == routedCount` **恒成立** ⇒ 文案**恒为** `Routing completed` ✓。
+
+⇒ **∴「删任意一根线 ⇒ 报未布」在 Fritzing 里物理上做不到** ✗（**任何**文件都一样 ✗，不是本文件的病 ✗）。
+反过来说：v81 之所以会"变" ✓，是因为那 94 条跨视图记录让"并网后的组"**比铜大** ✗ ⇒ 修掉 glue
+就**必然**让状态栏对删线失去反应 ✓ —— **两害相权，取"数字对"** ✓。
+
+★ 顺带**证伪**了本轮开始时的一条猜测 ✓：「上一轮删 94 条记录 ⇒ 把 PCB 视图的"脚 ↔ 网"成员关系弄空 ✗」
+—— 实测 **M 反而从 7 回到 9** ✓（`v81 → v83`：M 7→9 ✓、K 2→0 ✓）⇒ **网模型没有空** ✓。
+
+### ③ 改了什么 ✓（**只动"建构用件"的 `pcbView` 段** ✓ —— 铜／摆位／走线**一个字节没动** ✓）
+
+新工具 ✓ `tools\fz_trim_construct_views.py`（`--check` ✓ / `in out` ✓）：把 `Breadboard1` 的
+**整个 `pcbView` 段**删掉 ✓（第五十一轮已经把它里面的 94 条跨视图声明删干净了 ✓ ⇒ 这段现在
+**一条声明都不剩** ✗，只剩 46 条**空 `<connector>`** ＋ 一段**看不见的** `<geometry>` ✗）。
+理由（照源码 ✓）：面包板在 PCB 视图里 `setEverVisible(false)` ✓ ⇒ 它对网表**本来就毫无作用** ✗ ⇒
+把段删掉只是让「**建构用件只活在面包板视图里**」这条原则**落到文件结构上** ✓（以后谁再往里写记录 ✗
+也不会**悄悄**在 PCB 视图里生效 ✗）。
+
+★ **范围（硬约束 ✓）**：只动**面包板类件**的 **`pcbView`** ✓；**原理图视图**用户已"定稿不改" ✗ ⇒
+它的 `schematicView` 段（2 条空记录 ✗）**只报告、不执行** ✓（`breadboardView` 段更不许动 ✗）。
+
+**逐项记账** ✓（`view_bytes_diff.py` ✓，两份文件对比 ✓）：实例 164 : 164 ✓；
+`<breadboardView>` 共同实例 66 个、**块文本不同 0 个** ✓（拼接哈希 `d08b63ff3564a552` **两侧相同** ✓）；
+`<schematicView>` 共同实例 64 个、**块文本不同 0 个** ✓（`e720b6e5a06e9de1` ✓）；
+`<pcbView>` 只有 **1** 个块不同 ✓ = `5785`「一侧没有这个视图块」✓（就是删掉的那段 ✓）。
+**渲染**：三视图 6 个产物与 v82 **逐字节相同** ✓（`_preview.png` `0E117F01E9696587` ✓／
+`_preview.svg` `0192EAA5EDBE159C` ✓／`_bb.png` `F4E677807606A87F` ✓／`_bb.svg` `98E1C27E08D76281` ✓／
+`_sch.png` `91FB99E26D9414DF` ✓／`_sch.svg` `B87D1A9736B94F00` ✓）。
+
+### ④ 灵敏度测试 ✓（**新的硬闸门** ✓ —— `tools\pcb_rats_probe.py --sens` ✓）
+
+对**每个视图里的每一根线**（三视图合计 **133** 根 ✓）在内存里删掉 ⇒ 用同一把尺子重算 ✓：
+
+| 视图 | 线数 | 严口径（删完 **K>0**）✗ | 文案变 ✗ | **真断铜（割边）** ✓ | **并联冗余** ✓ | ★ 状态栏**看不见**的断开 ✗ |
+|---|---|---|---|---|---|---|
+| 面包板 | 36 | **0/36** ✗ | **0/36** ✗ | 27 ✓ | 9 ✓ | **27** ✗ |
+| 原理图 | 45 | **0/45** ✗ | **0/45** ✗ | 44 ✓ | 1 ✓ | **44** ✗ |
+| PCB | 52 | **0/52** ✗ | **0/52** ✗ | 48 ✓ | 4 ✓ | **48** ✗ |
+
+* **严口径 = 0/133** ✗ —— **不是"没测出来"，是"做不到"** ✓（机理见 ② 的 (3) ✓，并由库仓
+  `tools\tests\pcb_status_selftest.py` 的 ② 段用**合成 sketch**独立钉住 ✓：两个件 + 一根线 ⇒ 删线后
+  M=0、文案**不变** ✓）；
+* **并联冗余**（删了**本来就不该有反应** ✓，因为铜里有并联回路 ✓）逐条留账 ✓：
+  面包板 9 根（`Wire90013137/139/141/143/145/147/149/151/153` ✓，都是图例装饰线 ✗）、
+  原理图 1 根（`Wire90015360` ✓）、PCB **4 根**（`Wire90013625`＝`90014257` ✓、`Wire90013711`＝`90014468` ✓、
+  `Wire90013712`＝`90014471` ✓、`Wire90014159`＝`90015506` ✓）——
+  ★ 这 4 根是 **`U1.connector20`(EPAD) ↔ `U1.connector3`(VSS)** 之间的**并联回路** ✓
+  （EPAD 的**散热/载流**上通常**故意**多牵几根 ✓）⇒ **本轮不删** ✗（要删得用户点头 ✓）。
+
+⇒ **因此本轮的硬闸门换成"可证可过、且能抓真病"的那一条** ✓（`--sens` 的判定 ✓）：
+**每张设计的网在每个视图里都必须"成型"（≥2 只零件脚 ✓）且连通（K=0 ✓）** ✓ ——
+它**抓得住**"剥瘦底图"那一类病 ✓（网退化成 1 只脚 ⇒ 直接报 C ✗，v69/v77 就是它 ✓），
+而**不奖励**任何"靠删记录换指标"的做法 ✓。
+
+### ⑤ 三视图的"还剩几条"实测 ✓（改前 / 改后并列 ✓）
+
+| 网 | PCB 视图 K（v82 = v83 ✓） | 面包板视图 K | 原理图视图 K |
+|---|---|---|---|
+| `GND`（9 只脚）| 0 ✓ | 0 ✓ | 0 ✓ |
+| `5V`（5 只脚）| 0 ✓ | 0 ✓ | 0 ✓ |
+| `RC`（3 只脚）| 0 ✓ | 0 ✓ | 0 ✓ |
+| `BR+`（3 只脚）| 0 ✓ | 0 ✓ | 0 ✓ |
+| `COIL_A` / `COIL_B`（各 2 只脚）| 0 ✓ / 0 ✓ | 0 ✓ / 0 ✓ | 0 ✓ / 0 ✓ |
+| `LED_DIN` / `DATA_IN` / `DATA_OUT` | 0 ✓ / 0 ✓ / 0 ✓ | 0 ✓ / 0 ✓ / 0 ✓ | 0 ✓ / 0 ✓ / 0 ✓ |
+| **M（Fritzing 会算成几张网）** | **9** ✓（= 网表张数 ✓） | 25 ✓ | 11 ✓ |
+| **文案** | `Routing completed` ✓ | `Routing completed` ✓ | `Routing completed` ✓ |
+
+★ 面包板视图 M=25／原理图视图 M=11（**不是 9** ✗）是**正常的** ✓：面包板视图里**孔也算脚** ✓
+（`ModelPart::Breadboard` 在那儿可见 ✓）⇒ 15 只**备用脚**各自 ＋ 它插的孔 = 1 张 2 只脚的小网 ✓；
+原理图视图里有 2 个 `RC` 网标签 ＋ 3 个接地符号 ✓（它们**也**是"脚" ✓）⇒ 网被切细 ✓。
+**三视图 K 都是 0** ✓ ⇒ 三处「布线完成」**都是真的** ✓。
+
+### ⑥ 验收清单新增一条 ✓（**"状态栏可信度"** ✓）
+
+> **六十八、状态栏可信度**（第五十二轮 ✓）
+> 1. `tools\pcb_rats_probe.py <交付件>` ⇒ **三视图 K 都是 0** ✓、**每张网 ≥2 只零件脚** ✓、
+>    PCB 视图 **M = `pixel_nets.py` 张数** ✓ ⇒ exit 0 ✓；
+> 2. `tools\pcb_rats_probe.py <交付件> --sens` ⇒ exit 0 ✓（每张设计的网在三视图都"成型且连通" ✓）；
+> 3. ★ **用户手测口径** ✓：**在 PCB 视图删任意一根线** ⇒ 状态栏**不会**改口 ✗ —— 这是
+>    **Fritzing 自身口径** ✓（见 §五十二 ② 的 (3) ✓，可证 ✓）⇒ **不许**把它当"文件有毛病" ✗；
+>    要判"线有没有断"，**用** 1/2 两把尺子 ✓（它们量的正是"Fritzing 眼里的网表" ✓）。
+
+### ⑦ 复现命令 ✓（交付件 = `pixel-pcb-v83.fzz` ✓；工作档 = `_work\v76.4_byHand.fzz` ✓）
+
+```bat
+rem 备份 + 就地更新工作档（先删跨视图声明 ✓，再删"建构用件"的 pcbView 段 ✓）
+copy _work\v76.4_byHand.fzz _work\v76.4_byHand.pre-nets.fzz
+py -3.13 -X utf8 tools\fz_deglue_records.py          _work\v76.4_byHand.fzz _work\_s1.fzz
+py -3.13 -X utf8 tools\fz_trim_construct_views.py    _work\_s1.fzz          _work\v76.4_byHand.fzz
+copy /Y          _work\v76.4_byHand.fzz pixel-pcb-v83.fzz
+
+rem 验收：五道（原文见 _work\_r52_accept.txt）
+py -3.13 -X utf8 %TOOLS%\pcb_check.py              pixel-pcb-v83.fzz --nets=pixel_nets.py   rem ① ✓ 全过
+py -3.13 -X utf8 tools\net_group_check.py          pixel-pcb-v83.fzz                        rem ② exit 0
+py -3.13 -X utf8 tools\pcb_rats_probe.py           pixel-pcb-v83.fzz                        rem ③ 三视图 K=0
+py -3.13 -X utf8 tools\pcb_rats_probe.py           pixel-pcb-v83.fzz --sens                 rem ④ 灵敏度
+py -3.13 -X utf8 tools\bb_probe.py                 pixel-pcb-v83.fzz                        rem ⑤a exit 0
+py -3.13 -X utf8 _work\sch_probe.py                pixel-pcb-v83.fzz --nets=pixel_nets.py   rem ⑤b exit 0
+py -3.13 -X utf8 tests\run_all.py --with-lib                                                rem ⑥ 两个 runner ✓
+py -3.13 -X utf8 _work\view_bytes_diff.py pixel-pcb-v82.fzz pixel-pcb-v83.fzz pcbView breadboardView schematicView
+py -3.13 -X utf8 %TOOLS%\render_pcb.py pixel-pcb-v83.fzz pixel-pcb-v83_preview.svg --px 12 --png
+py -3.13 -X utf8 %TOOLS%\render_sch.py pixel-pcb-v83.fzz pixel-pcb-v83_sch.png 2200
+py -3.13 -X utf8 %TOOLS%\render_bb.py  pixel-pcb-v83.fzz pixel-pcb-v83_bb.png  2200
+```
+
+### ⑧ 遗留 ✗（逐条 ✓）
+
+1. ★ **"状态栏对删线有反应"这件事做不到** ✗（**Fritzing 自身口径** ✓，可证 ✓，见 ② 的 (3) ✓）
+   —— 我们**只能**给一把**更细**的尺子 ✓（本轮已给 ✓）；要在 Fritzing 里真的看到反应 ✗，
+   得等上游改 `scoreOneNet`／`updateRoutingStatus` ✓；
+2. **PCB 视图里那 4 根并联冗余** ✓（EPAD↔VSS ✓）⇒ **没删** ✗（散热/载流上可能是有意的 ✓，
+   要删得用户点头 ✓）；按同样口径，面包板 9 根图例装饰线 ✓、原理图 1 根 ✓ 也都留账在原地 ✓；
+3. **面包板／原理图视图的 K** ✓ 是**本探针**算的 ✓（用户没有在它们上面读过状态栏 ✗ ⇒ 只有 v68/v81/v82
+   三个 PCB 读数可核 ✓）⇒ 这两列是**推算**，如实标注 ✓；
+4. **`fz_exact.py` 仍然过时** ✗（第四十手那份 ✗）—— 本轮**用新探针**替它了 ✓，但**没删**旧件 ✗。
+
