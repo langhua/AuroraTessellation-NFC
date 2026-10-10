@@ -7514,7 +7514,8 @@ pcb 视图违例 0** ✓）⇒ `py -X utf8 tools\tests\run_all.py` **exit 0** �
 | `fz_deglue_views --check` | 1 条 ✗ = `Breadboard1` 在 schematicView 里也有段落 —— **v84 基线同一条** ✓（早已有 ⚑） |
 | `sch_straighten` | 改动 **0** ✓；V3「该直没直」**1 处** = `Wire90014109` 差 0.038 mm —— **v84 基线同一处** ✓ |
 
-渲染 ✓：`pixel-pcb-v85_preview.svg/.png`（走线 56 ✓ 其中弯曲 4 ✓）、`pixel-pcb-v85_sch.svg`、`pixel-pcb-v85_bb.svg` ✓。
+渲染 ✓：`pixel-pcb-v85_preview.svg/.png`（走线 56 ✓ 其中弯曲 4 ✓）、`pixel-pcb-v85_sch.png`、`pixel-pcb-v85_bb.png` ✓
+（★ 这两个渲染器 `render_sch.py`/`render_bb.py` **只出 PNG** ✓ —— 我原来把它们写成 `.svg` 是错的 ✗，见 §五十六 5 已改 ✓）。
 
 ### 4. 本轮入库的工具 ✓（从 `_work/` 提到仓里 ✓）
 
@@ -7628,6 +7629,8 @@ pcb 视图违例 0** ✓）⇒ `py -X utf8 tools\tests\run_all.py` **exit 0** �
 
 *上图 = `pixel-pcb-v86` 的 PCB 视图（工具 `tools/render_pcb.py` 从 `.fzz` 直接渲染 ✓，不是 Fritzing 截图 ✗）。看三处 ✓：右下 `R1`、中间 `C1`、左上斜放的 `C2` —— 都是**两块的 0603 焊盘** ✓、丝印只是**本体轮廓** ✓、板上没有多余的铜块 ✓。*
 
+另两张（**PNG** ✓）：[`pixel-pcb-v86_sch.png`](pixel-pcb-v86_sch.png)（原理图）、[`pixel-pcb-v86_bb.png`](pixel-pcb-v86_bb.png)（面包板）。
+
 ### 2. 电阻/电容**全家**：名字改成 `1`/`2` ✓（第 ⑤ 条前半）
 
 **用户原话** ✓「一起改成 1/2 吧」✓ —— 12 件（`Resistor-01005/0201/0402/0603/0805/1206/1210/1812/2010/2512`
@@ -7673,6 +7676,15 @@ pcb 视图违例 0** ✓）⇒ `py -X utf8 tools\tests\run_all.py` **exit 0** �
 ⇒ `pixel-pcb-v85.fzz` 里躺的是 `_g0.fz` ✗（Fritzing 显示的草图名就是它 ✗）。
 本轮：`v85` 用新工具 `retitle_fzz.py` **只改这一条的名字** ✓（回读自检 ✓：条目数不变 ✓、
 `.fz` 内容**逐字节相同** ✓）；`v86` 改成**直接写正式名** ✓（不再经草稿 ✗）。
+
+★ **同类第二件** ✓（量出来的 ✓）：`pixel-pcb-v85_sch.svg` / `pixel-pcb-v85_bb.svg` ✗
+**其实是 PNG** ✗ —— 看头 8 字节是 `89 50 4e 47` ✓（这两个渲染器 `render_sch.py`/`render_bb.py`
+**只出 PNG** ✓，是我**给了 `.svg` 后缀** ✗，还把名字当成 svg 写进 README ✗）
+⇒ 本轮**按真身改名** ✓：`…_sch.png` ✓／`…_bb.png` ✓（v85 的也改了 ✓ —— 内容一字未动 ✗，
+只是名字对了 ✓；`v86` 的两张同样出 PNG ✓）。
+**对照** ✓：`pixel-pcb-v84_bb.svg`/`_sch.svg`/`_preview.svg` 三张**是真的 SVG** ✓
+（头 6 字节 `<svg ` ✓ ⇒ 早先那一轮用的是会出 svg 的路子 ✓）；`_preview` 系列一直是真 SVG ✓
+（`render_pcb.py` ✓）。
 
 ### 6. 遗留 ✗（**请用户拍** ✓，不擅自动 ✗）
 
