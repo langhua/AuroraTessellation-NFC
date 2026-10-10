@@ -192,8 +192,11 @@ def main(argv):
         for n, data in blobs:
             if n == inner:
                 # ★ 内层 `.fz` 的**名字原样保留** ✓（它 = Fritzing 里显示的草图名 ✓）
-                zo.writestr(zipfile.ZipInfo(n, date_time=(2026, 10, 10, 0, 0, 0)),
-                            text2.encode("utf-8"))
+                # ★★ 而且**必须显式给压缩方式** ✗：新造的 `ZipInfo` 默认是 **store** ✗
+                #   ⇒ 实测把 296 KB 的 `.fz` 原样塞进去 ⇒ 交付件 **362 KB**（该是 ~82 KB ✗）。
+                zi = zipfile.ZipInfo(n, date_time=(2026, 10, 10, 0, 0, 0))
+                zi.compress_type = zipfile.ZIP_DEFLATED
+                zo.writestr(zi, text2.encode("utf-8"))
             else:
                 zo.writestr(n, data)
     print("   ⇒ 写 %s ✓" % a.dst)
