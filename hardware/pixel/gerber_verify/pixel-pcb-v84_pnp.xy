@@ -1,0 +1,30 @@
+# Pick And Place List
+# Company=
+# Author=
+# eMail=
+#
+# Project=pixel-pcb-v83
+# Date=01:53:57
+# CreatedBy=Fritzing 1.0.3b.2024-05-30.CD-1995-0-a7811ba0
+#
+#
+# Coordinates in mils, always center of component
+# Origin 0/0=Lower left corner of PCB
+# Rotation in degree (0-360, math. pos.)
+#
+RefDes,Description,Package,X,Y,Rotation,Side,Mount
+Description: resistance;capacitance;inductance;voltage;current;power;mpn;mn;
+Via4,";;;;;;;;","",439.755,530.364,0,Top,MANUAL
+Via1,";;;;;;;;","",77.5444,884.695,0,Top,MANUAL
+J2,";;;;;;;;","",878.702,119.371,90,Bottom,MANUAL
+U1,";;;;;;;;","QFN20",563.751,502.823,-135,Bottom,SMT
+Via3,";;;;;;;;","",493.378,639.268,0,Top,MANUAL
+Via2,";;;;;;;;","",557.867,890.05,0,Top,MANUAL
+J1,";;;;;;;;","",114.247,878.7,0,Bottom,MANUAL
+Via5,";;;;;;;;","",565.733,388.632,0,Top,MANUAL
+LED2,";;;;;;;;","WS2812B-1010 (1.0x1.0mm)",492.127,492.127,90,Top,SMT
+C2,";100 nF;;16V;;;;;","0603 [SMD, multilayer]",410.794,600.658,-30,Bottom,SMT
+D3,";;;;;;;;","SOT-363 (SC-70-6)",362.214,492.114,180,Bottom,SMT
+L1,";;;;;;;;","PCB",476.383,490.145,90,Top,SMT
+R1,"220;;;;;1/16W;;;","[SMD] 0402",418.078,412.271,180,Bottom,SMT
+C1,";100 nF;;16V;;;;;","0402 [SMD, multilayer]",439.732,469.358,90,Bottom,SMT
