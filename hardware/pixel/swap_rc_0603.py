@@ -286,6 +286,13 @@ def main(argv):
     for a in argv:
         if a.startswith("--only="):
             ONLY = tuple(x.strip() for x in a[7:].split(",") if x.strip())
+    # ★★ 通用换件 ✓（2026-10-11 ✓，为 `C2` 加的 ✓）：`--swap=C2:Capacitor-0603`（可给多次 ✓）
+    #   —— ✗ 不给就照旧（`R1`→`Resistor-0603` ✓、`C1`→`Capacitor-0603` ✓）。
+    SWAPS = []
+    for a in argv:
+        if a.startswith("--swap="):
+            t, pn = a[7:].split(":", 1)
+            SWAPS.append((t.strip(), pn.strip()))
     # ★ 直接给**件原点**（mm ✓）：`--loc=R1:x,y`（搜索出来的结果就是这样给的 ✓）
     LOC = {}
     for a in argv:
@@ -301,6 +308,13 @@ def main(argv):
     by = {p["title"]: p for p in parts}
 
     # ── 新件的几何 / moduleId ────────────────────────────────────────────────
+    plan = []
+    if SWAPS:                                   # ★ 通用换件 ✓（计划从命令行来 ✓）
+        for t, pn in SWAPS:
+            files = fzpz_files(pn)
+            mid, fzp_txt, svg, fzp_name = part_bits(files)
+            plan.append((t, svg, mid, fzp_decl(fzp_txt), files,
+                         "本库 `%s`（moduleId = %s ✓）" % (pn, mid), fzp_name))
     r6 = fzpz_files(NEW_R)
     r6_mid, r6_fzp_txt, r6_svg, r6_fzp_name = part_bits(r6)
     c2blk = text[block_of(text, "C2")[1]:block_of(text, "C2")[2]]
@@ -309,22 +323,25 @@ def main(argv):
     c6 = fzpz_files("Capacitor-0603-rich" if False else "Capacitor-0603")
     c6_mid, c6_fzp_txt, c6_svg, c6_fzp_name = part_bits(c6)
 
-    plan = [("R1", r6_svg, r6_mid, fzp_decl(r6_fzp_txt), r6,
-             "本库 `%s`（moduleId = %s ✓）" % (NEW_R, r6_mid)),
-            ("C1", c6_svg, c6_mid, fzp_decl(c6_fzp_txt), c6,
-             "本库 `Capacitor-0603`（moduleId = %s ✓ —— **紧凑 land pattern** ✓；"
-             "Fritzing 自带那颗太肥 ✗）" % c6_mid)]
+    if not plan:
+        plan = [("R1", r6_svg, r6_mid, fzp_decl(r6_fzp_txt), r6,
+                 "本库 `%s`（moduleId = %s ✓）" % (NEW_R, r6_mid), r6_fzp_name),
+                ("C1", c6_svg, c6_mid, fzp_decl(c6_fzp_txt), c6,
+                 "本库 `Capacitor-0603`（moduleId = %s ✓ —— **紧凑 land pattern** ✓；"
+                 "Fritzing 自带那颗太肥 ✗）" % c6_mid, c6_fzp_name)]
     if C1PCB:                                   # 实验：C1 借别件的 pcb 几何 ✓
         alt = fzpz_files(C1PCB)
         _m, _t, alt_svg, _f = part_bits(alt)
-        plan[1] = ("C1", alt_svg, c6_mid, fzp_decl(_t), None, c2_path,
-                   "实验：C1 的 pcb 几何改用本库 `%s` ✓" % C1PCB)
+        for _i, _it in enumerate(plan):
+            if _it[0] == "C1":
+                plan[_i] = ("C1", alt_svg, c6_mid, fzp_decl(_t), None, c2_path,
+                            "实验：C1 的 pcb 几何改用本库 `%s` ✓" % C1PCB)
 
     new_text = text
     add_files = {}
     moves = []
     PC = None
-    for title, svg, mid_new, decl_new, newfiles, why in plan:
+    for title, svg, mid_new, decl_new, newfiles, why, fzp_name in plan:
         if ONLY and title not in ONLY:
             continue
         inst = by[title]
@@ -398,9 +415,7 @@ def main(argv):
         if blk2 == blk:
             raise SystemExit("✗ %s 的 moduleIdRef 没改成 ✗" % title)
         oldp = re.search(r'path="([^"]*)"', blk2).group(1)
-        newp = (os.path.dirname(oldp) + "/" + r6_fzp_name[len("part."):]
-                if title == "R1" else
-                os.path.dirname(oldp) + "/" + c6_fzp_name[len("part."):])
+        newp = os.path.dirname(oldp) + "/" + fzp_name[len("part."):]
         blk2 = blk2.replace('path="%s"' % oldp, 'path="%s"' % newp, 1)
         if newfiles is not None:
             add_files.update(newfiles)
