@@ -748,30 +748,8 @@
          id="connector1pad"
          style="fill:#f9a435;fill-opacity:1;stroke:none;stroke-width:0" />
     </g>
-<g transform="matrix(0,-1.5066,-1.5066,0,1902.66,2280.84)"><g transform="matrix(0.70000001,0,0,1.04,-8.9999878,-5.4000084)">
-    <g
-       gorn="0.1.0"
-       id="copper1"
-       transform="matrix(1,0,0,0.30769232,0,6.9230768)">
-      <rect
-         gorn="0.1.0.0"
-         height="250"
-         id="connector0pad"
-         style="fill:#fdde68;fill-opacity:1;stroke:none;stroke-width:0"
-         width="92.857147"
-         x="20"
-         y="10" />
-      <rect
-         gorn="0.1.0.1"
-         height="250"
-         id="connector1pad"
-         style="fill:#fdde68;fill-opacity:1;stroke:none;stroke-width:0"
-         width="92.857147"
-         x="227.14285"
-         y="10" />
-    </g>
-  </g><g gorn="0.1.0"
-       transform="matrix(1,0,0,0.30769232,0,6.9230768)">
+<g transform="matrix(0,-1.5066,-1.5066,0,1902.66,2280.84)"><g gorn="0.1.0"
+       transform="matrix(0.70000001,0,0,0.32000001,-8.9999878,1.7999915)">
       <rect
          gorn="0.1.0.0"
          height="250"
@@ -789,30 +767,8 @@
          x="227.14285"
          y="10" />
     </g></g>
-<g transform="matrix(1.5066,0,0,-1.5066,1435.62,2663.52)"><g transform="matrix(0.70000001,0,0,1.04,-8.9999878,-5.4000084)">
-    <g
-       gorn="0.1.0"
-       id="copper1"
-       transform="matrix(1,0,0,0.30769232,0,6.9230768)">
-      <rect
-         gorn="0.1.0.0"
-         height="250"
-         id="connector0pad"
-         style="fill:#fdde68;fill-opacity:1;stroke:none;stroke-width:0"
-         width="92.857147"
-         x="20"
-         y="10" />
-      <rect
-         gorn="0.1.0.1"
-         height="250"
-         id="connector1pad"
-         style="fill:#fdde68;fill-opacity:1;stroke:none;stroke-width:0"
-         width="92.857147"
-         x="227.14285"
-         y="10" />
-    </g>
-  </g><g gorn="0.1.0"
-       transform="matrix(1,0,0,0.30769232,0,6.9230768)">
+<g transform="matrix(1.5066,0,0,-1.5066,1435.62,2663.52)"><g gorn="0.1.0"
+       transform="matrix(0.70000001,0,0,0.32000001,-8.9999878,1.7999915)">
       <rect
          gorn="0.1.0.0"
          height="250"
