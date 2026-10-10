@@ -7528,3 +7528,36 @@ pcb 视图违例 0** ✓）⇒ `py -X utf8 tools\tests\run_all.py` **exit 0** �
 
 ★ **请打开 Fritzing 看一眼** ✓（AGENTS §10 第 8 步 ✓）：把 `pixel-pcb-v85.fzz` 拖进去，看**草图底部**那句
 `N of M nets routed - K connector(s) still to be routed` ✓ —— 我这边六道闸门全过 ✓，但**那句才算数** ✓。
+
+
+### 5. ★ 续（2026-10-11 ✓）：用户看元件箱发现 —— `R1`/`C1` 的 **PCB 多出一块** ✗
+
+**用户原话** ✓：「如截图所示，电阻和电容元件的 PCB 是错误的」✓
+（截图 = 指示栏里 `R1` 的 pcb 小图，红箭头指着**多出来的那一块** ✗）。
+
+**根因（量出来的 ✓）**：`.fzp` 只声明**图层**（`<layer layerId="silkscreen"/>` ✓）；
+「哪块图形属于哪层」是 Fritzing **按组的 id** 认的 ✓ —— 而 `R0603`/`C0603` 的 pcb 视图里，
+丝印是**一颗裸 `<rect id="silkscreen">`** ✗、**根本没有 `<g id="silkscreen">`** ✗
+⇒ 那坨丝印**不属于丝印层** ✗ ⇒ 页面上多渲一块 ✗。
+（**全板就这两件这样** ✗：`L1`/`LED2`/`U1`/`D3`/`J1` 的丝印都在组里 ✓ ——
+一条命令就能看出来 ✓：`py -3.13 _work\list_parts.py pixel-pcb-v85.fzz` ✓。）
+
+**修法（只挪层级 ✓，几何一字不动 ✗）**：把丝印 rect 装进 `<g id="silkscreen">` ✓
+（rect 的 id 改 `silkoutline` ✓ 免得与组同名 ✗；描边色对齐本库写法 `#f0f0f0` ✓）。
+
+- `svg/Resistor-0603/svg.pcb.R0603_…_pcb.svg` ✓（手改 ✓）
+- `svg/Capacitor-0603/…` ✓（**跑生成器重出** ✓ —— 它是从 `fzpz/Resistor-0603.fzpz` 克隆的 ✓
+  ⇒ 先重打 `fzpz/Resistor-0603.fzpz` ✓、再 `py -3.13 svg/Capacitor-0402/gen_part.py` ✓）
+
+⇒ 重打两个 `.fzpz` ✓、`fzp_check` 全过 ✓、**重新部署 MINE** ✓（`check_deploy.py --fix` ⇒ 一致 2 个 ✓）。
+
+**重新出板 ✓**：`pixel-pcb-v85.fzz` 按**同一套配方**重生成 ✓（换件 → 删 4 根 → 手画 3 条 ✓）
+⇒ 板内嵌的两份 pcb svg 已经是修好的 ✓（`list_parts.py` 复验：`R1`/`C1` 都是 `<g id=silkscreen> ✓` ✓）
+⇒ 六道闸门**仍全过** ✓（`pcb_check` ✓／`pcb_status` K=0 M=9 ✓／`check_netlist` 9/9 ✓）。
+
+**★ 顺手补了闸门 ✓（这次是「闸门有洞」✗）**：`tools/silk_nest_check.py` 原来只判
+「丝印组**不许嵌在铜组里**」✗ ⇒ 对「**根本没有丝印组**」**当合格** ✗✗ ⇒ 又是**用户眼睛**抓到的 ✗。
+已补**第二条硬规矩** ✓：「**丝印图元（`id="silkscreen"` 或 `stroke=#f0f0f0/#ffffff`）
+必须在 `<g id="silkscreen">` 里**」✓ —— 全库扫出 **10 件**同病 ✗
+（**同族电阻** `01005/0201/0402/0805/1206/1210/1812/2010/2512` ＋ 我们的 `Capacitor-0402` ✓），
+本轮**只修了用户点名的 2 件** ✓（§0.6 不擅自扩大范围 ✗）⇒ 其余 9 件**待用户点头** ✓。

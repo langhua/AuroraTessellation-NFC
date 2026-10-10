@@ -1253,6 +1253,26 @@
        id="silkscreen"
        style="fill:none;stroke:#444444;stroke-width:10;stroke-opacity:1" />
   </g>
+<g transform="matrix(0,-1.5066,-1.5066,0,1902.66,2280.84)">
+    <rect
+       gorn="0.2"
+       height="85.894135"
+       id="silkoutline"
+       style="fill:none;stroke:#444444;stroke-width:4.10587;stroke-opacity:1"
+       width="215.89413"
+       x="2.0529349"
+       y="2.0529349" />
+  </g>
+<g transform="matrix(1.5066,0,0,-1.5066,1435.62,2663.52)">
+    <rect
+       gorn="0.2"
+       height="85.894135"
+       id="silkoutline"
+       style="fill:none;stroke:#444444;stroke-width:4.10587;stroke-opacity:1"
+       width="215.89413"
+       x="2.0529349"
+       y="2.0529349" />
+  </g>
 <g transform="matrix(9.22526e-15,150.66,-150.66,9.22526e-15,2035.39,2018.94)">
   <line x1="-0.78" y1="-0.35" x2="-0.78" y2="0.35" stroke="#000000" stroke-width="0.06"/>
   <line x1="0.78" y1="-0.35" x2="0.78" y2="0.35" stroke="#000000" stroke-width="0.06"/>
