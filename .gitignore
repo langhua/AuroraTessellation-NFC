@@ -10,6 +10,11 @@ __pycache__/
 bom/
 **/gerber*/*.zip
 
+# ★ 送板文件目录（Gerber / PNP / 钻孔…）：**导出产物**，一条命令随时能重生成 ⇒ 不入库 ✓
+#   （2026-10-13 用户定 ✓）. 上面那条 `**/gerber*/*.zip` 是历史写法（只挡 zip ✗，
+#   挡不住解出来的 .GTL/.DRL/… ✗）⇒ 这里把**整个目录**挡掉 ✓。
+hardware/pixel/gerber/
+
 # Fritzing sketches hand-edited in the editor: drafts, not the generated deliverable
 *_byHand.fzz
 *_netlabel.fzz
