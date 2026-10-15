@@ -8143,3 +8143,9 @@ py -3.13 -X utf8 %TOOLS%\bb_compare.py pixel-pcb-v88.fzz pixel-pcb-v89.fzz  rem 
 - **请在 Fritzing 里把 `pixel-pcb-v89.fzz` 打开看一眼** ✓（§10.8 ✓）：草图**底部**那句
   `N of M nets routed - K connector(s) still to be routed` ✓ —— 我这边闸门全过 ✓，
   但**那句才算数** ✓（这一版是**手改**的 ✓ ⇒ 更该看一眼 ✓）。
+- 我这边**能给的对照** ✓（`tools\pcb_status.py pixel-pcb-v89.fzz --nets=pixel_nets.py` ✓）：
+  **面包板视图** ⇒ `K=0` ⇒ 那句应是 **`Routing completed`** ✓（0 个待布 ✓；`M` 我这边算的是 21 ✓
+  —— ✗ 以 Fritzing 显示为准 ✗）。★ `SWIO` 只有 1 只零件脚 ✓（单脚网 ✓）⇒ Fritzing **不当它是一张网** ✓
+  （`sketchwidget.cpp:7013` ✓），这是**设计如此** ✓ 不是漏接 ✓。
+  ⚠️ 同一次跑也报 **PCB 视图 `K=2`** ✗ —— 那是**该视图还停在 v87** 的缘故 ✓（见「遗留 1」✗），
+  不是面包板的问题 ✓。
