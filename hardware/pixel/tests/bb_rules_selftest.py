@@ -11,6 +11,8 @@ r"""bb_rules_selftest：面包板两条规则（① 就近选孔 ✓ ② 能直�
   ② **交付件锁**（回归锁 ✓）：`tools\bb_probe.py` 跑 `pixel-pcb-v81.fzz` ⇒ **全过** ✓
      ＋ 三个关键数（跳线段数 28 ✓ / 拐点直方图 ✓ / 总长 337.1 mm ✓）**钉死** ✓
      —— 以后谁改坏了面包板，这里先红 ✓（不要"改期望值"来消红 ✗）。
+     ★ 量它要配 **`tests/nets_v011.py`**（冻存的 v0.1.1 网表 ✓）：v81 是 v0.1.2 **之前**
+       交付的 ✓，拿今天升过 v0.1.2 的 `pixel_nets.py` 去量 ⇒ 必然假报"网裂了"✗。
   ③ **开关默认关**（零副作用的前提 ✓）：生成器里两个开关的缺省必须是 `False` ✓。
 
 用法：py -X utf8 tests\bb_rules_selftest.py
@@ -52,14 +54,21 @@ chk("不同行不同列 ⇒ 1 拐点", probe.route_len((297.0, 63.0), (288.0, 12
 
 print("\n== ② 交付件锁：`pixel-pcb-v81.fzz` 的面包板探针 = 全过 ✓ ==")
 v81 = os.path.join(PIX, "pixel-pcb-v81.fzz")
+# ★★ 量 v81 必须用**冻存的 v0.1.1 网表** ✓（`tests/nets_v011.py` ✓）：
+#   v81 是 v0.1.2 **之前**交付的 ✓（那时 `DATA` 还没串 100 Ω ✓、`RC` 也还没并 `D4`/`PD5` ✓）
+#   ⇒ 拿**今天**的 `pixel_nets.py`（已升 v0.1.2 ✓）去量它 ⇒ 必然假报「网裂了」✗ ——
+#   这是**尺子换了**，不是板子坏了 ✓（探针 ① 比的是“成员与网表一致” ✓）。
+#   本测试锁的是 v81 的**几何**（段数/拐点/总长 ✓）⇒ 配它当时那把尺子才公道 ✓。
+NETS_V011 = os.path.join(HERE, "nets_v011.py")
 if not os.path.isfile(v81):
     chk("交付件在（`pixel-pcb-v81.fzz` ✓）", False)
 else:
-    r = subprocess.run([sys.executable, "-X", "utf8", os.path.join(PIX, "tools", "bb_probe.py"), v81],
+    r = subprocess.run([sys.executable, "-X", "utf8", os.path.join(PIX, "tools", "bb_probe.py"),
+                        v81, "--nets=" + NETS_V011],
                        capture_output=True, text=True, encoding="utf-8", errors="replace",
                        env=dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONPATH=toolpaths.TOOLS))
     out = (r.stdout or "") + (r.stderr or "")
-    chk("探针 exit 0（11 项全过 ✓）", r.returncode == 0,
+    chk("探针 exit 0（全过 ✓）", r.returncode == 0,
         "" if r.returncode == 0 else "\n" + out[-1200:])
     chk("跳线 19 根 = 28 段 ✓", "跳线 19 根 = 28 段" in out)
     chk("拐点直方图钉死 {0:11, 1:7, 2:1} ✓", "{0: 11, 1: 7, 2: 1}" in out)

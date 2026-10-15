@@ -41,10 +41,26 @@ NETS = {
     #   ★ 代价（记着 ✗ 别忘 ✗）：① 线圈离开 `PA1` ⇒ **内置 OPA 的输入 `OPN0` 再也用不上** ✗
     #     （要用 OPA 就得把线圈搬回 `PA1` ✓）；② 吃掉 `PD2`/`PD6` 两个 ADC 备用脚的其中两个 ✓。
     #   ★ `LED_DIN` 仍留 **`PC6`** ✓（= `SPI_MOSI` ✓：用户 2026-10-09 决定**保住 SPI+DMA** ✓）。
-    "RC":       [("R1", "#2"), ("C1", "#1"), ("U1", "PD6")],
-    "5V":       [("U1", "VDD"), ("C2", "#1"), ("LED2", "VDD"), ("J1", "#1"), ("J2", "#1")],
-    "DATA_IN":  [("U1", "PC1"), ("J1", "#3")],
-    "DATA_OUT": [("U1", "PD2"), ("J2", "#3")],
+    # ★★ 2026-10-15 升到 **v0.1.2** ✓（用户定 ✓）—— 六处改动，明细如下（原来只活在
+    #   `_work/v88_nets.py` 那份"增量覆盖"里 ✗ ⇒ 任何**不写 `--nets=`** 的工具都会读到旧表 ✗，
+    #   探针会假报「`DATA_IN`/`DATA_OUT` 裂成两块」✗）：
+    #     ① `SWIO`（`U1.PD1`）：CH32V003 只有 SDI 一个下载口 ⇒ 得引出来，否则焊好之后没法烧录 ✗
+    #     ② `RC` 并上 `D4`（阳极）＋ `U1.PD5`：`D4` = 过压钳位；`PD5` = 开漏"放电/拉低"脚
+    #     ③ `5V` 并上 `D4`（阴极）＋ `R2`：`D4` 另一头回 5V（整流输出 > VDD 时钳住）
+    #     ③b `DATA_IN`/`DATA_OUT` 各**串 `R3`/`R4` = 100 Ω** ⇒ 拆出 `_C`（电缆侧）两张网 ✓
+    #     ④ 上拉 `R2` = 4.7 kΩ 挂在**电缆侧**（`DATA_IN_C` ✓）—— 800 kHz 下 10 kΩ 上升太慢 ✗
+    "RC":       [("R1", "#2"), ("C1", "#1"), ("U1", "PD6"),
+                 ("D4", "anode"), ("U1", "PD5")],
+    "5V":       [("U1", "VDD"), ("C2", "#1"), ("LED2", "VDD"), ("J1", "#1"), ("J2", "#1"),
+                 ("D4", "cathode"), ("R2", "#2")],
+    "DATA_IN":  [("U1", "PC1"), ("R3", "#1")],
+    "DATA_OUT": [("U1", "PD2"), ("R4", "#1")],
+    #   ★ `_C` = **cable 侧** ✓（串了 100 Ω 之后，MCU 侧与电缆侧是两张网 ✓）
+    "DATA_IN_C":  [("R3", "#2"), ("J1", "#3"), ("R2", "#1")],
+    "DATA_OUT_C": [("R4", "#2"), ("J2", "#3")],
+    #   ★ `SWIO` 在面包板/原理图上是**单脚网** ✓（那一根线接的是测试点/过孔 ✓）——
+    #     ✗ 它不是"忘了接线" ✗：见 `pixel-netlist.md` 与 README §五十九 ✓
+    "SWIO":     [("U1", "PD1")],
     "LED_DIN":  [("U1", "PC6"), ("LED2", "DI")],
 }
 
@@ -97,14 +113,18 @@ EXPECT = {
             #   上一版把它写成"单脚网、图上留空"是错的 ✗ —— 裸盘要接到 GND ✓
             "U1.connector20"},
     "BR+": {"D3.connector3", "D3.connector4", "R1.connector0"},
-    "RC": {"R1.connector1", "C1.connector0", "U1.connector19"},
-    # ★ `U1.connector19` = **PD6** ✓（2026-10-09 换脚 ✓；原来 `connector1` = PA1 ✓）
+    # ★ 脚名对照（2026-10-09 用户按 **PCB 布线需要** 换过三只脚 ✓，见 `NETS` 的说明 ✓）：
+    #   `RC` → **PD6** = `connector19` ✓（原 `con1` = PA1 ✓）；`DATA_IN` → **PC1** = `con7` ✓
+    #   （原 `con2` = PA2 ✓）；`DATA_OUT` → **PD2** = `con15` ✓（原 `con4` = PD0 ✓）
+    "RC": {"R1.connector1", "C1.connector0", "U1.connector19",
+           "D4.connector1", "U1.connector17"},          # + `D4` 阳极 ＋ `PD5` ✓（`PD5` = pin 18 ⇒ con17 ✓）
     "5V": {"U1.connector5", "C2.connector0", "LED2.connector3", "J1.connector0",
-           "J2.connector0"},
-    "DATA_IN": {"U1.connector7", "J1.connector2"},
-    #   ★ `connector7` = **PC1** ✓（原 `connector2` = PA2 ✓）
-    "DATA_OUT": {"U1.connector15", "J2.connector2"},
-    #   ★ `connector15` = **PD2** ✓（原 `connector4` = PD0 ✓）
+           "J2.connector0", "D4.connector0", "R2.connector1"},   # + `D4` 阴极 ＋ `R2` 上拉端 ✓
+    "DATA_IN": {"U1.connector7", "R3.connector0"},
+    "DATA_IN_C": {"R3.connector1", "J1.connector2", "R2.connector0"},
+    "DATA_OUT": {"U1.connector15", "R4.connector0"},
+    "DATA_OUT_C": {"R4.connector1", "J2.connector2"},
+    "SWIO": {"U1.connector14"},
     "LED_DIN": {"U1.connector12", "LED2.connector2"},
 }
 
@@ -115,4 +135,9 @@ EXPECT = {
 #     这就是用户截图里"黑线显示蓝"的原因 ✓（`#000000` 不在表里 ✗，官方 black 是 `#404040` ✓）。
 COLOR = {"GND": "#404040", "5V": "#cc1414", "DATA_IN": "#418dd9", "DATA_OUT": "#33ffc5",
          "LED_DIN": "#25cc35", "RC": "#ef6100", "BR+": "#ab58a2",
-         "COIL_A": "#8c3b00", "COIL_B": "#fa50e6"}
+         "COIL_A": "#8c3b00", "COIL_B": "#fa50e6",
+         # ── v0.1.2 新拆出来的两张网 ✓：官方表里**还没用掉**的两色 ✓（grey / ochre ✓）
+         #   ★ 11 张网只能用 13 色里的 11 个 ✓（黄 `#fff800` 界面上不明显 ✗、白 `#ffffff`
+         #     画在原理图白底上等于看不见 ✗ —— 2026-10-13 用户定 ✓）⇒ 面包板侧正好还剩这两色 ✓
+         "DATA_IN_C": "#999999", "DATA_OUT_C": "#a37911"}
+#   ★ `SWIO` 只走 PCB 上一根短线 ＋ 一个过孔 ✓ ⇒ 不在面包板/原理图上上色 ✓（想上色再补 ✓）
