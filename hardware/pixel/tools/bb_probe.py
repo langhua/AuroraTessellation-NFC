@@ -159,12 +159,20 @@ def body_boxes(path):
 def path_clear(a, b, lk, segs, holes, usedh, cur, h2, rects):
     r"""这条更短的新走法**画得出来**吗 ✓（独立判据 ✓，只用 `bb_compare` 的原语 ✓）
 
-    三关：① 不许盖住"接了线的孔" ✗ ② 不许与**别的**跳线共线重叠 ✗ ③ 不许穿元件本体 ✗
+    四关：① 不许盖住"接了线的孔" ✗ ② 不许与**别的**跳线共线重叠 ✗ ③ 不许穿元件本体 ✗
+    ④ ★ **自己要占的那颗孔，不许已被现有引线盖住** ✗（2026-10-15 补 ✓ —— 与布线器
+       `route_cost` ⑤ 同一句 ✓：它报 `⑤ 要占的孔 pin17G 已被现有引线盖住` ✓ 而本探针
+       原来不查这一条 ✗ ⇒ 又一处**尺子比规则松** ⇒ 假警报 ✓）。
     """
     pts = [a, b]
     if abs(a[0] - b[0]) > 1e-9 and abs(a[1] - b[1]) > 1e-9:
         pts = [a, (a[0], b[1]), b]
     mine = [s for s in lk.segs]
+    for (lk2, (c, d)) in segs:
+        if lk2 is lk:
+            continue
+        if BC.obscures(c, d, a) >= BC.OBSCURE_LIMIT:     # ★ ④ 新锚孔被别线压住 ✗
+            return False
     for i in range(len(pts) - 1):
         p, q = pts[i], pts[i + 1]
         for hid in sorted(usedh):
@@ -375,6 +383,17 @@ def main(argv):
 
     # ── ⑧ 「不是最近孔」 ✓（判据 = 规则① 的**可用孔集合** ✓ ＋ **换完网仍要连通** ✓）
     usedh = set(occ)
+    # ★★ 「可用孔集合」还要**扣掉被元件本体压住的孔** ✗（2026-10-15 补 ✓，实测抓到的假警报 ✓）：
+    #   实例 ✗：`U1` 的 EPAD 额外线被指"该用 5.1 mm 外的 `pin17F`" ✗ —— 而 `pin17F`
+    #   的坐标是 **(153, 81)** ✓、**正好压在 `U1` 本体框的左缘上** ✓（`U1` x 153..247.5 ✓）
+    #   ⇒ 布线器按规则 §5b ④「**被本体遮住的孔不能用**」把它排除了 ✓（它的 `blocked` ✓）
+    #   ✗ 而本探针原来只按"空 + 同网"判可用 ✗ ⇒ **尺子比规则松** ✗ ⇒ 假警报 ✓。
+    #   口径与布线器一致 ✓：本体框 ±1 单位（=0.28 mm ✓，§5b ⑫）。
+    def _under_body(xy):
+        for _ttl, r in rects:
+            if r[0] - 1 <= xy[0] <= r[2] + 1 and r[1] - 1 <= xy[1] <= r[3] + 1:
+                return True
+        return False
 
     def bus_net(b):
         for x in bus_holes.get(b, ()):
@@ -410,6 +429,8 @@ def main(argv):
             for h2, xy in holes.items():
                 if h2 == cur or h2 in usedh or bus_of[h2] == bus_of[cur]:
                     continue
+                if _under_body(xy):
+                    continue                  # ★ 被元件本体压住的孔**不算可用** ✗（见上 ✓）
                 if bus_net(bus_of[h2]) != net:
                     continue                  # ★ 换过去网就断了 ✗ / 会并别的网 ✗ ⇒ 不算"可用" ✓
                 k2 = route_len(xy, other)
