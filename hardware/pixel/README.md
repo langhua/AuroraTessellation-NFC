@@ -8201,3 +8201,60 @@ py -3.13 -X utf8 %TOOLS%\bb_compare.py pixel-pcb-v89.fzz pixel-pcb-v90.fzz  rem 
 
 1. ★★ **原理图 ＋ PCB 两个视图仍是 v87 的** ✗ —— 用户 2026-10-16 定「**重画原理图**」✓
    ⇒ 下一节做 ✓（PCB 视图另计 ✓）。
+
+## 六十二、用户手改面包板补回 `R3` 三处 ＋ 修 `EXPECT` 笔误 ⇒ **交付 `pixel-pcb-v91.fzz`** ✓（2026-10-19 ✓）
+
+**起因** ✓：§六十一 之后，用户在 Fritzing 里手改面包板 ✓，先后给了两稿：
+`pixel-pcb-v90_byHand.fzz`（中间稿 ✗）→ **`pixel-pcb-v90b_byHand.fzz`（成品 ✓）**。
+
+### 用户那两稿之间修掉的三处 ✓（我逐条量、逐条复查 ✓）
+
+| # | 网 | 中间稿 ✗ | 成品 ✓ |
+|---|---|---|---|
+| 1 | `DATA_IN` | `U1#7@pin20F` 与 `R3#0@pin29F` **断开** ✗ | `R3#0` 挪到 **`pin20G`** ✓（与 `pin20F` 同一条 5 孔 bus ✓）|
+| 2 | `DATA_IN_C` | `R3#1@pin20G` 与 U1 的 `pin20F` **同 bus ⇒ 短接** ✗（100 Ω 被旁路 ✗）| `R3#1` 挪到 **`pin26H`** ✓、与 `R2#1@pin26I` 同 bus ✓ |
+| 3 | `DATA_IN_C` | `J1#3@pin35J` **孤着** ✗ | 补上第 26 列 ↔ 第 35 列的跳线 ✓ |
+
+### 我修的一处：是**数据**写错 ✗，不是图 ✗
+
+`pixel_nets.py` 的 `EXPECT["RC"]` 把 **PD5** 写成了 `U1.connector17` ✗ ——
+`_work/_bb/u1.fzp` 里 **`connector17` = PD4** ✗、**`connector18` = PD5** ✓、`connector19` = PD6 ✓
+（第 160 / 168 / 176 行 ✓）。症状 = `bb_probe` 拿 PD4 去比 ⇒ `RC` 报「**断成 2 片**」✗，
+而且 **v90 与手改版报的是逐字相同的一句** ✓ —— 这才让我从"图的问题 / 尺子的问题"转到"**数据写错**"✓。
+修后两版都 `判定 ✓` ✓（提交 `386e460` ✓）。
+
+★ 教训 ✓：`EXPECT` 里的 `connectorN` **必须对部件 fzp 的 `name=` 核** ✓，
+别信注释里「pin 18 ⇒ con17」那种推算 ✗（差一位 ✓）。
+
+### 判据（全部在**交付件** `pixel-pcb-v91.fzz` 上跑 ✓）
+
+| 尺子 | 结果 |
+|---|---|
+| `bb_probe`（声明口径 ✓）| **判定 ✓ 与项目数据一致**（11/12 张网连通成一片 ✓；`SWIO` 单脚不判 ✓）|
+| `_netdump`（几何口径 ✓ 孔/bus/跳线）| **12 张网各 1 个连通块 ✓✓** |
+| `bb_precheck`（摆位/物理 ✓）| **✓ 允许布线** ✓（① ② ④ ⑤ ⑥ ⑦ ✓）|
+| `_wirehole`（一孔最多一根线 ✓）| **0 冲突 ✓**（45 孔 ✓）|
+| `_board_side_audit`（板侧 ↔ 件侧声明 ✓）| **98 孔：板多 0 ✓ / 板少 0 ✓** |
+| `fix_joints`（多段跳线接头 ✓）| 82 端点 / 7 处重合 ⇒ **全部双向已声明 ✓** |
+
+[![pixel-pcb-v91 的面包板视图](pixel-pcb-v91_bb.svg)](pixel-pcb-v91_bb.svg)
+
+*上图 = `pixel-pcb-v91.fzz` 的**面包板视图** ✓ —— 与 v90 的差别**全在面包板接线** ✓
+（`R3` 归位 ✓、`DATA_IN`/`DATA_IN_C` 补齐 ✓）；**原理图与 PCB 视图仍是 v90 的状态** ✗
+（即 v87 布局 ✓，见 §六十一 遗留 ✓）。*
+
+**复现命令** ✓：
+
+```bat
+set TOOLS=F:\git\fritzing-parts-langhua\tools
+py -3.13 -X utf8 _work\make_deliverable.py v91 pixel-pcb-v90b_byHand.fzz
+py -3.13 -X utf8 %TOOLS%\bb_probe.py    pixel-pcb-v91.fzz --nets=pixel_nets.py
+py -3.13 -X utf8 _work\_netdump.py      pixel-pcb-v91.fzz pixel_nets.py
+py -3.13 -X utf8 %TOOLS%\bb_precheck.py pixel-pcb-v91.fzz --nets=pixel_nets.py
+```
+
+### 遗留 ✗
+
+1. **原理图**：仍是 v87 布局 ✗ —— `--railys=5V@18` 那条会让 5V 干线**横穿 U1 本体 48.54 mm** ✗
+   （靠"自己脚豁免"过闸 ✓ 但看着不对 ✗）⇒ **已撤回** ✓，下一轮走「`R2` 上移 2 单位」路线 ✓；
+2. **PCB 视图**：仍是 v87 ✗（v0.1.2 新加的 5 件在 PCB 上还是克隆位置 ✗）。
