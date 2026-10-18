@@ -117,7 +117,15 @@ EXPECT = {
     #   `RC` → **PD6** = `connector19` ✓（原 `con1` = PA1 ✓）；`DATA_IN` → **PC1** = `con7` ✓
     #   （原 `con2` = PA2 ✓）；`DATA_OUT` → **PD2** = `con15` ✓（原 `con4` = PD0 ✓）
     "RC": {"R1.connector1", "C1.connector0", "U1.connector19",
-           "D4.connector1", "U1.connector17"},          # + `D4` 阳极 ＋ `PD5` ✓（`PD5` = pin 18 ⇒ con17 ✓）
+           "D4.connector1", "U1.connector18"},
+    #   ★★ 2026-10-19 修正 ✓（原写 `U1.connector17` ✗ 是**笔误** ✓）：
+    #     `_work/_bb/u1.fzp` 里 **`connector17` = PD4** ✗、**`connector18` = PD5** ✓、
+    #     `connector19` = PD6 ✓（第 160 / 168 / 176 行 ✓）。
+    #     ✗ 症状（实测 ✓）：`bb_probe` 拿 **PD4** 去比 ⇒ `RC` 报「断成 2 片」✗，
+    #       而图上画的是 PD5 ✓ ⇒ 同一个笔误也解释了**原理图**探针那句
+    #       「`RC` … 多了 `U1.connector18`」✗（当时没往数据上看 ✗）。
+    #     ★ 教训：`EXPECT` 里的 `connectorN` **必须拿部件 fzp 的 `name=` 核** ✓，
+    #       别信注释里的"pin 18 ⇒ con17"那种推算 ✗（差一位 ✓）。
     "5V": {"U1.connector5", "C2.connector0", "LED2.connector3", "J1.connector0",
            "J2.connector0", "D4.connector0", "R2.connector1"},   # + `D4` 阴极 ＋ `R2` 上拉端 ✓
     "DATA_IN": {"U1.connector7", "R3.connector0"},
