@@ -8258,3 +8258,79 @@ py -3.13 -X utf8 %TOOLS%\bb_precheck.py pixel-pcb-v91.fzz --nets=pixel_nets.py
 1. **原理图**：仍是 v87 布局 ✗ —— `--railys=5V@18` 那条会让 5V 干线**横穿 U1 本体 48.54 mm** ✗
    （靠"自己脚豁免"过闸 ✓ 但看着不对 ✗）⇒ **已撤回** ✓，下一轮走「`R2` 上移 2 单位」路线 ✓；
 2. **PCB 视图**：仍是 v87 ✗（v0.1.2 新加的 5 件在 PCB 上还是克隆位置 ✗）。
+
+---
+
+## 六十三、预览里的电阻**按阻值上色环** ⇒ 顺带暴露并修掉**阻值写错** ⇒ **交付 `pixel-pcb-v92.fzz`** ✓（2026-10-19 ✓）
+
+### 起因 ✓：用户拿 Fritzing 的截图对上了 ✓
+
+用户报：`pixel-pcb-v91_bb.png` 里**四个电阻长得一模一样** ✓，而 Fritzing 里**是分色的** ✓（有截图 ✓）。
+—— 用户是对的 ✓，**元件本身也没问题** ✓（`Resistor-0603` 的面包板 svg 里 `band_1_st` / `band_2_nd` /
+`band_rd_multiplier` / `gold_band` 这几个 id 一个不缺 ✓），**缺的是渲染器那一环** ✗：
+预览是本仓 `fritzing-parts-langhua/tools/render_bb.py` 渲的 ✓，它只把零件 svg **原样贴**上来 ✗，
+**不会跑 Fritzing 的 `setBands()`** ✗ ⇒ 所有电阻都是 svg 里写死的那一色 ✗。
+
+### 修法 ✓：照 `src/items/resistor.cpp` **原样复刻** ✓（值一字不改 ✓）
+
+| 环节 | Fritzing 出处 | 我的实现 |
+|---|---|---|
+| 读阻值 → 数字 | `makeSvg()`：`QString::number(ohms,'e',3)` ⇒ `4.700e+03` | `"%.3e" % ohms` ✓（同形 ✓）|
+| 三道环 + 倍率 | 第 1 位 / 第 3 位 ／ `multiplier = log10(ohms / (第一×10+第二))` | 同式 ✓（`5Band` 才用第 4 位 ✓）|
+| 颜色表 | `ColorBands` 0–9 ＋ 金 `-1` ＋ 银 `-2`（`resistor.cpp:71-82`）| `CB` 字典 ✓ 逐色照抄 ✓ |
+| 公差 → 金/银色环 | `Tolerances`（`:85-95`）| `TOL` 字典 ✓（±1% 棕 / ±5% 金 …✓）|
+| 落到哪个 id | `setBands()`：`band_1_st` / `band_2_nd` / `band_3` / `band_rd_multiplier` / `gold_band` | 同一套 id ✓（换 `fill` ✓）|
+
+⇒ 每件都会在日志里报一行 ✓（可核对 ✓）：
+
+```
+R1     色环 ✓ {'band_1_st': '#8a3d06', 'band_2_nd': '#000000', 'band_rd_multiplier': '#ff4d00',
+               'gold_band': '#ad9f4e'}（resistance=10k tolerance=±5%）     ⇒ 棕 黑 橙 ＋ 金 ✓
+R2/R3/R4 色环 ✓ {… '#ffd500' '#8210d2' '#c40808' …}（resistance=4.7k）    ⇒ 黄 紫 红 ＋ 棕 ✓
+```
+
+### ★★ 顺手暴露的真问题 ✗：**阻值是错的** ✗
+
+色环一上色 ✓，错值立刻看得见 ✓ —— 与设计（`pixel-netlist.md` §2 ✓）对不上 ✗：
+
+| 件 | v91 里的值 ✗ | 设计 ✓ | 症状（色环）|
+|---|---|---|---|
+| `R1` | **220** ✗ | **10 kΩ** ✓ | 红红棕 ✗ 而不是 棕黑橙 ✓ |
+| `R3` | **4.7k** ✗ | **100 Ω** ✓ | 黄紫红 ✗ 而不是 棕黑棕 ✓ |
+| `R4` | **4.7k** ✗ | **100 Ω** ✓ | 同上 ✗ |
+| `R2` / `C1` / `C2` / `D4` | 已对 ✓ | 4.7k / 100 nF 16V / 100 nF 16V / 1N5819 ✓ | — ✓ |
+
+病因 ✓ = 2026-10-16 量到过的**克隆属性** ✗（克隆件把宿主件的 `resistance` 一起抄了 ✗）；
+当时我只在**原理图脚本**里改了 ✗ ⇒ **交付文件里一直没改** ✗（这正是"改了脚本 ≠ 改了交付件"✓）。
+修法 = `_work/fix_values.py` ✓：**只改实例 `<property>`** ✓、几何/导线/摆位一个字不碰 ✓（`--apply` 才写 ✓）。
+
+### 判据（全部在**交付件** `pixel-pcb-v92.fzz` 上跑 ✓）
+
+| 尺子 | 结果 |
+|---|---|
+| `bb_probe`（声明口径 ✓）| **判定 ✓ 与项目数据一致**（11/12 张网连通成一片 ✓）|
+| `bb_precheck`（摆位/物理 ✓）| **✓ 允许布线** ✓（rc=0 ✓）|
+| `fix_values`（属性 ✓）| 逐件报 ✓ 只剩 `R1` / `R3` / `R4` 三行改动 ✓，其余 `✓ 已对 ✓` |
+
+[![pixel-pcb-v92 的面包板视图](pixel-pcb-v92_bb.svg)](pixel-pcb-v92_bb.svg)
+
+*上图 = `pixel-pcb-v92.fzz` 的**面包板视图** ✓ —— 与 v91 的差别**只有电阻的阻值（因而色环）** ✓：
+`R1` 棕黑橙＋金 ✓、`R2` 黄紫红＋棕 ✓、`R3`/`R4` 棕黑棕＋棕 ✓；接线与摆位与 v91 **逐点相同** ✓。
+**原理图与 PCB 视图仍是 v87 的状态** ✗（见上节遗留 ✓）。*
+
+**复现命令** ✓：
+
+```bat
+set TOOLS=F:\git\fritzing-parts-langhua\tools
+py -3.13 -X utf8 _work\fix_values.py pixel-pcb-v90b_byHand.fzz _work\v92_values.fzz --apply
+py -3.13 -X utf8 _work\make_deliverable.py v92 _work\v92_values.fzz
+py -3.13 -X utf8 %TOOLS%\bb_probe.py    pixel-pcb-v92.fzz --nets=pixel_nets.py
+py -3.13 -X utf8 %TOOLS%\bb_precheck.py pixel-pcb-v92.fzz --nets=pixel_nets.py
+```
+
+### 遗留 ✗
+
+1. **原理图 / PCB 视图**：仍是 v87 ✗（同上节 ✓）；
+2. `R1` 的公差按 **±5%** 记 ✓（设计未指定 ✓，取了常用值 ✓）—— 若采购的是 1% 件，改 `fix_values.py` 一行即可 ✓；
+3. 渲染器的色环只覆盖 **4 环 / 5 环** ✓；色环顺序若某天改成"倍率在前"之类 ✗，要和 `resistor.cpp` 一起核 ✓。
+
