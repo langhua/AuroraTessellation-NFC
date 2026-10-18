@@ -8334,3 +8334,83 @@ py -3.13 -X utf8 %TOOLS%\bb_precheck.py pixel-pcb-v92.fzz --nets=pixel_nets.py
 2. `R1` 的公差按 **±5%** 记 ✓（设计未指定 ✓，取了常用值 ✓）—— 若采购的是 1% 件，改 `fix_values.py` 一行即可 ✓；
 3. 渲染器的色环只覆盖 **4 环 / 5 环** ✓；色环顺序若某天改成"倍率在前"之类 ✗，要和 `resistor.cpp` 一起核 ✓。
 
+---
+
+## 六十四、电阻件改成**五色环**（±1% 实物的样子）⇒ **交付 `pixel-pcb-v93.fzz`** ✓（2026-10-19 ✓）
+
+### 起因 ✓：用户问「Fritzing 里有五色色环的画法吗？」
+
+用户实际用的是 **±1% 电阻** ⇒ 实物是**五色环** ✓，而上一节渲出来的仍是**四色环** ✗。
+
+**有 ✓**，判据只有两条（源码可复查 ✓）：
+
+| 环节 | 出处 | 事实 |
+|---|---|---|
+| 造哪一类 | `items/partfactory.cpp:137` | `endsWith("ResistorModuleID")` ⇒ `new Resistor(…)` |
+| 是否五环 | `items/resistor.cpp:195` | `if (moduleID().contains("5Band")) temp = temp*10 + thirdband;`（三位有效数字）|
+| 上色 | `items/resistor.cpp:224-237` | 只按 id 上色：`band_1_st` / `band_2_nd` / `band_3` / `band_rd_multiplier` / `gold_band` |
+| 官方先例 | `fritzing-parts/core/resistor_5band.fzp` | `moduleId="5BandResistorModuleID"`；`svg/core/breadboard/resistor_5bands.svg` 五环齐全 |
+
+⇒ 缺一不可：**moduleId 里要有 `5Band`** ＋ **面包板 svg 里要有 `band_3`** ✓。
+
+### 改了什么 ✓
+
+1. **面包板 svg 加第 5 环**（`svg/Resistor-0603/…_breadboard.svg`）：
+   `band_3` 加在 `band_2_nd` 与 `band_rd_multiplier` 之间（x=217.43，宽 25.7）✓，
+   并把 `band_rd_multiplier` 由 224.62 移到 **261.63** ⇒ 四列**等间距 18.5 单位** ✓（与 `gold_band` 的间距同值 ✓）；
+2. **moduleId 换尾缀**：`…_1-ResistorModuleID` → **`…_1-5BandResistorModuleID`** ✓
+   （仍 `endsWith("ResistorModuleID")` ✓ ⇒ 属性面板照旧可填阻值/公差 ✓；`contains("5Band")` ✓）；
+   5 个文件名、fzp 里 5 处引用（moduleId 1 ＋ image 4）一并换 ✓，并重打 `fzpz/Resistor-0603.fzpz` ✓；
+3. **部署 MINE**：新名 5 个文件按 fzp 声明落位 ✓，旧名 5 个文件**移出**到
+   `Documents/Fritzing/_stray_20261019-0049/` ✓（不删 ✓）；
+4. **引用它的草图同批改**（13 份 / **88 处** ✓）：像素板 `v87…v92` ＋ `v90_byHand` / `v90b_byHand` ✓、
+   载板 `carrier-{board,breadboard,breadboard_byHand,pcb,schematic}.fzz` ✓（只换 `moduleIdRef`/`path` 字符串 ✓）；
+5. **元件箱重生成**：`tools/make_fzb.py` ⇒ 166/166 条引用落地 ✓、`tools/check_bins.py` 全部解析得到 ✓。
+
+### 色码（与实际五环一致 ✓，由 `resistor.cpp` 的公式算得 ✓）
+
+| 件 | 值 | 五环（本库渲出来 / 实物同）|
+|---|---|---|
+| `R1` | 10 kΩ ±5% | 棕 黑 黑 红 ＋ **金** |
+| `R2` | 4.7 kΩ ±1% | 黄 紫 黑 棕 ＋ **棕** |
+| `R3` / `R4` | 100 Ω ±1% | 棕 黑 黑 黑 ＋ **棕** |
+
+### 判据（全部在**交付件** `pixel-pcb-v93.fzz` 上跑 ✓，库仓闸门跑改名后的件 ✓）
+
+| 尺子 | 结果 |
+|---|---|
+| `bb_probe`（声明口径 ✓）| **判定 ✓ 与项目数据一致**（11/12 张网连通成一片 ✓）|
+| `bb_precheck`（摆位/物理 ✓）| **✓ 允许布线** ✓（rc=0 ✓）|
+| 库仓 `fzp_check.py svg\Resistor-0603` | **=== 全部通过 ===** ✓ |
+| 库仓 `run_checks.py` | **6 过 / 0 跳过 / 0 不合格** ✓（G5：`Resistor-0603` fzp_check rc=0 ✓）|
+| `check_deploy.py Resistor-0603` | **一致 ✓ 1 个 fzp** ✓ |
+| `check_bins.py` | **该判的箱全部解析得到 ✓**（`my_parts.fzb` 124 条 ✓）|
+
+[![pixel-pcb-v93 的面包板视图](pixel-pcb-v93_bb.svg)](pixel-pcb-v93_bb.svg)
+
+*上图 = `pixel-pcb-v93.fzz` 的**面包板视图** ✓ —— 与 v92 的差别只有**电阻件变成五色环** ✓
+（板上阻值仍是 R1=10k / R2=4.7k / R3=R4=100 ✓）；**原理图与 PCB 视图仍是 v87 的状态** ✗。*
+
+**复现命令** ✓：
+
+```bat
+set TOOLS=F:\git\fritzing-parts-langhua\tools
+py -3.13 -X utf8 %TOOLS%\rename_moduleid.py --suffix=… --check svg\Resistor-0603   (只查；本件走的是“替换尾缀”)
+py -3.13 -X utf8 %TOOLS%\repack_fzpz.py
+py -3.13 -X utf8 %TOOLS%\check_deploy.py Resistor-0603 --fix
+py -3.13 -X utf8 %TOOLS%\check_deploy.py Resistor-0603
+py -3.13 -X utf8 %TOOLS%\make_fzb.py
+py -3.13 -X utf8 _work\make_deliverable.py v93 pixel-pcb-v92.fzz
+py -3.13 -X utf8 %TOOLS%\bb_probe.py    pixel-pcb-v93.fzz --nets=pixel_nets.py
+py -3.13 -X utf8 %TOOLS%\bb_precheck.py pixel-pcb-v93.fzz --nets=pixel_nets.py
+```
+
+### 遗留 ✗
+
+1. **其余 9 档电阻仍是四色环** ✗（01005/0201/0402/0805/1206/1210/1812/2010/2512 ✓）——
+   用户只点名 `0603` ✓；要全改得同批再改 9 件的 svg ＋ 9 个 moduleId ＋ 引用它们的草图 ✓；
+2. **原理图 / PCB 视图**：仍是 v87 ✗；
+3. **请在 Fritzing 里看一眼** ✓：把这颗电阻拖进草图，看色环是否与我们渲的一致 ✓
+   （我这边的算法是照 `resistor.cpp` 抄的 ✓，但**它自己渲染出来的才算数** ✓）。
+
+
