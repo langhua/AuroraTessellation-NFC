@@ -8414,4 +8414,61 @@ py -3.13 -X utf8 %TOOLS%\bb_precheck.py pixel-pcb-v93.fzz --nets=pixel_nets.py
 3. **请在 Fritzing 里看一眼** ✓：把这颗电阻拖进草图，看色环是否与我们渲的一致 ✓
    （我这边的算法是照 `resistor.cpp` 抄的 ✓，但**它自己渲染出来的才算数** ✓）。
 
+---
+
+## 六十五、芯片面包板视图按实尺改宽 ⇒ U1 重摆 ⇒ **交付 `pixel-pcb-v94.fzz`** ✓（2026-10-19 ✓）
+
+### 起因 ✓：用户实拍 ＋ 卡尺
+
+`CH32V003F4U6` 的面包板视图原来是「板宽 10.16 mm、两列针脚中心距 7.62 mm」✗，
+而实物是**板宽约 17.5 mm、针脚就贴在板边内侧约 1.3 mm** ✓ ⇒ 库仓已改成
+**板宽 17.78 mm（7 格）、针距 15.24 mm（6 格）、距板边 1.27 mm（半格）** ✓（库仓提交 `52bc885` ✓）。
+
+### 连带：U1 在面包板里必须重摆 ✓
+
+新针距要求它的两排脚**相隔 6 行**（15.24 mm），而板子上下半区各只有 5 行 ⇒ 必须跨中缝 ✓。
+我按「针脚全落孔 ＋ 本体不碰别的件 ＋ 目标孔全空 ＋ 位移最小」扫了一遍，得到：
+
+- 合法位置 = **行 C 与 G、列 18..27**（相对原位置只需上移 2.54 mm）✓
+- 只差 `R3`（`pin20G`）与 `R4`（行 C 一孔）各让开一个孔 ✓
+
+⇒ **用户按这个位置在 Fritzing 里手改**（`pixel-pcb-v93_byHand.fzz` ✓），我逐项复核 ✓。
+
+### 我查出并修掉的两处 ✗
+
+| # | 网 | 症状 | 修法 |
+|---|---|---|---|
+| 1 | `5V` | `LED2.connector3` 落在 `pin37F`（bus `pin37J`）、`J2.connector0` 落在 `pin36A`（bus `pin36E`）—— 两只都成了孤岛 ✗（搬件时没接回电源轨 ✓）| 用户补一根 5V 跳线到 `pin37J` 主干 ✓ |
+| 2 | 闸门 | 这张图有 12 个 `BreadboardLogoText`，而 `bb_precheck` / `bb_compare` 原来按「moduleIdRef 含 breadboard」选板子 ⇒ 选中 LogoText ✗ ⇒ 路径 `:/resources/…` ⇒ `OSError[22]` **直接把闸门跑崩** ✗ | 库仓已修（`6a25d1c` ✓）：排除 logo/text ✓ |
+
+### 判据（全部在**交付件** `pixel-pcb-v94.fzz` 上跑 ✓）
+
+| 尺子 | 结果 |
+|---|---|
+| `bb_probe`（声明口径 ＋ 网表 ✓）| **判定 ✓ 与项目数据一致**（11/12 张网连通成一片 ✓）|
+| `bb_precheck`（几何口径 ✓）| **✓ 允许布线** ✓（U1 的 20 只脚全落在它声明的孔上 ✓）|
+| `_wirehole`（一孔最多一根线 ✓）| **rc=0** ✓ |
+| `_board_side_audit`（板侧 ↔ 件侧双向声明 ✓）| **rc=0**，99 孔对得上、板多 0 / 板少 0 ✓ |
+
+[![pixel-pcb-v94 的面包板视图](pixel-pcb-v94_bb.svg)](pixel-pcb-v94_bb.svg)
+
+*上图 = `pixel-pcb-v94.fzz` 的**面包板视图（接线）** ✓ —— U1 已按新尺寸重摆并重接 ✓；
+**注意**：这张裁剪自渲染器的图里只画出了导线（元件本体被板子盖住 ✗，见遗留 1 ✓）。*
+
+**复现命令** ✓：
+
+```bat
+set TOOLS=F:\git\fritzing-parts-langhua\tools
+py -3.13 -X utf8 _work\make_deliverable.py v94 pixel-pcb-v93_byHand.fzz
+py -3.13 -X utf8 %TOOLS%\bb_probe.py    pixel-pcb-v94.fzz --nets=pixel_nets.py
+py -3.13 -X utf8 %TOOLS%\bb_precheck.py pixel-pcb-v94.fzz --nets=pixel_nets.py
+```
+
+### 遗留 ✗
+
+1. **渲染器的 z 序**：Fritzing 另存的图里板子是**后**画的 ⇒ 我的渲染器按文档顺序画 ⇒ 元件本体被板子盖住 ✗
+   （判据不受影响 ✓，只是预览不好看 ✗）；修法 = 先画板、再画其它件 ✓；
+2. **原理图 / PCB 视图**：仍是 v87 ✗。
+
+
 
