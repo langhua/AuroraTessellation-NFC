@@ -8471,5 +8471,45 @@ py -3.13 -X utf8 %TOOLS%\bb_precheck.py pixel-pcb-v94.fzz --nets=pixel_nets.py
    预览里元件、色环、图例都正常显示 ✓（判据本来就是按文件几何算的 ✓ 不受影响 ✓）；
 2. **原理图 / PCB 视图**：仍是 v87 ✗。
 
+---
+
+## 六十六、烧录接线图 ⇒ `pixel-flash-v94.fzz` ✓（2026-10-20 ✓）
+
+### 接哪三根（孔位是按 v94 的实际布局算的 ✓）
+
+| WCH-LinkE 引脚 | 面包板孔 | 为什么是这个孔 |
+|---|---|---|
+| **SWDIO（SWIO）** | **`pin22A`**（或 `pin22C`/`D`/`E`）| `U1` 的 **PD1（脚 15）= SWIO** 插在 **`pin22B`** ✓；`pin22A~E` 是同一条 5 孔 bus ✓，且这条 bus 上**只有 PD1 一个元件脚** ✓ ⇒ 串不到别处 ✓ |
+| **5V** | **`pin22G`**（或 `pin22H`/`I`）| `U1` 的 **VDD（脚 6）** 在 `pin22F` ✓，同 bus 空着 3 孔 ✓（这块板 VDD = 5 V ✓，不是 3V3 ✓）|
+| **GND** | **`pin24G`**（或 `pin24H`/`I`）| `U1` 的 **VSS（脚 4）** 在 `pin24F` ✓，同 bus 空着 3 孔 ✓ |
+
+- **省事接法**：LinkE 的 `5V` 直接供这板 ✓；
+- **更稳接法（推荐）**：板子自己供电（J1/J2 那条 5 V），LinkE **只接 `SWDIO` ＋ `GND`** ✓；
+- ✗ **不要同时接两个 5 V 源** ✗；✗ **GND 必须共地**（这根不能省）✗。
+
+⚠ `pin22B` 是 SWIO、`pin22F` 是 VDD，中间只隔一道板中缝 —— 别插错 ✗。
+
+### 首次烧录
+
+1. WCH-LinkE 拨到 **RISC-V** 模式；工具用 **WCH-LinkUtility**（或 MounRiver Studio）；
+2. 目标选 **CH32V003**，接口 **SWIO（单线）**；
+3. **芯片先上电**再点连接；连不上就断电重插、把杜邦线缩短到 10 cm 内。
+
+[![烧录接线图](pixel-flash-v94_bb.svg)](pixel-flash-v94_bb.svg)
+
+*上图 = `pixel-flash-v94.fzz` ✓ —— 只保留面包板 ＋ `U1`，三根线从 `U1` 的三个落脚 bus
+拉到最左空列（`pin1B` / `pin1D` / `pin1F`，杜邦线插那里 ✓），左边三行字与线同色 ✓。
+5V 红 `#cc1414`、GND 黑 `#404040`（官方面包板色表的值 ✓）、SWDIO 灰 `#999999` ✓。*
+
+**判据** ✓：`bb_precheck` **✓ 允许布线**；`_wirehole` **rc=0**（一孔一线 ✓）；
+`_board_side_audit` **rc=0**（板侧 ↔ 件侧双向声明 ✓）；`render_bb` ✓。
+
+**复现** ✓：
+
+```bat
+py -3.13 -X utf8 _work\make_flash.py pixel-pcb-v94.fzz pixel-flash-v94.fzz --apply
+py -3.13 -X utf8 F:\git\fritzing-parts-langhua\tools\bb_precheck.py pixel-flash-v94.fzz
+```
+
 
 
