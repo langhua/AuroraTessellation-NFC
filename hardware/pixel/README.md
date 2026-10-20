@@ -8497,12 +8497,33 @@ py -3.13 -X utf8 %TOOLS%\bb_precheck.py pixel-pcb-v94.fzz --nets=pixel_nets.py
 
 [![烧录接线图](pixel-flash-v94_bb.svg)](pixel-flash-v94_bb.svg)
 
-*上图 = `pixel-flash-v94.fzz` ✓ —— 只保留面包板 ＋ `U1`，三根线从 `U1` 的三个落脚 bus
-拉到最左空列（`pin1B` / `pin1D` / `pin1F`，杜邦线插那里 ✓），左边三行字与线同色 ✓。
-5V 红 `#cc1414`、GND 黑 `#404040`（官方面包板色表的值 ✓）、SWDIO 灰 `#999999` ✓。*
+*上图 = `pixel-flash-v94.fzz` ✓（**用户手改版** ✓）—— 整块面包板 ＋ 右侧的 **`WCH-LinkE`** 本体 ✓，
+三根线从 `LINK1` 接到 `U1` 的三个落脚 bus ✓。*
 
-**判据** ✓：`bb_precheck` **✓ 允许布线**；`_wirehole` **rc=0**（一孔一线 ✓）；
-`_board_side_audit` **rc=0**（板侧 ↔ 件侧双向声明 ✓）；`render_bb` ✓。
+### `WCH-LinkE` 那一侧的落点与连通（按引脚算 ✓）
+
+| LinkE 脚 | 落孔 | 连到 | 结论 |
+|---|---|---|---|
+| `CLK`（connector5）| `pin45F` | — | **悬空** ✓（单线 SWIO 不用它 ✓）|
+| **`DIO`**（connector6）| `pin46F` | `U1.PD1`（`pin22E` bus ✓）| **通** ✓ |
+| **`GND`**（connector7）| `pin47F` | `U1.VSS` | **通** ✓ |
+| `3V3`（connector8）| `pin48F` | — | **悬空** ✓（**没有短到 5 V** ✓）|
+| **`5V0`**（connector9）| `pin49F` | `U1.VDD`（`pin61Y` = Y 电源轨 ✓）| **通** ✓ |
+
+### ★ 供电：两种接法只能选一种 ✗
+
+这张图画的是**「LinkE 供电」**（`5V0` 已接 ✓），适用**台面单独烧一块** ✓。电流上完全够 ✓：
+一块板最坏 **62 mA**（1 颗 `WS2812B-1010` 全白 60 mA ＋ 2 mA 杂项 ✓ 见 `pixel_nets.py` §电流规格 ✓），
+烧录时 LED 不亮、只有 **5–10 mA** ✓；LinkE 的 `5V0` 是 USB 直通 ⇒ 上限 ≈ **500 mA** ✓。
+
+- **台面单板** ⇒ 就按这张图 ✓（`5V0` ＋ `DIO` ＋ `GND`）；
+- **装进链里烧**（上游已通过 J1/J2 供 5 V）⇒ **拔掉 `5V0`** ✓，只留 `DIO` ＋ `GND` ✗ 否则两个源并联 ✗。
+
+接之前 30 秒能确认：量 5 V 轨（`pin61Y` 对 `GND` 轨）—— 有 5 V ⇒ 已有电源 ⇒ **别接 `5V0`** ✗。
+
+判据 ✓：`bb_precheck` **✓ 允许布线**；`_board_side_audit` **rc=0**；`_wirehole` **rc=0**
+（一孔一线 ✓）；`bb_probe` **判定 ✓ 11/12 张网连通成一片**（搬 LinkE 进来没破坏原板接线 ✓）；
+`render_bb` ✓。
 
 **复现** ✓：
 
