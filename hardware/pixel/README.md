@@ -8532,5 +8532,50 @@ py -3.13 -X utf8 _work\make_flash.py pixel-pcb-v94.fzz pixel-flash-v94.fzz --app
 py -3.13 -X utf8 F:\git\fritzing-parts-langhua\tools\bb_precheck.py pixel-flash-v94.fzz
 ```
 
+## 六十七、`NFC-Coil` 改件（面包板 = PCB）⇒ **`pixel-flash-v95.fzz`** ✓（2026-11-06 ✓）
+
+### 为什么要升一版
+
+库仓里的 `NFC-Coil` 按实际板子改了两处（库仓提交 `096fdee` / `29ce3ae`）：面包板视图的
+**线圈改成与 PCB 同一条螺旋**（φ20），两个脚改成 PCB 的**通孔焊盘**（内 r=3.30 / 外 r=10.70，
+间距 **7.40 mm**，OD 1.6 / 孔 0.6）。而 v94 里线圈是**插在面包板上**的（老件两针
+**17.78 mm = 7 格**，插在 `pin1E` / `pin8E`）。`.fzz` 里的元件是**随包内嵌**的 ⇒ 必须出一版新图。
+
+### 改了什么
+
+| 项 | v94 | v95 |
+|---|---|---|
+| 内嵌元件 | 老 `NFC-Coil` | 新 `NFC-Coil`（面包板 ＋ icon）|
+| 线圈与面包板 | 插 `pin1E` / `pin8E` | **不插孔**：两根导线直接接到它的两个焊盘 |
+| `Wire90015711`（`COIL_A`）| 插 `pin1C` | 改接线圈**内圈焊盘**（线跨过线圈 ＝ 焊在背面）|
+| `Wire90015714`（`COIL_B`）| 插 `pin8B` | 改接线圈**外圈焊盘** |
+| 线圈实例位置 | `(6.98, 60.4488)` | `(6.98, 54.60)`（上移 1.65 mm，让 `pin9C` 的结点避开板边）|
+
+★ **为什么不能继续插** ✗：新件两针在板子的**竖直中线**，24 mm 的板从针线上下各铺 12 mm；
+而一条 5 孔 bus 只有 **10.16 mm** 高（实测 `pin1E` → `bus1A-E`、`pin1C` → `bus1A-E`、
+`pin8B` → `bus8A-E`）⇒ **线圈插到哪儿，它那两条 bus 就整条被板子盖住**，`COIL_A` / `COIL_B`
+的线没有孔可插 ✓。
+
+### 判据（都在 `pixel-flash-v95.fzz` 上跑 ✓）
+
+| 判据 | 结果 |
+|---|---|
+| `bb_precheck` | **✓ 允许布线**（①–⑦ 全 ✓；⑦ 量到 **3 处接线，最大 0.000 mm**）|
+| `bb_probe --nets=pixel_nets.py` | **✓ 与项目数据一致**（**11/12** 张网连通成一片；`EXPECT` 点名 **40/40** 只脚都在图上）|
+| 线圈板底下压住的**已用孔** | **0 个**（板 rect：x 10.52..95.56 / y 58.14..143.18；全图用孔 95 个）|
+
+[![pixel-flash-v95 的面包板视图](pixel-flash-v95_bb.svg)](pixel-flash-v95_bb.svg)
+
+*上图 = `pixel-flash-v95.fzz` 的**面包板视图** ✓ —— 线圈仍摆在左边，两根线从它的两个焊盘接出
+（内圈那根跨过线圈 ✓，图上看到的那处交叠是**故意的**）。*
+
+**复现** ✓：
+
+```bat
+py -3.13 -X utf8 _work\nfc\make_v95.py
+py -3.13 -X utf8 F:\git\fritzing-parts-langhua\tools\bb_precheck.py pixel-flash-v95.fzz
+py -3.13 -X utf8 F:\git\fritzing-parts-langhua\tools\bb_probe.py pixel-flash-v95.fzz --nets=pixel_nets.py
+```
+
 
 
