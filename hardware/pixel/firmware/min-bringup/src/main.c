@@ -2,13 +2,13 @@
  * pixel-min-bringup —— 像素板「台架第 ③ 步」最小固件
  *
  * 做什么（只做三件，不多做）：
- *   ① 上电自检：板载 WS2812B-1010（`LED2`，数据在 `PC6` = SPI1_MOSI）**满亮度**白光闪 3 次
- *      ⇒ 证明「MCU 活着 + SPI 时序对 + 这颗灯能点亮」✓
- *      ★ 必须排在 `adc_init()` **之前**：自检的意义就是不依赖别的模块，
- *        而 ADC 那两步里有两处死等（等 RSTCAL/CAL 清零、等 EOC）✓
- *   ② 自检完立刻挂「我活着」的**常亮暗白**；没信号时一直保持
+ *   ① 上电自检：板载 WS2812B（`LED2`，数据在 `PC6` = SPI1_MOSI）**红 → 绿 → 蓝** 各 150 ms，
+ *      然后灭 150 ms；ADC 初始化完再**紫闪一次**
+ *      ⇒ 证明「MCU 活着 + SPI 时序对 + 这颗灯能点亮 + ADC 配置跑完」✓
+ *      ★ 停在哪个颜色，就说明卡在它之后那一段 ⇒ 一眼定位 ✓
+ *      ★ 第一帧**不用白**：白与「卡住残留的白」肉眼分不开 ✗（2026-11-07 的教训）
+ *   ② 自检完挂「我活着」的**常亮暗白**；没信号时一直保持
  *      ⇒ **全黑 = 没跑起来**；**暗白常亮 = 一切正常、只等信号** ✓
- *         （灯只有 1.0×1.0 mm，一闪而过的弱光会看漏 ⇒ 不许再用短闪/低占空当指示 ✗）
  *   ③ 采 `PD6`（= A6 = ADC_IN6）：16 次 10-bit 采样累加后 >>2 ⇒ 12-bit（0…4092），
  *      并把读数**显示在灯上**：颜色 = 档位、亮度 = 档内大小
  *      ⇒ 不接任何仪器就能看出「有没有信号 / 随距离怎么变」✓
@@ -45,8 +45,12 @@ static void ws_send_byte(uint8_t b)
 {
     for (int8_t i = 7; i >= 0; i--) {
         SPI1_DATAR = (b & (1u << i)) ? WS_CODE_1 : WS_CODE_0;
-        while ((SPI1_STATR & SPI_STATR_TXE) == 0) {
-            /* 等发送寄存器空 */
+        /* 等发送缓冲空。★ **带上限**：死等一个状态位，它一旦不按预期置位就整片卡死，
+         * 而现象与「MCU 根本没跑」完全一样 ✗（2026-11-07 被这一点误导两轮）*/
+        for (uint32_t t = 0; t < 40000u; t++) {
+            if (SPI1_STATR & SPI_STATR_TXE) {
+                break;
+            }
         }
     }
 }
@@ -112,12 +116,12 @@ static void adc_init(void)
     ADC1_CTLR2 |= ADC_CTLR2_ADON;
     delay_ms(1);
 
-    /* 上电校准（照 EVT：先 RSTCAL 等清零，再 CAL 等清零） */
+    /* 上电校准（照 EVT：先 RSTCAL 等清零，再 CAL 等清零）—— ★ 两个等待都**带上限** */
     ADC1_CTLR2 |= ADC_CTLR2_RSTCAL;
-    while (ADC1_CTLR2 & ADC_CTLR2_RSTCAL) {
+    for (uint32_t t = 0; t < 200000u && (ADC1_CTLR2 & ADC_CTLR2_RSTCAL); t++) {
     }
     ADC1_CTLR2 |= ADC_CTLR2_CAL;
-    while (ADC1_CTLR2 & ADC_CTLR2_CAL) {
+    for (uint32_t t = 0; t < 200000u && (ADC1_CTLR2 & ADC_CTLR2_CAL); t++) {
     }
 }
 
@@ -125,7 +129,11 @@ static void adc_init(void)
 static uint16_t adc_once(void)
 {
     ADC1_CTLR2 |= ADC_CTLR2_SWSTART;
-    while ((ADC1_STATR & ADC_STATR_EOC) == 0) {
+    /* ★ 等 EOC 也**带上限**（≈30 ms），不允许死等 */
+    for (uint32_t t = 0; t < 200000u; t++) {
+        if (ADC1_STATR & ADC_STATR_EOC) {
+            break;
+        }
     }
     return (uint16_t)(ADC1_RDATAR & 0x03FFu);   /* 10-bit 右对齐 */
 }
@@ -188,20 +196,29 @@ int main(void)
 {
     spi_init();
 
-    /* ① 上电自检：满亮度白光闪 3 次（200/255、各 200 ms，够亮够久，看不错）
-     * ★ 排在 adc_init() 之前 —— 自检不许被别的模块卡住 ✓ */
-    for (uint8_t i = 0; i < 3; i++) {
-        ws_rgb(200, 200, 200);
-        delay_ms(200);
-        ws_rgb(0, 0, 0);
-        delay_ms(200);
-    }
+    /* ① 上电自检：**红 → 绿 → 蓝**，各 150 ms（顺带验 GRB 色序）
+     * ★ 第一帧**故意不用白**（2026-11-07 ✓）：白自检帧与「程序卡住时残留在灯上的白」
+     *   在肉眼上分不开 ✗ ⇒ 会被误判成「没在跑」。用红/绿/蓝分段，停在哪一段一目了然 ✓
+     *   而且每次上电都从红开始 ⇒ 若看到「红→绿→蓝 又回到红」= 芯片在**反复复位** ✓ */
+    ws_rgb(160, 0, 0);
+    delay_ms(150);
+    ws_rgb(0, 160, 0);
+    delay_ms(150);
+    ws_rgb(0, 0, 160);
+    delay_ms(150);
+    ws_rgb(0, 0, 0);
+    delay_ms(150);
 
-    /* ② 自检完立刻亮起「活着」的暗白，一直保持到有读数为止 */
-    ws_rgb(ALIVE_LV, ALIVE_LV, ALIVE_LV);
-
+    /* ② ADC 初始化（内部等待都已带上限，见 adc_init） */
     adc_init();
     (void)adc_once();   /* 使能后的第一次转换丢掉 */
+
+    /* ③ **紫闪一次 = ADC 也初始化完了**（没看到这一闪 ⇒ 卡在 ADC 那一段）*/
+    ws_rgb(120, 0, 120);
+    delay_ms(120);
+
+    /* ④ 常亮暗白 = 活着、在循环里等读数 */
+    ws_rgb(ALIVE_LV, ALIVE_LV, ALIVE_LV);
 
     for (;;) {
         /* 每圈开头采样：离上一次 LED 刷新（`ws_latch` 之后）已过 ≥500 ms
