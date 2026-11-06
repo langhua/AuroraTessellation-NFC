@@ -8588,5 +8588,66 @@ py -3.13 -X utf8 F:\git\fritzing-parts-langhua\tools\bb_probe.py pixel-flash-v95
 py -3.13 F:\git\fritzing-parts-langhua\tools\render_bb.py pixel-flash-v95.fzz pixel-flash-v95_bb.png
 ```
 
+## 六十八、台架第 ③ 步：最小固件 ⇒ `hardware/pixel/firmware/min-bringup/` ✓（2026-11-06 ✓）
+
+**为什么是这一步** ✓：① 静态检查（断路/短路/二极管方向）在 2026-11-06 之前已经过 ✓；
+② 现在要证明的是「**MCU 活着、5 V 在、LED 能亮、ADC 看得到包络**」✓ ——
+`data-acquisition.md` §0 的三层里，这是**第 ② 层（每块 MCU 的 ADC 采样）** 的第一版 ✓
+（第 ③ 层回传、IAP 都还没做 ✗）。
+
+### 它只做三件事 ✓
+
+| # | 行为 | 判据（不用仪器） |
+|---|---|---|
+| ① | 上电自检：板载 `WS2812B-1010` 白光闪 **3 次** | 闪 ⇒ MCU 起来 ＋ 5 V 在 ＋ 灯能点亮 ✓ |
+| ② | 采 `PD6`（`A6` = `ADC_IN6`）：**16 采样 → 12-bit**（0…4092） | — |
+| ③ | 读数显示在灯上：**颜色 = 档位、亮度 = 档内大小**（≈2 Hz） | 蓝 <120 mV ／ 青 <400 ／ 绿 <1000 ／ 橙 <2000 ／ 红 ≥2000 ✓ |
+
+读数 ≈ 0 时灯会灭 ⇒ 所以**每秒给一次暗白心跳**（20/255、10 ms）✓ —— 否则分不清「没信号」和「没在跑」✗。
+
+### 关键取值与出处 ✓（✗ 一个都没猜）
+
+| 项 | 值 | 出处 |
+|---|---|---|
+| 时钟 | **HSI 24 MHz，不配 PLL** | 复位默认；EVT `system_ch32v00x.c` 缺省分支同此 ✓ |
+| `SPI1` | `PCLK2/4` = **6 MHz** | `SPI_BaudRatePrescaler_4 = 0x0008` ✓ |
+| WS2812 位 → SPI | **8 个 SPI 位拼 1 位**（`'0'=0xC0`、`'1'=0xF8`）| 6 MHz ⇒ 1.33 µs/位、T0H 0.33 / T1H 0.83 µs，都在容差内 ✓ |
+| ADC 时钟 | `PCLK2/2` = **12 MHz** | `ADCPRE` 复位值 ÷2 ✓ ⇒ 正好是数据手册 ADC 特性的标定点 ✓ |
+| 采样时间 | **241 周期**（≈20 µs）| `R1 = 10 kΩ` 源阻抗高 ✓ |
+| 代码区 | **0x00000000**（不是 0x08000000 ✗）| EVT `Link.ld` ✓ |
+
+### 编译产物 ✓（实测 2026-11-06 ✓）
+
+```
+text = 1168 B ／ data 0 ／ bss 0        ⇒ build/min-bringup.hex
+入口 0x00000000: j reset ✓｜0x08 起 60 个 trap ✓｜sp = 0x20000800 ✓｜csrw mtvec ✓｜jal main ✓
+```
+
+工具链 = MounRiver Studio 2 自带的 `riscv-wch-elf-gcc`；`build.bat` 会自动找到它 ✓
+（✗ 不依赖 WCH SDK、不依赖仓库外文件 ✗ —— `regs.h` / `startup.S` / `ch32v003.ld` 都是自己写的 ✓）。
+
+### 怎么烧 ✓
+
+接线照 **§六十六**（`DIO` + `5V0` + `GND` 三根）✓；`WCH-LinkUtility` 目标选 **CH32V003**、
+接口 **SWIO** ✓，目标文件选 `build\min-bringup.hex` ✓，**先上电再点连接** ✓。
+烧完应当是「白光闪 3 次 ⇒ 之后按读数显示」✓。
+
+### 刻意不做 ✗（都在下一手）
+
+| # | 没做 | 原因 |
+|---|---|---|
+| 1 | **数字读数出口（UART）** | 这块板**没有把 UART 引到能探的地方** ✗：`PD5`(=UTX) 与 `PD6` 同在 `RC` 节点 ✓、`PD2`(=DATA_OUT) 无 USART 复用 ✓ ⇒ 只能「灯看」＋ 万用表量 `pin16I` ✓ |
+| 2 | 链上收发（`bus-protocol.md`）、IAP | 台架最小件 ✓ |
+| 3 | 基线/零点（用 `PD5` 开漏放电） | 本轮 `PD5` 只设成**高阻模拟输入** ✓（它与节点直连，✗ 绝不能当输出推 ✗）|
+| 4 | `Vrefint` 基准、看门狗 | 先要「有信号 / 没信号」这个判断 ✓ |
+
+★ **一个用法要点** ✓：**绝对数值用万用表**量 `pin16I`（RC 节点）✓；
+固件那盏灯用来确认「**ADC 看到的是同一件事、并且随距离变化**」✓ ——
+若 DMM 读数与灯的档位对不上（比如 DMM 1.2 V 而灯是蓝 ✗）⇒ 那才是固件/ADC 的问题 ✓。
+
+**详细说明（含「数字从哪来」逐条出处、怎么验证产物）** ⇒
+[`firmware/min-bringup/README.md`](firmware/min-bringup/README.md) ✓
+
+
 
 
