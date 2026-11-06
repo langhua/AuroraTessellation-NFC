@@ -35,8 +35,7 @@ SIZE    := $(TC_DIR)/$(PREFIX)size$(EXE)
 # rv32ec = 只有 16 个寄存器 + 压缩指令（CH32V003 的核）；e 系列必须 ilp32e
 ARCH := -march=rv32ec -mabi=ilp32e -msmall-data-limit=0 -mno-save-restore
 CFLAGS  := $(ARCH) -Os -ffreestanding -fno-common -fno-builtin -Wall -Wextra -I src
-LDFLAGS := $(ARCH) -T ld/ch32v003.ld -nostartfiles -nostdlib -Wl,--gc-sections \
-           -Wl,-Map=$(BUILD)/$(TARGET).map
+LDFLAGS := $(ARCH) -T ld/ch32v003.ld -nostartfiles -nostdlib -Wl,--gc-sections
 
 SRCS := src/startup.S src/main.c
 HDRS := src/regs.h ld/ch32v003.ld
@@ -45,12 +44,23 @@ all: $(BUILD)/$(TARGET).hex
 
 $(BUILD)/$(TARGET).hex: $(SRCS) $(HDRS)
 	$(MKDIR)
-	"$(CC)" $(CFLAGS) $(LDFLAGS) -o $(BUILD)/$(TARGET).elf $(SRCS) -lgcc
+	"$(CC)" $(CFLAGS) $(LDFLAGS) -Wl,-Map=$(BUILD)/$(TARGET).map -o $(BUILD)/$(TARGET).elf $(SRCS) -lgcc
 	"$(OBJCOPY)" -O ihex   $(BUILD)/$(TARGET).elf $(BUILD)/$(TARGET).hex
 	"$(OBJCOPY)" -O binary $(BUILD)/$(TARGET).elf $(BUILD)/$(TARGET).bin
 	@"$(SIZE)" $(BUILD)/$(TARGET).elf
 
+# ── 万用表探针版（2026-11-07 ✓）：PC6 当普通输出翻 1 Hz，完全不碰 SPI ──
+# 用途：在“灯已经不可信”的时候，用表判断 MCU 到底有没有在跑 / 引脚能不能推挽输出。
+# ✗ 会覆盖正常固件，测完请重新烧子 $(BUILD)/$(TARGET).hex ✗
+probe: $(BUILD)/$(TARGET)-probe.hex
+
+$(BUILD)/$(TARGET)-probe.hex: src/startup.S src/probe.c $(HDRS)
+	$(MKDIR)
+	"$(CC)" $(CFLAGS) $(LDFLAGS) -Wl,-Map=$(BUILD)/$(TARGET)-probe.map -o $(BUILD)/$(TARGET)-probe.elf src/startup.S src/probe.c -lgcc
+	"$(OBJCOPY)" -O ihex $(BUILD)/$(TARGET)-probe.elf $(BUILD)/$(TARGET)-probe.hex
+	@"$(SIZE)" $(BUILD)/$(TARGET)-probe.elf
+
 clean:
 	$(RMDIR)
 
-.PHONY: all clean
+.PHONY: all clean probe

@@ -68,6 +68,7 @@
 ```bat
 build.bat            ← 推荐：自动找 MounRiver Studio 2 自带的 RISC-V gcc
 make                 ← 工具链已在 PATH 时
+make probe           ← 万用表探针版：PC6 当普通输出翻 1 Hz（build/min-bringup-probe.hex）
 make clean
 ```
 

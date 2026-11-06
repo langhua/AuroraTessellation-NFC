@@ -44,6 +44,11 @@
 #define GPIOC_CFGLR    REG32(GPIOC_BASE + 0x00)
 #define GPIOD_CFGLR    REG32(GPIOD_BASE + 0x00)
 
+/* 位设置/清除寄存器（CH32V00x：BSHR 0x10 置位、BCR 0x14 清零）——
+ * 只给 src/probe.c（万用表探针版）用：PC6 当普通输出翻 1 Hz ✓ */
+#define GPIOC_BSHR     REG32(GPIOC_BASE + 0x10)
+#define GPIOC_BCR      REG32(GPIOC_BASE + 0x14)
+
 /* CFGLR 里每根脚 4 位：低 2 位 = MODE，高 2 位 = CNF；脚 n 在 bit[4n+3:4n] */
 #define GPIO_CFG_SHIFT(pin)   (4u * (pin))
 /* 常用组合（MODE: 00=输入 10=输出2MHz 11=输出50MHz；CNF 在输入时: 00=模拟 01=浮空 10=上下拉；在输出时: 00=推挽 10=复用推挽） */
