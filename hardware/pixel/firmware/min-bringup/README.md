@@ -52,7 +52,14 @@
 | ADC 时钟 = `PCLK2/2` = **12 MHz** | `CFGR0` 的 `ADCPRE` 复位值 = ÷2 ✓ ⇒ 正好落在数据手册 ADC 特性表的标定点（`fADC = 12 MHz` 那一列）✓ |
 | 采样时间 = **241 周期**（≈20 µs） | `ADC_SampleTime_241Cycles = 0x07`（`ch32v00x_adc.h`）✓ —— `R1 = 10 kΩ` 源阻抗偏高，采样窗给足 ✓ |
 | `EOC` = `STATR` bit1、`SWSTART` = `CTLR2` bit22、`CAL/RSTCAL` = bit2/bit3 | `ch32v00x_adc.c` 里的宏值 ✓ |
-| `TXE` = `STATR` bit1、`BSY` = bit7、`SSM` = bit9、`SSI` = bit8、`SPE` = bit6 | `ch32v00x_spi.h` 的 `SPI_I2S_FLAG_*` / `SPI_NSS*` ✓ |
+| `TXE` = `STATR` bit1、`SSM` = bit9、`SSI` = bit8、`SPE` = bit6 | `ch32v00x_spi.h` 的 `SPI_I2S_FLAG_*` / `SPI_NSS*` ✓ |
+| 锁存 = **固定延时 1 ms**（✗ **不看 `BSY`**） | 24 位 × 1.33 µs ≈ 32 µs ✓ ⇒ 1 ms 有 30 倍余量。`BSY` = `STATR` bit7 虽然存在，但**死等它会整片卡住**（2026-11-07 实测 ✓）|
+
+> ★ **锁存不要写 `while (SPI1_STATR & SPI_STATR_BSY)`**（2026-11-07 实测踩到 ✗）：
+> 症状是**灯停在自检第一帧的满亮度白、再也不动** —— 看起来和「MCU 根本没跑」一模一样 ✗，
+> 实际是 24 位已经发出去了、程序死在等那个状态位。`TXE` 只保证发送缓冲空，
+> 最后一位还要 ≤1.33 µs 才移出去，用固定延时覆盖就够 ✓。
+> ⇒ **凡是「死等某个外设状态位」的地方，都要先问一句：它不清零我会不会永远卡在这。**
 | Flash 起点 **0x00000000**、16 K；RAM **0x20000000**、2 K | EVT `Ld/Link.ld` ✓（CH32V003 的代码区就在 0，**不是** 0x08000000 ✗）|
 
 ## 4. 怎么编
