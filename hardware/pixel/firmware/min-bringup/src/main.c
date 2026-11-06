@@ -2,10 +2,15 @@
  * pixel-min-bringup —— 像素板「台架第 ③ 步」最小固件
  *
  * 做什么（只做三件，不多做）：
- *   ① 上电自检：板载 WS2812B-1010（`LED2`，数据在 `PC6` = SPI1_MOSI）白光闪 3 次
- *      ⇒ 证明「MCU 活着 + 5 V 在 + 这颗灯能点亮」✓
- *   ② 采 `PD6`（= A6 = ADC_IN6）：16 次 10-bit 采样累加后 >>2 ⇒ 12-bit（0…4092）
- *   ③ 把读数**显示在灯上**：颜色 = 档位、亮度 = 档内大小
+ *   ① 上电自检：板载 WS2812B-1010（`LED2`，数据在 `PC6` = SPI1_MOSI）**满亮度**白光闪 3 次
+ *      ⇒ 证明「MCU 活着 + SPI 时序对 + 这颗灯能点亮」✓
+ *      ★ 必须排在 `adc_init()` **之前**：自检的意义就是不依赖别的模块，
+ *        而 ADC 那两步里有两处死等（等 RSTCAL/CAL 清零、等 EOC）✓
+ *   ② 自检完立刻挂「我活着」的**常亮暗白**；没信号时一直保持
+ *      ⇒ **全黑 = 没跑起来**；**暗白常亮 = 一切正常、只等信号** ✓
+ *         （灯只有 1.0×1.0 mm，一闪而过的弱光会看漏 ⇒ 不许再用短闪/低占空当指示 ✗）
+ *   ③ 采 `PD6`（= A6 = ADC_IN6）：16 次 10-bit 采样累加后 >>2 ⇒ 12-bit（0…4092），
+ *      并把读数**显示在灯上**：颜色 = 档位、亮度 = 档内大小
  *      ⇒ 不接任何仪器就能看出「有没有信号 / 随距离怎么变」✓
  *
  * 不做（故意留到下一步）：链上收发（`bus-protocol.md`）、IAP、基线标定。
@@ -167,25 +172,30 @@ static uint8_t scale8(uint8_t c, uint8_t lv)
     return (uint8_t)(((uint16_t)c * lv) >> 8);
 }
 
-/* 心跳/刷新节拍：主循环 ≈500 ms 一圈 ⇒ 2 圈 ≈1 s */
-#define BEAT_ITERS 2u
+/* 「活着但还没读数」的常亮暗白：40/255 ≈ 16%
+ * 全黑 = 没跑起来 / 灯这路坏；暗白常亮 = MCU + SPI + 灯三样全对 ✓ */
+#define ALIVE_LV 40u
 
 /* ───────────────────────── main ───────────────────────── */
 int main(void)
 {
     spi_init();
+
+    /* ① 上电自检：满亮度白光闪 3 次（200/255、各 200 ms，够亮够久，看不错）
+     * ★ 排在 adc_init() 之前 —— 自检不许被别的模块卡住 ✓ */
+    for (uint8_t i = 0; i < 3; i++) {
+        ws_rgb(200, 200, 200);
+        delay_ms(200);
+        ws_rgb(0, 0, 0);
+        delay_ms(200);
+    }
+
+    /* ② 自检完立刻亮起「活着」的暗白，一直保持到有读数为止 */
+    ws_rgb(ALIVE_LV, ALIVE_LV, ALIVE_LV);
+
     adc_init();
     (void)adc_once();   /* 使能后的第一次转换丢掉 */
 
-    /* ① 上电自检：白光闪 3 次 */
-    for (uint8_t i = 0; i < 3; i++) {
-        ws_rgb(60, 60, 60);
-        delay_ms(60);
-        ws_rgb(0, 0, 0);
-        delay_ms(240);
-    }
-
-    uint16_t beat = 0;
     for (;;) {
         /* 每圈开头采样：离上一次 LED 刷新（`ws_latch` 之后）已过 ≥500 ms
          * ⇒ 刷新瞬间 VDD 的那一下跌落早没了（节点 τ = R1·C1 = 1 ms）✓ */
@@ -193,15 +203,9 @@ int main(void)
         uint32_t mv   = code_to_mv(code);
 
         if (mv < 20u) {
-            /* 读数≈0：灯灭就看不出「有没有在跑」⇒ 每秒给一次暗白心跳（1% 占空，不烦人） */
-            if (++beat >= BEAT_ITERS) {
-                beat = 0;
-                ws_rgb(20, 20, 20);
-                delay_ms(10);
-                ws_rgb(0, 0, 0);
-            }
+            /* 读数≈0：保持常亮暗白（不闪、不灭 ⇒ 不会看漏） */
+            ws_rgb(ALIVE_LV, ALIVE_LV, ALIVE_LV);
         } else {
-            beat = 0;
             rgb_t   c  = band_color(mv);
             uint8_t lv = level_of(mv);
             ws_rgb(scale8(c.r, lv), scale8(c.g, lv), scale8(c.b, lv));
