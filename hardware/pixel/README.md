@@ -8532,7 +8532,7 @@ py -3.13 -X utf8 _work\make_flash.py pixel-pcb-v94.fzz pixel-flash-v94.fzz --app
 py -3.13 -X utf8 F:\git\fritzing-parts-langhua\tools\bb_precheck.py pixel-flash-v94.fzz
 ```
 
-## 六十七、`NFC-Coil` 改件（面包板 = PCB）⇒ **`pixel-flash-v95.fzz`** ✓（2026-11-06 ✓）
+## 六十七、`NFC-Coil` 改件（面包板 = PCB）⇒ **`pixel-flash-v95.fzz`（内容 = 用户手改版）** ✓（2026-11-06 ✓）
 
 ### 为什么要升一版
 
@@ -8541,46 +8541,51 @@ py -3.13 -X utf8 F:\git\fritzing-parts-langhua\tools\bb_precheck.py pixel-flash-
 间距 **7.40 mm**，OD 1.6 / 孔 0.6）。而 v94 里线圈是**插在面包板上**的（老件两针
 **17.78 mm = 7 格**，插在 `pin1E` / `pin8E`）。`.fzz` 里的元件是**随包内嵌**的 ⇒ 必须出一版新图。
 
-### 改了什么
+### 分两步：我出的 v95 → 用户手改版（定稿）
 
-| 项 | v94 | v95 |
+| 步 | 文件 | 线圈怎么接 |
 |---|---|---|
-| 内嵌元件 | 老 `NFC-Coil` | 新 `NFC-Coil`（面包板 ＋ icon）|
-| 线圈与面包板 | 插 `pin1E` / `pin8E` | **不插孔**：两根导线直接接到它的两个焊盘 |
-| `Wire90015711`（`COIL_A`）| 插 `pin1C`，再经 `Wire90015712` / `Wire90015713` 两段折线到 `pin12G` | 改接线圈**内圈焊盘**，**一条直线**直连 `pin12G`（原来那两段折线删掉也合并进来）|
-| `Wire90015714`（`COIL_B`）| 插 `pin8B` | 改接线圈**外圈焊盘** → `pin14B`（一条直线）|
-| 线圈实例位置 | `(6.98, 60.4488)` | `(6.98, 54.60)`（上移 1.65 mm，让 `pin9C` 的结点避开板边）|
+| ① 我出 | `pixel-flash-v95.fzz`（初版）| 线圈**不插孔**，两根线从焊盘接出（内圈→`pin12G`、外圈→`pin14B`，各一条直线）|
+| ② 用户手改 | `pixel-flash-v95_byHand.fzz`（草稿；`*_byHand.fzz` 在 `.gitignore` 里，不入库）| 线圈**转 90° 插在 `pin6E` / `pin6F`**（跨板中缝），内圈焊盘再一根直线接到 `pin12G` |
+| ③ **交付** | **`pixel-flash-v95.fzz`**（= ② 的内容，只把内部 `.fz` 改回 `pixel-flash-v95.fz`）| 同 ② |
 
-★ **线型** ✓（用户 2026-11-06）：线圈两根线都是**一根直线**，不拐弯 ✗ ——
-`COIL_A`：内圈焊盘 `(64.74, 100.66)` → `pin12G` `(117, 90)`；
-`COIL_B`：外圈焊盘 `(90.96, 100.66)` → `pin14B` `(135, 153)`。
-（`COIL_A` 原来是 3 段串起来、中间 2 个 90° 拐弯 ✗；现在并成 1 根 ⇒ 直线上只有 50 段导线）
+★ ② 为什么能插 ✓：`pin6E` 属 `bus6A-E`、`pin6F` 属 `bus6F-J` —— **两条 bus 不同** ⇒ 线圈两端不会短接 ✓；
+两孔相距 **7.62 mm**、件自身两针 **7.40 mm** ⇒ **必有一针偏 0.22 mm**（`bb_precheck` 的 0.60 mm 口径 ✓ 过；
+`render_bb` 的 0.10 mm 自检会报“悬空”，那是它的严格口径 ✗ 不是错）。
 
-★ **为什么不能继续插** ✗：新件两针在板子的**竖直中线**，24 mm 的板从针线上下各铺 12 mm；
-而一条 5 孔 bus 只有 **10.16 mm** 高（实测 `pin1E` → `bus1A-E`、`pin1C` → `bus1A-E`、
-`pin8B` → `bus8A-E`）⇒ **线圈插到哪儿，它那两条 bus 就整条被板子盖住**，`COIL_A` / `COIL_B`
-的线没有孔可插 ✓。
+★ ② 里内圈脚**既插 `pin6F` 又接 `Wire90015711`** ⚠ —— 违反 §5b-8「一个脚只能插孔或接线，二选一」；
+但 `pin6F` 那条 bus（6F…6J）**整条都在圈线板底下**，板外没有空孔可挪 ⇒ 保留这一处
+（当作“线焊在焊盘上”）。
 
-### 判据（都在 `pixel-flash-v95.fzz` 上跑 ✓）
+### 清理（2026-11-06 ✓）
+
+手改版里 `L1` 的 `schematicView` 还留着 **v94 的两条旧插接 `pin1E` / `pin8E`**（面包板上也各有一条反向记录），
+而线圈早已搬到第 6 列 ⇒ 这两颗孔被误标成“线圈占着”，且 `pin8E`(81,126) 正好在圈线板底下。
+已删掉这 4 条（`<connect>` 792 → 788）⇒ **圈线板底下的“已用孔”只剩它自己的 `pin6E` / `pin6F`** ✓。
+
+### 判据（都在交付件 `pixel-flash-v95.fzz` 上跑 ✓）
 
 | 判据 | 结果 |
 |---|---|
-| `bb_precheck` | **✓ 允许布线**（①–⑦ 全 ✓；⑦ 量到 **3 处接线，最大 0.000 mm**）|
-| `bb_probe --nets=pixel_nets.py` | **✓ 与项目数据一致**（**11/12** 张网连通成一片；`EXPECT` 点名 **40/40** 只脚都在图上；声明 266 条）|
-| 导线段数 | **50**（合并前 52）|
-| 线圈板底下压住的**已用孔** | **0 个**（板 rect：x 10.52..95.56 / y 58.14..143.18；全图用孔 95 个）|
+| `bb_precheck` | **✓ 允许布线**（①–⑦ 全 ✓；⑦ 1 处接线 0.000 mm；用孔 **57**）|
+| `bb_probe --nets=pixel_nets.py` | **✓ 与项目数据一致**（**11/12** 张网连通成一片；`EXPECT` **40/40** 只脚；声明 262 条）|
+| 导线 | **47 段** |
+| 线圈板底下压住的**已用孔** | **2 个 = 它自己的 `pin6E` / `pin6F`**（板 rect：x 21.75..103.91 / y 45.96..128.46）|
 
 [![pixel-flash-v95 的面包板视图](pixel-flash-v95_bb.svg)](pixel-flash-v95_bb.svg)
 
-*上图 = `pixel-flash-v95.fzz` 的**面包板视图** ✓ —— 线圈仍摆在左边，两根线从它的两个焊盘接出：
-`COIL_A` 从内圈焊盘一条直线到 `pin12G`（跨过线圈 ✓，那处交叠是**故意的**），`COIL_B` 从外圈焊盘一条直线到 `pin14B` ✓。*
+*上图 = **`pixel-flash-v95.fzz`（用户手改版）** 的面包板视图 ✓ —— 线圈在第 6 列跨中缝插着，
+内圈焊盘一根直线接到 `pin12G`；右侧是 `WCH-LinkE`。*
 
 **复现** ✓：
 
 ```bat
-py -3.13 -X utf8 _work\nfc\make_v95.py
+py -3.13 -X utf8 _work\nfc\make_v95.py          & rem ① 我出的 v95
+py -3.13 -X utf8 _work\nfc\fix_byhand2.py       & rem 清掉手改版里的 pin1E / pin8E 两条旧插接
+py -3.13 -X utf8 _work\nfc\publish_v95.py       & rem 手改版 → 交付件 pixel-flash-v95.fzz
 py -3.13 -X utf8 F:\git\fritzing-parts-langhua\tools\bb_precheck.py pixel-flash-v95.fzz
 py -3.13 -X utf8 F:\git\fritzing-parts-langhua\tools\bb_probe.py pixel-flash-v95.fzz --nets=pixel_nets.py
+py -3.13 F:\git\fritzing-parts-langhua\tools\render_bb.py pixel-flash-v95.fzz pixel-flash-v95_bb.png
 ```
 
 
