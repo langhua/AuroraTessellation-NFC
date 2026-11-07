@@ -49,7 +49,7 @@ void ws_init(void)
 }
 
 /* 8 位，MSB 先出 */
-static void ws_send_byte(uint8_t b)
+void ws_send_byte(uint8_t b)
 {
     for (uint8_t m = 0x80u; m != 0u; m >>= 1) {
         if (b & m) {

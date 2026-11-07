@@ -70,7 +70,17 @@ $(BUILD)/$(TARGET)-probe2.hex: src/startup.S src/probe2.c $(HDRS)
 	"$(OBJCOPY)" -O ihex $(BUILD)/$(TARGET)-probe2.elf $(BUILD)/$(TARGET)-probe2.hex
 	@"$(SIZE)" $(BUILD)/$(TARGET)-probe2.elf
 
+# ── 逻辑分析仪探针（2026-11-07 ✓）：PC6 上**连续不停**发 0xA5 的 WS2812 位流 ──
+# 正常固件 0.5 s 才发 32 µs，分析仪碰不上；这一版一直在发，随时采集都有波形。
+probe3: $(BUILD)/$(TARGET)-probe3.hex
+
+$(BUILD)/$(TARGET)-probe3.hex: src/startup.S src/probe3.c src/ws2812_gpio.c $(HDRS)
+	$(MKDIR)
+	"$(CC)" $(CFLAGS) $(LDFLAGS) -Wl,-Map=$(BUILD)/$(TARGET)-probe3.map -o $(BUILD)/$(TARGET)-probe3.elf src/startup.S src/probe3.c src/ws2812_gpio.c -lgcc
+	"$(OBJCOPY)" -O ihex $(BUILD)/$(TARGET)-probe3.elf $(BUILD)/$(TARGET)-probe3.hex
+	@"$(SIZE)" $(BUILD)/$(TARGET)-probe3.elf
+
 clean:
 	$(RMDIR)
 
-.PHONY: all clean probe probe2
+.PHONY: all clean probe probe2 probe3
