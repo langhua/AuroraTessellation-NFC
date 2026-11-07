@@ -134,7 +134,19 @@ def build_ruler(svg):
                 _cx2 = float(el.get("x")) + float(el.get("width") or 0) / 2.0
                 _cy2 = float(el.get("y")) + float(el.get("height") or 0) / 2.0
                 term_c[_cid] = apply(m2, _cx2, _cy2)
-                _pt = apply(m2, float(el.get("x")), float(el.get("y")))
+                # ★★★ 2026-11-08 ✓ **端子方块取「中心」** ✗✓（用户报「接线位置是错误的」✓）
+                #   ✗ 病（实测 ✓ 硬证据）：原来这里取的是方块的**左上角** ✗
+                #     `SOD-323` 的 `connector0terminal` = `<rect x="3.801" y="20.6785"
+                #     width="0.688" height="1.135"/>` ✓、真脚点在 **中心 (4.145, 21.246)** ✓
+                #     （= `connector0pin` 的 y1 ✓）；左上角 ×1.25 + 锚点(95,-75) = **(99.751,-49.152)** ✓
+                #     —— 与布线器实际用的位置**分毫不差** ✓ ⇒ `D4.connector0` 的线**接在端子的角上**
+                #     而不是脚点上 ✗ ⇒ `check_netlist` 报「`5V` 被拆成 2 段：D4.connector0」✗。
+                #   ★ 语义（Fritzing 源码 ✓ `fsvgrenderer.cpp` `calcTerminalPoint()`）：
+                #     连的是**端子元素的包围盒中心** ✓ —— 本仓 AGENTS §5 也是这么写的 ✓
+                #     （“端子的包围盒中心必须落在引脚线外端”✓）。
+                #   ★ 为什么以前没炸 ✗：多数件的端子是**极小/零尺寸** ✓ ⇒ 角与中心重合 ✓；
+                #     这只件是 **0.688×1.135** 的实心方块 ✓ ⇒ 偏 (−0.344,−0.567) 单位 = **0.19mm** ✗。
+                _pt = apply(m2, _cx2, _cy2)
             elif not _is_term:
                 _ends = _segs_of(el)
                 if _ends and _cid in term_c:
@@ -1542,6 +1554,20 @@ def pin_normal(px, py, bb):
         return (0.0, -1.0)
     if abs(py - bb[3]) < 1.0:
         return (0.0, 1.0)
+    # ★★ 2026-11-08 ✓ **兜底：脚落在盒「内部」**（不是贴在边上）✗
+    #   ✗ 病（实测 ✓）：`D4.connector0` 在 **(99.751,-49.152)** ✓，而它的本体盒下缘是 **-47.73** ✗
+    #     ⇒ 差 **1.42 > 1.0** ⇒ 四条边都不算 ⇒ 法线 `(0,0)` ✗
+    #     ⇒ `esc_cands` **一条出脚候选都生成不出来** ✗ ⇒ 只能走兜底候选 ✗
+    #     ⇒ `check_netlist` 报「`5V` 被拆成 2 段：D4.connector0」✗（图上看着有根线，其实没接上 ✗）。
+    #   ✓ 兜底口径：**从盒心指向脚**的方向、取主轴 ✓（= “从肚子里往外” ✓）——
+    #     ✗ 不知道法线就**不给出脚**，比“给一个可能错的方向”更糟 ✓：那个脚会**一条线都不生成** ✗。
+    #   ★ 只在“贴边判据全不中”时才走这里 ✓ ⇒ 正常件的行为**一个字不变** ✓。
+    _cx, _cy = (bb[0] + bb[2]) / 2.0, (bb[1] + bb[3]) / 2.0
+    _dx, _dy = px - _cx, py - _cy
+    if abs(_dx) > abs(_dy) + 1e-9:
+        return (1.0 if _dx > 0 else -1.0, 0.0)
+    if abs(_dy) > 1e-9:
+        return (0.0, 1.0 if _dy > 0 else -1.0)
     return (0.0, 0.0)
 
 
@@ -5376,23 +5402,57 @@ def main(argv):
                 _sits_here = {}
                 for (_x7, _r7, _c7, _y7) in _sit:
                     if abs(_y7 - _y) < 0.6:
-                        _sits_here[round(_x7, 4)] = (_r7, _c7)
+                        # ★★ 2026-11-08 ✓ **同一个 x 上可以有**多只脚 ✗
+                        #   ✗ 病（实测 ✓）：原来是 `_sits_here[x] = (ref,cid)` ✗ ——**字典按 x 作键**
+                        #     ⇒ 第二只脚把第一只**盖掉** ✗✗
+                        #     实测（`RAILDBG=GND` ✓）：`177.3280` 上坐着 **`C1.connector1`** 与
+                        #     **`@90012780.connector0`（Ground1）** 两只 ✓ ⇒ 只剩后者被声明 ✗
+                        #     ⇒ `check_netlist` 报「`GND` 少了 `C1.connector1`」✗
+                        #     —— 图上它明明**正压在轨线上** ✓（又一次“看着接上、其实没声明”）。
+                        #   ✓ 改成**列表** ✓，建段时把同名次的脚分给断点**两侧**（见下 ✓）。
+                        _sits_here.setdefault(round(_x7, 4), []).append((_r7, _c7))
+                _pool = {k: list(v) for k, v in _sits_here.items()}
                 _idx = [0]
                 for _k8 in range(1, len(_path) - 1):
                     if round(_path[_k8][0], 4) in _sits_here:
                         _idx.append(_k8)
                 _idx.append(len(_path) - 1)
+                # ★★ 2026-11-08 ✓ 探针（`RAILDBG=<网>` ✓）：轨的落点 / 坐脚表 / 断点索引 ✓
+                #   用来回答「坐在轨上的脚**为什么没被声明**」✗（不许猜 ✓）。
+                if os.environ.get("RAILDBG") == net:
+                    print("      [rail] y=%.4f ｜ 落点 x=%s ｜ 坐脚表=%s ｜ 断点 idx=%s ｜ _sit=%s"
+                          % (_y, ["%.4f" % q[0] for q in _path],
+                             {"%.4f" % k: v for k, v in _sits_here.items()},
+                             _idx,
+                             ["%.4f,%s.%s" % (_a, _b, _c) for (_a, _b, _c, _d9) in _sit
+                              if abs(_d9 - _y) < 0.6]))
                 for _i8 in range(len(_idx) - 1):
                     _p8 = _path[_idx[_i8]:_idx[_i8 + 1] + 1]
                     if len(_p8) < 2:
                         continue
-                    _s8 = _sits_here.get(round(_p8[0][0], 4))
-                    _e8 = _sits_here.get(round(_p8[-1][0], 4))
+                    _s8 = (_pool.get(round(_p8[0][0], 4)) or [None])[0]
+                    if _s8:
+                        _pool[round(_p8[0][0], 4)].pop(0)
+                    _e8 = (_pool.get(round(_p8[-1][0], 4)) or [None])[0]
+                    if _e8:
+                        _pool[round(_p8[-1][0], 4)].pop(0)
                     segs.append({"a": _p8[0], "b": _p8[-1], "path": _p8,
                                  "from": ({"ref": _s8[0], "cid": _s8[1]} if _s8 else None),
                                  "to": ({"ref": _e8[0], "cid": _e8[1]} if _e8 else None),
                                  "mine": set(), "own_pins": set(),
                                  "net": net, "key": None, "fixed": True})
+                # ★ 2026-11-08 ✓ **不许静默** ✗：同一 x 上脚多于"断点两侧"能挂的数目时，
+                #   剩下的会**没有声明** ✗ ⇒ 必须点名报出来 ✓（否则又是“看着接上、其实没连” ✗）。
+                _left = [(k, v) for k, v in _pool.items() if v]
+                if _left:
+                    warn.append("%s 轨 y=%.1f：同一 x 上仍有 %d 只脚**没被声明** ✗ %s"
+                                % (net, _y, sum(len(v) for _, v in _left),
+                                   ["%.4f:%s" % (k, "、".join("%s.%s" % q for q in v))
+                                    for k, v in _left]))
+                    print("   ⚠ %s 轨 y=%.1f：同一 x 上还有 %d 只脚没声明 ✗ %s"
+                          % (net, _y, sum(len(v) for _, v in _left),
+                             ["%.4f:%s" % (k, "、".join("%s.%s" % q for q in v))
+                              for k, v in _left]))
                 _drawn.append(_y)
                 _rx[_y] = _x0r
 
