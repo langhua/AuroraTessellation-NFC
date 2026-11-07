@@ -3083,6 +3083,59 @@ def main(argv):
     #   **根本不画终端** ✗（只有一个 `<polygon>` + `<text>` ✓）⇒ 尺子里没有它的脚位 ✗；
     #   而它的连接点**也不在实例原点** ✗（实测偏 (12.5,4.5) ✓）。
     _noPin = [(k, d) for k, d in insts.items() if k.startswith("@") and not d.get("pins")]
+
+    # ★★★ 2026-11-08 ✓ **网标签的脚位：改用唯一实现 `sch_net.label_pin`** ✗✓
+    #   ✗ 病（实测 ✓，用户报「橙色绕的复杂」✓）：下面那段 `anchor_pins_from_orig()` 的判据是
+    #     「**原图里**该锚点接的导线端点中，离它自己原点最近的那个」✗ ——
+    #     而 `sch_lay.fzz` 是从上一版草图派生的 ✓ ⇒ 里面躺着**上一轮留下的旧导线** ✗
+    #     ⇒ **标签怎么挪，接点都跟着旧导线走** ✗✗
+    #     实测：标签已挪到 (90.977,-71.692) ✓，接点仍是 **(46.58,-8.93)** ✓
+    #     （= 旧锚点 (32.977,-19.692) ＋ (13.60,10.76) ✓）⇒ 橙色被迫从旧位置出发绕一大圈 ✗。
+    #   ✓ 正解 = **和接地符号一样**：走 `sch_net` 的**唯一实现** ✓
+    #     （`ground_pin` 早就是这么修的 ✓，见上面那条注释 ✓；网标签漏了 ✓）。
+    #     `label_pin(geom, text, m, go_left)` = 由**它自己的几何 + 方向属性**算出脚位 ✓
+    #     ⇒ 挪标签 ⇒ 接点跟着挪 ✓（不再有第二份坐标 ✓，AGENTS §15 同一条纪律 ✓）。
+    def _label_pin_of(_d):
+        r"""网标签的真脚点 ✓（`sch_net.label_pin` ✓）；非网标签 ⇒ None ✓"""
+        if not sch_net.is_label_module(_d.get("mid") or ""):
+            return None
+        _lc = _d.get("loc")
+        if _lc is None:
+            return None
+        _tx = _d.get("anchor") or _d.get("anchor_title") or "?"
+        _mm3 = sch_net.IDENT
+        _g3 = None
+        if _d.get("sub") is not None:
+            for _q3 in _d["sub"].iter("geometry"):
+                _g3 = _q3
+                break
+        if _g3 is not None:
+            for _c3 in _g3:
+                if (_c3.tag.split("}")[-1] == "transform"
+                        and _c3.get("m11") is not None):
+                    _mm3 = (float(_c3.get("m11")), float(_c3.get("m12")),
+                            float(_c3.get("m21")), float(_c3.get("m22")))
+                    break
+        _gl = False
+        if _d.get("el") is not None:
+            for _p3 in _d["el"].iter("property"):
+                if (_p3.get("name") or "").lower() == "direction":
+                    _gl = (_p3.get("value") or "").strip().lower() == "left"
+        return sch_net.label_pin((_lc[0], _lc[1]), _tx, _mm3, _gl)
+
+    if _noPin:
+        _left = []
+        for _k2, _d2 in _noPin:
+            _lp = _label_pin_of(_d2)
+            if _lp is None:
+                _left.append((_k2, _d2))
+                continue
+            _d2["pins"] = {"connector0": _lp}
+            print("   ✓ 网标签 **%s** 脚位走**唯一实现** `sch_net.label_pin` ✓ ⇒ (%.3f,%.3f) ✓"
+                  "（= 它自己的几何 ＋ 方向；✗ 不再从旧导线猜 ✗）"
+                  % (_d2.get("anchor_title"), _lp[0], _lp[1]))
+        _noPin = _left
+
     if _noPin and orig[0]:
         _op = anchor_pins_from_orig(orig[0], [str(d["mi"]) for _, d in _noPin])
         for _k2, _d2 in _noPin:
@@ -4075,6 +4128,19 @@ def main(argv):
                     continue                       # 压**别的网**的脚 ✗（自己的脚可以坐上去 ✓）
                 _picked = (_v, _n)
                 break
+            # ★★ 2026-11-08 ✓ **实验开关 `NO_RAIL_PICK`**：不自动加内部轨 ✓
+            #   ✗ 动机（实测 ✓）：自动加的 `5V` 内轨落在 **y=-44.5** ✓，离 `U1` 下沿脚行
+            #     （`y=-43.2`）只有 **1.3 单位 = 0.37 mm** ✗ ⇒ 沿那排脚走的线必然"线距不足" ✗
+            #     （v18 剩下的 2 对净距就是它 ✓）。
+            #   ★ 先**量**再决定改不改 ✗（本仓规矩 ✓：不许凭"应该更好"就动 ✓）。
+            #   ★★ 实测否证（2026-11-08 ✓，`v19` ✓）：不加内部轨 ⇒ **更差** ✗
+            #     穿体 0→**1** ✗、重叠 0→**1** ✗、净距 2→**3** ✗、总长 3916→**4399** ✗
+            #     （内部轨能把一批脚就近接上，去掉后它们只能退到包围盒外那两条 ✓ ⇒ 又长又挤 ✗）
+            #   ⇒ **保留自动加内部轨** ✓；本开关只留作**可复现的对照** ✓（默认关 ✓，零成本 ✓）。
+            if _picked and os.environ.get("NO_RAIL_PICK"):
+                print("   ⊘ `NO_RAIL_PICK`：**不采用**内部候选 y=%.1f ✓（实验 ✓，只用包围盒外那两条轨 ✓）"
+                      % _picked[0])
+                _picked = None
             if _picked:
                 rail_ys = list(rail_ys) + [_picked[0]]
                 print("   ★ 轨 y **加一条内部候选** ✓：y=%.1f ✓（该行有 %d 只本网的脚 ✓；"
