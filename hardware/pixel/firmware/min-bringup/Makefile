@@ -37,8 +37,8 @@ ARCH := -march=rv32ec -mabi=ilp32e -msmall-data-limit=0 -mno-save-restore
 CFLAGS  := $(ARCH) -Os -ffreestanding -fno-common -fno-builtin -Wall -Wextra -I src
 LDFLAGS := $(ARCH) -T ld/ch32v003.ld -nostartfiles -nostdlib -Wl,--gc-sections
 
-SRCS := src/startup.S src/main.c
-HDRS := src/regs.h ld/ch32v003.ld
+SRCS := src/startup.S src/main.c src/ws2812_gpio.c
+HDRS := src/regs.h src/ws2812.h ld/ch32v003.ld
 
 all: $(BUILD)/$(TARGET).hex
 

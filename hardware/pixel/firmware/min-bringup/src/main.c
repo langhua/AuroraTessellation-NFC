@@ -20,6 +20,7 @@
  *       ⇒ ADC 时钟 = PCLK2/2 = **12 MHz**（正好是数据手册 ADC 特性表的标定点）
  */
 #include "regs.h"
+#include "ws2812.h"
 
 /* ───────────────────────── 粗延时 ───────────────────────── */
 /* 24 MHz 下空循环约 12 个周期 ⇒ 1 ms ≈ 2000 次。只用于「几百毫秒」级，
@@ -33,68 +34,7 @@ static void delay_ms(uint32_t ms)
     }
 }
 
-/* ───────────────────────── WS2812B-1010 ───────────────────────── */
-/* 一个 WS2812 位用 8 个 SPI 位拼（SPI 6 MHz ⇒ 8 位 = 1.33 µs）：
- *   '0' → 11000000（高 0.33 µs / 低 1.00 µs）
- *   '1' → 11111000（高 0.83 µs / 低 0.50 µs）
- * 都在 WS2812B 的容差内（T0H 0.4±0.15、T1H 0.85±0.15、周期 1.25±0.6 µs）。 */
-#define WS_CODE_0 0xC0u
-#define WS_CODE_1 0xF8u
-
-static void ws_send_byte(uint8_t b)
-{
-    for (int8_t i = 7; i >= 0; i--) {
-        SPI1_DATAR = (b & (1u << i)) ? WS_CODE_1 : WS_CODE_0;
-        /* 等发送缓冲空。★ **带上限**：死等一个状态位，它一旦不按预期置位就整片卡死，
-         * 而现象与「MCU 根本没跑」完全一样 ✗（2026-11-07 被这一点误导两轮）*/
-        for (uint32_t t = 0; t < 40000u; t++) {
-            if (SPI1_STATR & SPI_STATR_TXE) {
-                break;
-            }
-        }
-    }
-}
-
-/* 锁存：等移位完成，再拉低 >280 µs（这期间 MOSI 一直是低 ⇒ 就是复位码）
- *
- * ★ 2026-11-07 改：**不再死等 `BSY`**。
- *   实测症状：灯停在自检**第一帧**的满亮度白（200/200/200）、再也不动
- *   ⇒ 说明那一帧 24 位确实发出去了，然后程序死在「等某个状态位」这行。
- *   位置只可能是这里：`ws_send_byte()` 里的 `TXE` 刚发成功过 3 次。
- *   `TXE` 只保证发送缓冲空，最后一位还要 ≤1.33 µs 才移出去；
- *   24 位 ≈ 32 µs ⇒ 固定延时 1 ms（30 倍余量）完全覆盖，不必看 `BSY`。
- *   代价：死等一个状态位，一旦它不按预期清零，整片就卡在这，
- *   而且现象与「MCU 根本没跑」完全一样 ✗ —— 收益远小于风险 ✓ */
-static void ws_latch(void)
-{
-    delay_ms(1);
-}
-
-/* 一颗灯：WS2812B 的时序是 G→R→B */
-static void ws_rgb(uint8_t r, uint8_t g, uint8_t b)
-{
-    ws_send_byte(g);
-    ws_send_byte(r);
-    ws_send_byte(b);
-    ws_latch();
-}
-
 /* ───────────────────────── 初始化 ───────────────────────── */
-static void spi_init(void)
-{
-    RCC_APB2PCENR |= RCC_APB2EN_IOPC | RCC_APB2EN_SPI1;
-
-    /* PC6 = SPI1_MOSI（数据手册表 2-2：PC6 默认复用就是 MOSI，不用 AFIO 重映射） */
-    GPIOC_CFGLR = (GPIOC_CFGLR & ~(0xFu << GPIO_CFG_SHIFT(6)))
-                | (GPIO_CFG_AF_PP_50M << GPIO_CFG_SHIFT(6));
-
-    SPI1_CTLR1 = 0;
-    SPI1_CTLR1 = SPI_CTLR1_MSTR                    /* 主机 */
-               | SPI_CTLR1_SSM | SPI_CTLR1_SSI     /* 软件 NSS，内部拉高（不然会进模式错） */
-               | SPI_CTLR1_BR_DIV4;                /* PCLK2/4 = 6 MHz；CPOL=0 CPHA=0、8 位、MSB 先出 */
-    SPI1_CTLR1 |= SPI_CTLR1_SPE;
-}
-
 static void adc_init(void)
 {
     RCC_APB2PCENR |= RCC_APB2EN_IOPD | RCC_APB2EN_ADC1;
@@ -194,7 +134,7 @@ static uint8_t scale8(uint8_t c, uint8_t lv)
 /* ───────────────────────── main ───────────────────────── */
 int main(void)
 {
-    spi_init();
+    ws_init();
 
     /* ① 上电自检：**红 → 绿 → 蓝**，各 150 ms（顺带验 GRB 色序）
      * ★ 第一帧**故意不用白**（2026-11-07 ✓）：白自检帧与「程序卡住时残留在灯上的白」

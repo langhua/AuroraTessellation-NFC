@@ -56,6 +56,7 @@
 /* 常用组合（MODE: 00=输入 10=输出2MHz 11=输出50MHz；CNF 在输入时: 00=模拟 01=浮空 10=上下拉；在输出时: 00=推挽 10=复用推挽） */
 #define GPIO_CFG_ANALOG       0x0u   /* MODE=00 CNF=00 ⇒ 模拟输入 */
 #define GPIO_CFG_OUT_PP_2M    0x2u   /* MODE=10 CNF=00 ⇒ 推挽输出 2 MHz */
+#define GPIO_CFG_OUT_PP_50M   0x3u   /* MODE=11 CNF=00 ⇒ 推挽输出 50 MHz */
 #define GPIO_CFG_AF_PP_50M    0xBu   /* MODE=11 CNF=10 ⇒ 复用推挽 50 MHz */
 
 /* ── ADC1（结构照 ADC_TypeDef：STATR 0x00、CTLR1 0x04、CTLR2 0x08、
