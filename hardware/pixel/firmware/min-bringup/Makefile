@@ -83,4 +83,8 @@ $(BUILD)/$(TARGET)-probe3.hex: src/startup.S src/probe3.c src/ws2812_gpio.c $(HD
 clean:
 	$(RMDIR)
 
-.PHONY: all clean probe probe2 probe3
+# 一次把正常固件 + 全部探针都编出来（★ `make clean` 会删掉整个 build/，
+# 包括探针 hex —— 所以清过之后请用 make probes 重编）
+probes: all probe probe2 probe3
+
+.PHONY: all clean probe probe2 probe3 probes
