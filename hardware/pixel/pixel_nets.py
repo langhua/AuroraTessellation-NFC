@@ -28,11 +28,13 @@ r"""像素板的**项目数据**（= 通用工具**不认识**、只属于这块
 NETS = {
     "COIL_A":   [("L1", "inner"), ("D3", "AC1")],
     "COIL_B":   [("L1", "outer"), ("D3", "AC2")],
-    "GND":      [("D3", "A1"), ("D3", "A2"), ("C1", "#2"), ("U1", "VSS"), ("C2", "#2"),
+    "GND": [("D3", "A1"), ("D3", "A2"), ("C1", "#2"), ("U1", "VSS"), ("C2", "#2"),
                  ("LED2", "GND"), ("J1", "#2"), ("J2", "#2"),
      # ★ 裸焊盘/底板必须接地（2026-09-26 用户定 ✓）：原来写成"独立成网、单脚网无线"是错的 ✗
      #   —— EPAD 要**接到 GND** ✓（原理图上就接过来 ✓；元件库里它仍是独立脚 ✓ 见 AGENTS §5 ✓）
-                 ("U1", "EPAD")],
+                 ("U1", "EPAD"),
+     # ★ v0.1.3：`TP3` = 就近地测试点 ✓（分析仪/表笔的地直接夹它 ✓）
+                 ("TP3", "PAD")],
     "BR+":      [("D3", "C1"), ("D3", "C2"), ("R1", "#1")],
     # ★★ 2026-10-09 用户按 **PCB 布线需要**换了三只脚 ✓（手改版 `_work/v76_byHand.fzz` ✓，
     #   核实见 README §五十四 ✓）：`RC` 的 ADC 输入 **`PA1(ADC_IN1)` ⇒ `PD6(ADC_IN6)`** ✓
@@ -51,6 +53,10 @@ NETS = {
     #     ④ 上拉 `R2` = 4.7 kΩ 挂在**电缆侧**（`DATA_IN_C` ✓）—— 800 kHz 下 10 kΩ 上升太慢 ✗
     "RC":       [("R1", "#2"), ("C1", "#1"), ("U1", "PD6"),
                  ("D4", "anode"), ("U1", "PD5")],
+    #   ★★ 2026-11-07 升 **v0.1.3** ✓（用户定 ✓）：只加**三个测试点**（不打孔、顶面铜盘 ✓）
+    #     `TP1`=`SWIO`（`PD1`，烧录必须引出来 ✓）、`TP2`=`PC6`（`LED_DIN`，逻辑分析仪夹这里 ✓）、
+    #     `TP3`=`GND`（就近地 ✓）。元件用库里的 `NetLabel-Pad`（单脚 `PAD`，
+    #     PCB 上是 ⌀2 mm 焊盘 / 孔 ⌀0.97 mm ✓）—— 让“原理图—丝印—焊盘”三处名字一致 ✓
     "5V":       [("U1", "VDD"), ("C2", "#1"), ("LED2", "VDD"), ("J1", "#1"), ("J2", "#1"),
                  ("D4", "cathode"), ("R2", "#2")],
     "DATA_IN":  [("U1", "PC1"), ("R3", "#1")],
@@ -60,8 +66,9 @@ NETS = {
     "DATA_OUT_C": [("R4", "#2"), ("J2", "#3")],
     #   ★ `SWIO` 在面包板/原理图上是**单脚网** ✓（那一根线接的是测试点/过孔 ✓）——
     #     ✗ 它不是"忘了接线" ✗：见 `pixel-netlist.md` 与 README §五十九 ✓
-    "SWIO":     [("U1", "PD1")],
-    "LED_DIN":  [("U1", "PC6"), ("LED2", "DI")],
+    #     ★ v0.1.3：测试点 `TP1` 挂上来了 ✓（原来只有一根线、没有实体焊盘 ✗）
+    "SWIO":     [("U1", "PD1"), ("TP1", "PAD")],
+    "LED_DIN":  [("U1", "PC6"), ("LED2", "DI"), ("TP2", "PAD")],
 }
 
 # ── 电源网（**按网分宽**用 ✓，2026-09-30 用户定 ✓）────────────────────────────
@@ -111,7 +118,9 @@ EXPECT = {
             "C2.connector1", "LED2.connector1", "J1.connector1", "J2.connector1",
             # ★ EPAD（U1 的裸焊盘 connector20 ✓）**必须接地** ✓（2026-09-26 用户定 ✓）：
             #   上一版把它写成"单脚网、图上留空"是错的 ✗ —— 裸盘要接到 GND ✓
-            "U1.connector20"},
+            "U1.connector20",
+            # ★ v0.1.3：`TP3` = 就近地测试点 ✓（`NetLabel-Pad` 单脚 = `connector0` ✓）
+            "TP3.connector0"},
     "BR+": {"D3.connector3", "D3.connector4", "R1.connector0"},
     # ★ 脚名对照（2026-10-09 用户按 **PCB 布线需要** 换过三只脚 ✓，见 `NETS` 的说明 ✓）：
     #   `RC` → **PD6** = `connector19` ✓（原 `con1` = PA1 ✓）；`DATA_IN` → **PC1** = `con7` ✓
@@ -132,8 +141,8 @@ EXPECT = {
     "DATA_IN_C": {"R3.connector1", "J1.connector2", "R2.connector0"},
     "DATA_OUT": {"U1.connector15", "R4.connector0"},
     "DATA_OUT_C": {"R4.connector1", "J2.connector2"},
-    "SWIO": {"U1.connector14"},
-    "LED_DIN": {"U1.connector12", "LED2.connector2"},
+    "SWIO": {"U1.connector14", "TP1.connector0"},
+    "LED_DIN": {"U1.connector12", "LED2.connector2", "TP2.connector0"},
 }
 
 # ── 导线颜色（只能用 Fritzing 官方配色表里的值 ✓，2026-09-26 定位到根 ✓）────────────
