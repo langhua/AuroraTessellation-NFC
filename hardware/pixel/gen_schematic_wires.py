@@ -304,6 +304,9 @@ HARD_BODY = False
 #   ★ **默认关** ✓ ⇒ 不给这个开关时，本文件的行为**一字不差** ✓（仓规 ✓：新规则一律带开关 ✓）。
 BODY_OUTLINE = False
 BODYFACES = {}          # {件名: sch_body 外形段表 ✓}（`main()` 里灌 ✓；`--bodyoutline` 才用 ✓）
+# ★★ 2026-11-07 ✓ “**所有候选都穿本体**”的连接清单 ✓（`(网/对, 最少穿几段)`）
+#   —— 用来自动点名“**光靠布线解决不了、必须改摆位**”的那几处 ✓（用户 2026-11-07 批准 ✓）
+BODY_UNSOLVED = []
 BODYFACES_PINS = {}     # {件名: [(x,y)…] 本件自己的脚 ✓}（豁免用 ✓）
 # ★★ `OTHER_BODY`：**不许钻“别人的”元件肚子** ✓（2026-09-28 ✓，判据与 `hits_own_body` 同一个 ✓）
 #   ★ 用法与 `HARD_BODY` 的**区别是关键** ✓：`HARD_BODY` 是“**只删候选**”✗ ⇒ 实测删到没路 ⇒
@@ -1921,6 +1924,25 @@ def body_pins_now(d):
     if sch_net.is_label_module(_mid):
         return [(loc[0], loc[1])]
     return []
+
+
+def body_hit_n(path, eps=SBD.EPS, pin_r=SBD.PIN_R):
+    r"""★★ 2026-11-07 ✓ **穿体段数**（同一把尺子 `sch_body.seg_hit` ✓，只数不判 ✓）
+
+    ★ 为什么要它 ✗：`body_face_bad()` 是**是非题** ✓，而候选集**全被否掉**时调用处写的是
+      「保留旧候选集 ✓ 否则会接不上」✗ ⇒ **穿体照样画出来** ✗（用户 2026-11-07 截图 ✓：
+      红线穿过 J1 本体、红/橙线穿过 R2/R3 本体 ✓）。
+      ⇒ 给出"**穿了几段**" ⇒ 调用处可以**挑穿得最少的那条** ＋ 把"无解"**如实列出来** ✓
+      （宁可少一根线，也不许"看着断却记成连上" ✗）。
+    """
+    n = 0
+    for k in range(len(path) - 1):
+        p, q = path[k], path[k + 1]
+        for _t, shp in BODYFACES.items():
+            if SBD.seg_hit(p, q, shp, tuple(BODYFACES_PINS.get(_t, ())),
+                           pin_r=pin_r, eps=eps):
+                n += 1
+    return n
 
 
 def body_face_bad(path, pin_all, eps=SBD.EPS, pin_r=SBD.PIN_R, faces=None, extra_pins=()):
@@ -3637,11 +3659,24 @@ def main(argv):
         #     （重叠和贴脚合在同一个加权项里 ✓ ⇒ 次序一改，两项就互相让位 ✗）。
         #   ⇒ 用**闸门**：代价函数、档位次序**一个字不动** ✓，只在候选集上删 ✓。
         if HARD_BODY:
-            ok = [p for p in cands if not body_hard_bad(p, boxes, PIN_ALL)]
-            if ok:
-                cands = ok
+            # ★★ 2026-11-07 改 ✓（用户批准 ✓）：**候选全被否掉时不再退回"穿体的老候选"** ✗
+            #   —— 老写法 `else: warn(...)` 会**照样把穿体的线画出来** ✗（用户截图 ✓）。
+            #   ✓ 现在：取**穿得最少**的那一档；>0 就**点名记账** ✓（后面汇总 + 计入退出码 ✓）。
+            _sc = [(body_hit_n(p), p) for p in cands] if BODY_OUTLINE else []
+            if _sc:
+                _best = min(s for s, _ in _sc)
+                cands = [p for s, p in _sc if s == _best]
+                if _best:
+                    BODY_UNSOLVED.append((tag, _best))
+                    warn.append("%s：**所有候选都穿本体**（最少 %d 段 ✗）⇒ 已取最少的那条；"
+                                "**这是布局问题**，要改摆位 ✓" % (tag, _best))
             else:
-                warn.append("%s：**没有一条候选**能避开别人的本体 ✗（保留旧候选集 ✓ 否则会接不上 ✗）" % tag)
+                ok = [p for p in cands if not body_hard_bad(p, boxes, PIN_ALL)]
+                if ok:
+                    cands = ok
+                else:
+                    warn.append("%s：**没有一条候选**能避开别人的本体 ✗"
+                                "（保留旧候选集 ✓ 否则会接不上 ✗）" % tag)
         if HARD_PIN:                   # ★ 线不许落在“别的脚”上（含线身穿心 ✗，2026-09-28 ✓）
             ok2 = [p for p in cands if not pin_hard_bad(p, PIN_ALL, own_pins)]
             if ok2:
@@ -6019,6 +6054,14 @@ def main(argv):
         print("\n⚠ %d 处需要人看：" % len(warn))
         for w in warn:
             print("   " + w)
+
+    # ★★ 2026-11-07 ✓ **穿体无解清单**（用户定「穿体必须是 0」✓）—— 这一节是**改摆位的工单** ✓
+    if BODY_UNSOLVED:
+        print("\n★★ **穿体无解 %d 处** ✗✗（布线器已经挑了“穿得最少”的那条 ✓；"
+              "这一节 = **必须改摆位**的地方 ✓）：" % len(BODY_UNSOLVED))
+        for _tg, _n in BODY_UNSOLVED:
+            print("     %-34s 最少穿 %d 段 ✗" % (_tg, _n))
+        ov_fail = 1
 
     if orig[0]:
         emit(sroot, insts, z, nets_segs, orig[0], out_path, PIN_ALL, boxes)
