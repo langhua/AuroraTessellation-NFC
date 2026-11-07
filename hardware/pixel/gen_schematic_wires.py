@@ -211,8 +211,17 @@ OUT_MARGIN = 7.2      # 包围盒外扩（1 格 ✓）：小出界不算往外�
 #      的颜色表 ✓）—— ✗ **不要**自己按顺序另配一套 ✗（我第一版就是这么干的 ✗，与用户不一致 ✗）。
 #   ★ **同一个名字（orange）两个视图取值不同** ✓：面包板 `#ef6100` ✓、**原理图 `#ff7300`** ✓
 #     ⇒ 这里取**原理图**的值 ✓（用户手改版里就是 `#ff7300` ✓ 实测 ✓）。
-SCHEM_PALETTE = ["#418dd9", "#25cc35", "#fff800", "#999999", "#ff7300",
-                 "#a37911", "#33ffc5", "#ab58a2", "#8c3b00", "#fa50e6", "#ffffff"]
+#   ★★ 2026-11-07 修 ✗：调色板里**原来包含黄 `#fff800` 与白 `#ffffff`** ✗
+#     —— `AGENTS §11` 定过：**原理图底色是白的 ⇒ 白线画上去等于没有** ✗、
+#     黄在 Fritzing 界面里不明显 ✗ ⇒ 两者**判错**（闸门 = `file_sanity.py` ①c ✓）。
+#     实测：v0.1.3 这一版就分出了 **4 根白线** ✗（用户看图像“线断了” ✓）。
+#     ⇒ 原理图**可用色只有 11**（13 − 白 − 黄）✓。
+SCHEM_PALETTE = ["#418dd9", "#25cc35", "#999999", "#ff7300",
+                 "#a37911", "#33ffc5", "#ab58a2", "#8c3b00", "#fa50e6"]
+#   ★★ 新网**显式给色** ✓（不靠“按序分” ✗ —— 按序分会撞已用色、还会分到白/黄 ✗）
+#     · `DATA_IN_C` / `DATA_OUT_C` = 串了 100Ω 之后的**同一根信号** ✓ ⇒ **与母网同色** ✓
+#       （同一信号的上下游同色，读图时最容易把它看成一根线 ✓）
+#     · `SWIO` = 烧录脚、单独一根 ⇒ 取没用过的灰 `#999999` ✓
 NET_COLOR = {
     "GND":      "#404040",     # 黑 ✓（官方 black 的 wire 值 ✓，不是 #000000 ✗）
     "5V":       "#cc1414",     # 红 ✓
@@ -223,6 +232,9 @@ NET_COLOR = {
     "BR+":      "#ab58a2",     # 紫
     "COIL_A":   "#8c3b00",     # 棕
     "COIL_B":   "#fa50e6",     # 粉
+    "DATA_IN_C":  "#418dd9",   # = DATA_IN ✓（串电阻两侧同一根信号 ✓）
+    "DATA_OUT_C": "#33ffc5",   # = DATA_OUT ✓
+    "SWIO":       "#999999",   # 灰 ✓
 }
 for _i, _n in enumerate(sorted(N for N in NETS if N not in NET_COLOR)):   # 兜底：新增网按序分色 ✓
     NET_COLOR[_n] = SCHEM_PALETTE[_i % len(SCHEM_PALETTE)]
@@ -2513,6 +2525,20 @@ def main(argv):
         for _n in sorted(_new - _old):
             if _n not in NET_COLOR:
                 NET_COLOR[_n] = SCHEM_PALETTE[len(NET_COLOR) % len(SCHEM_PALETTE)]
+        # ★★ 兜底闸门 ✓：**原理图不许用白/黄** ✗（`AGENTS §11` ✓）——
+        #   换一个**没被占用**的调色板色 ✓；实在没得选就保留并**大声示警** ✓（不静默 ✗）
+        _BAD = {"#ffffff", "#fff800"}
+        for _n in sorted(NET_COLOR):
+            if NET_COLOR[_n].lower() in _BAD:
+                _used = {c.lower() for k, c in NET_COLOR.items() if k != _n}
+                _free = [c for c in SCHEM_PALETTE if c.lower() not in _used]
+                if _free:
+                    print("   ★ 网 **%s** 原来分到 **%s**（原理图禁用 ✗）⇒ 改成 **%s** ✓"
+                          % (_n, NET_COLOR[_n], _free[0]))
+                    NET_COLOR[_n] = _free[0]
+                else:
+                    print("   ⚠ 网 **%s** 只能是 %s（调色板里已无可用的非白/黄颜色 ✗）"
+                          % (_n, NET_COLOR[_n]))
         print("★★ **网表从文件读** ✓：`%s` ⇒ %d 张网（%s ✓）"
               % (_nv, len(NETS), ", ".join("%s=%d 脚" % (k, len(v)) for k, v in sorted(NETS.items()))))
         if _old - _new:
