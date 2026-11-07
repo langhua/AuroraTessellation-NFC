@@ -290,7 +290,15 @@ ESC_OFFS = (ESC_PIN, ESC_PIN + 7.2)
 #     ⇒ 所以“重叠 0”与“穿体 0”**在当前候选集 + 当前摆位下不能兼得** ✓（两版都有硬数据 ✓）：
 #         v14 = 穿体 0 ✓ / 重叠 4 ✗；v15 = 重叠 0 ✓ / 穿体 6 ✗；硬闸门 = 两者都做不到 ✗。
 #   ⇒ **默认关** ✓（保持 v15 的干净基线 ✓）；留 `--hardbody` 供以后配合“换拓扑/换候选集”再试 ✓。
-HARD_BODY = False
+# ★★ 2026-11-07 ✓ **默认开** ✓（用户定：`--hardbody` 做成缺省 ✓）
+#   ✗ 病（实测 ✓）：它原来默认 `False` ✗ ⇒ “不许穿本体”这道闸门**从来没执行过** ✗，
+#     而 `--bodyoutline` 的**计数**是无条件的 ✓ ⇒ 变成“**只报表、不拦**” ✗
+#     ⇒ 实测 4 段穿体（2 条长竖支线穿 `R2`/`R3`、`D4` 出脚段穿自己、`TP1` 引线穿自己 ✓），
+#     而那一段记账（`BODY_UNSOLVED`）写在 `if HARD_BODY:` 里 ⇒ **永远是空表** ✗
+#     —— 于是无论怎么调摆位 / 加候选都改不动它 ✓（不是候选不够好，是判卷的人不在场 ✓）。
+#   ✓ 现在默认开 ✓；要回到旧行为用 **`--no-hardbody`** ✓（开关两边都能走 ✓）。
+#   ★ 实测（2026-11-07 ✓）：打开后穿体 **4 → 0** ✓，而跨轨互连 / 支线形状**照旧** ✓。
+HARD_BODY = True
 # ★★★ 2026-10-09 ✓ **`BODY_OUTLINE`（`--bodyoutline`）：本体闸门改用"该视图**实际绘制的符号外形**"** ✓
 #   ★ 病（用户 2026-10-09 原话 ✓）：「新文件**地线穿过 U1 了**啊！这完全不可接受啊，请修改。」✓
 #     实测（`_work/diag_body.py` ✓）：`_work/v76.4_byHand.fzz` 原理图里 **3 段线真穿进肚子** ✗
@@ -308,6 +316,31 @@ BODYFACES = {}          # {件名: sch_body 外形段表 ✓}（`main()` 里灌 
 #   —— 用来自动点名“**光靠布线解决不了、必须改摆位**”的那几处 ✓（用户 2026-11-07 批准 ✓）
 BODY_UNSOLVED = []
 BODYFACES_PINS = {}     # {件名: [(x,y)…] 本件自己的脚 ✓}（豁免用 ✓）
+
+
+class _UsedList(list):
+    r"""★ 2026-11-07 ✓ **会记来源**的 `used` 表 ✓（**只诊断** ✓，行为与 list 完全一致 ✓）
+
+    ★ 为什么需要 ✗：用户问「这 4 段穿体到底是谁画的」✓ —— 靠**猜**（“大概是轨 / 大概是支线”）
+      在本仓是明令禁止的 ✓（§0 第 7 条、§13 ✓）。`used` 有 20 多处 `append` ✓，
+      逐个手改风险大 ✗ ⇒ **包一层**记下被 append 的那一行 ✓（`sys._getframe(1)` ✓）。
+    """
+
+    def __init__(self, *a):
+        list.__init__(self, *a)
+        self.src = {}
+
+    def append(self, item):
+        try:
+            _ln = sys._getframe(1).f_lineno
+        except Exception:
+            _ln = 0
+        try:
+            self.src[(round(item[0][0], 4), round(item[0][1], 4),
+                      round(item[1][0], 4), round(item[1][1], 4))] = _ln
+        except Exception:
+            pass
+        list.append(self, item)
 # ★★ `OTHER_BODY`：**不许钻“别人的”元件肚子** ✓（2026-09-28 ✓，判据与 `hits_own_body` 同一个 ✓）
 #   ★ 用法与 `HARD_BODY` 的**区别是关键** ✓：`HARD_BODY` 是“**只删候选**”✗ ⇒ 实测删到没路 ⇒
 #     兜底退回旧候选集 ⇒ 反而更差 ✗（68 对“找不到候选” ✗）。`OTHER_BODY` 是**软代价 + 字典序第一档** ✓
@@ -2975,10 +3008,12 @@ def main(argv):
         print("★ **`--railys`** ✓：用户指定轨行 —— %s ✓（只对点名的网生效 ✓；其它网一字节不动 ✓）"
               % "；".join("%s @ %s" % (k, "/".join("%.3f" % _v for _v in v))
                           for k, v in sorted(RAILYS.items())))
-    if "--hardbody" in argv:                   # 实验 ✓：开启“不许进别人本体”的硬闸门（默认关 ✓）
+    if "--no-hardbody" in argv:               # ★ 2026-11-07 ✓ 关掉“不许进别人本体”的硬闸门（回到旧行为 ✓）
         global HARD_BODY
-        HARD_BODY = True
-        print("硬闸门 HARD_BODY：**开启** ✓（`--hardbody` 实验 ✓；实测会多出 68 处“没候选” ✗）")
+        HARD_BODY = False
+        print("硬闸门 HARD_BODY：**关闭** ✓（`--no-hardbody` ✓ —— 旧行为 ✓，不推荐 ✗）")
+    elif "--hardbody" in argv:                 # ★ 兼容老命令行 ✓（现在它是**缺省** ✓）
+        print("硬闸门 HARD_BODY：**开启** ✓（已是**缺省** ✓ —— 这个参数现在可省 ✓）")
     if "--otherbody" in argv:                  # ★★ 第二手 ✓：不许**钻“别人的”肚子** ✓（软代价 ✓）
         global OTHER_BODY
         OTHER_BODY = True
@@ -3362,7 +3397,7 @@ def main(argv):
             chy_clean.add(UBOX[3] + o)
         print("外圈环廊 ✓：UBOX 外各加 %d 条通道（x %d / y %d ✓）"
               % (len(RING_OFFS), len(chx), len(chy)))
-    used, nets_segs, warn = [], {}, []
+    used, nets_segs, warn = _UsedList(), {}, []
     # ★ 2026-10-09 ✓ 线距闸门（`--wire-gap` ✓）的**账面** ✓：[被它删掉的候选数 ✓, “一条都不剩 ⇒ 退回旧集”的次数 ✓]
     GAP_STAT = [0, 0]
     _orph = []                      # ★★★ 2026-10-04 ✓ “车道接不上轨”的簇 ✓（(网, x, 轨 y, 卡在哪) ✓）
@@ -4812,7 +4847,27 @@ def main(argv):
                 #   ⇒ 说明**瓶颈不是档位** ✗ ⇒ 把 4 个闸门在**第一档**上的结果**如实打出来** ✓，
                 #   别猜 ✗。`False` = 该闸门通过 ✓。）
                 if rail_ys and pr["rb"] is None:
-                    _n2 = PIN_N_BY_XY.get((round(a[0], 3), round(a[1], 3)), (0.0, 0.0))
+                    # ★★ 2026-11-07 ✓ 诊断：法线 (0,0) 有**两种**病因，必须分开 ✗：
+                    #   ① **查表未命中** ✗（`a` 与 `PIN_N_BY_XY` 的键对不上 ⇒ 精度 / 排除表问题 ✓）
+                    #   ② **查到了但法是 0**（脚落在元件盒内部 ✓ = 符号本身没画到边上 ✓）
+                    #   ✗ 原来一句 `.get(…, (0,0))` 把两种混成同一个 0 ✗（这正是“查证据”要分清的地方 ✓）。
+                    _k2 = (round(a[0], 3), round(a[1], 3))
+                    _n2 = PIN_N_BY_XY.get(_k2)
+                    if _n2 is None:
+                        _near = sorted((k for k in PIN_N_BY_XY
+                                        if abs(k[0] - _k2[0]) < 1.0 and abs(k[1] - _k2[1]) < 1.0),
+                                       key=lambda k: abs(k[0] - _k2[0]) + abs(k[1] - _k2[1]))[:3]
+                        print("      ↳ **法线查表未命中** ✗：%-22s a=(%.4f,%.4f) ⇒ 键 %s ✗ ｜ "
+                              "表里最近的键 = %s ✓"
+                              % (tt, a[0], a[1], _k2, _near if _near else "（一圈内没有 ✗）"))
+                        _n2 = (0.0, 0.0)
+                    elif _n2 == (0.0, 0.0):
+                        _bb2 = boxes.get(pr["ra"])
+                        print("      ↳ **法线真是 (0,0)** ✓：%-22s 脚 (%.3f,%.3f) ✓ 本体盒 %s ✓"
+                              " ⇒ 这只脚落在盒**内部** ✗（符号没画到边上 ✓）"
+                              % (tt, a[0], a[1],
+                                 ("(%.2f,%.2f)-(%.2f,%.2f)" % _bb2) if _bb2 else "**缺** ✗"))
+                        _n2 = (0.0, 0.0)
                     if abs(_n2[0]) > 0.5 and abs(_n2[1]) < 1e-6:
                         _s2 = 1.0 if _n2[0] > 0 else -1.0
                         _c2 = [a, (a[0] + _s2 * 7.2, a[1]), (a[0] + _s2 * 7.2, b[1])]
@@ -4942,6 +4997,14 @@ def main(argv):
             if best is None:
                 warn.append("%s: 没找到不碰本体的路径 ✗" % tt)
                 best = candidates(a, b, sorted(chx), sorted(chy))[0]
+            # ★★ 2026-11-07 ✓ **落笔前**量一次 ✓（B：这 4 段到底是谁画的 ✓）
+            #   ★ 就在**唯一那一处** `used.append` 之前量 ✓ —— 后面所有"谁改过它"的疑点
+            #     一到这里就能分清 ✓（是本对选路时就穿 ✗ 还是后来被谁动了 ✗）。
+            _hn = body_hit_n(best) if BODY_OUTLINE else 0
+            if _hn:
+                print("   ⚠ **落笔前已穿体 %d 段** ✓：%-30s 来源=%s ✓ 折点 %d ✓ 长 %.1f ✓"
+                      % (_hn, tt, "**直连快捷 `_L`**" if _L is not None else "route_pair",
+                         len(best), plen(best)))
             for k in range(len(best) - 1):
                 used.append((best[k], best[k + 1], net))
             # ★★★ 2026-10-09 ✓ **`from` / `to` 都从几何自己读** ✓（`--mst-shape` ✓）：
@@ -5293,6 +5356,38 @@ def main(argv):
             elif len(_drawn) > 1:
                 # ★ 合并时**在每条被截支线的脚行处打断** ✓ ⇒ 支线端点与它**端点对端点**对上 ✓
                 _vp = [(_vx, _y) for _y in sorted(set(_drawn) | set(_split_ys))]
+                # ★★★ 2026-11-07 ✓ **实际画出来的这份点列也要过本体闸门** ✗（用户报「穿体 7 段」✓）
+                #   ✗ 病（实测 ✓）：上面那几道门查的是**画之前**估的 `_vp_pre` ✗，而这里真正画的是
+                #     由 `_drawn`（= 轨循环**跑完之后**的真实轨表 ✓）拼出来的 `_vp` ✗
+                #     ⇒ 两个 y 集合不一样时 ⇒ **这根线闸门根本没看过** ✗
+                #     （实测：GND 竖线 x=-2.622 横穿 `R3` ✓；5V 竖线 x=-9.822 横穿 `J1` + `R3` ✓）。
+                #   ✓ 修法：① 先按**实际点列**过闸门 ✓；
+                #           ② 不合格就改画「U 形绕行」✓ —— 两条轨的左端本来都在 `_vx` ✓
+                #             ⇒ 两端各加一小段水平线 ✓、竖段挪到 `_xc` ✓
+                #             ⇒ 形状最简单 ✓、两端仍**端点对端点**落在轨端 ✓（不留飞线头 ✓）。
+                _yp = sorted(set(_drawn) | set(_split_ys))
+                _vfix = None
+                if len(_yp) >= 2 and body_hard_bad(_vp, boxes, PIN_ALL):
+                    for _k6 in range(1, 13):
+                        _xc = _vx - 7.2 * _k6
+                        _c6 = [(_vx, _yp[0]), (_xc, _yp[0]),
+                               (_xc, _yp[-1]), (_vx, _yp[-1])]
+                        if (not body_hard_bad(_c6, boxes, PIN_ALL)
+                                and pin_intr(_c6, set(), PIN_ALL) == 0
+                                and not ovl_hard_bad(_c6, used)
+                                and not (HARD_GAP and gap_hard_bad(_c6, net, used))):
+                            _vfix = (_xc, _k6, _c6)
+                            break
+                    if _vfix:
+                        _vp = _vfix[2]
+                        print("   ★ 轨间互连**改走 U 形绕行** ✓：竖段挪到 x=%.3f ✓"
+                              "（原位置 x=%.3f **穿本体** ✗；向外挪 %d 档 ✓）"
+                              % (_vfix[0], _vx, _vfix[1]))
+                    else:
+                        warn.append("%s 轨间互连：x=%.3f 直连**穿本体** ✗，外挪 12 档"
+                                    "**都不合格** ✗ ⇒ 仍画直连（请人看一眼 ✓）" % (net, _vx))
+                        print("   ⚠ 轨间互连**绕不开本体** ✗：x=%.3f ✓（12 档全不合格 ✗）"
+                              % _vx)
                 for _k in range(len(_vp) - 1):
                     used.append((_vp[_k], _vp[_k + 1], net))
                 segs.append({"a": _vp[0], "b": _vp[-1], "path": _vp,
@@ -5410,8 +5505,55 @@ def main(argv):
         print("   起始全局：重叠 %d ｜ 贴脚 %d ｜ 交叉 %d ｜ 总长 %.1f ｜ 加权分 %.0f ✓"
               % (g0[0], g0[1], g0[2], g0[3], g0[4]))
         if BODY_OUTLINE:
-            print("   ★ 穿体（**实际绘制外形**口径 ✓）：%d 段 ✗"
-                  % sum(1 for _u in used if body_face_bad([_u[0], _u[1]], PIN_ALL)))
+            # ★ 2026-11-07 ✓ 逐段**点名**（只报端点太难看懂 ⇒ 连网名一起报 ✓）
+            #   ✗ 原来只有总数 ✗ ⇒ 只知道"7 段"，不知道是**哪几根**、穿的是谁 ✗（本仓老账 ✓）
+            _bad = [_u for _u in used if body_face_bad([_u[0], _u[1]], PIN_ALL)]
+            print("   ★ 穿体（**实际绘制外形**口径 ✓）：%d 段 ✗" % len(_bad))
+            for _u in _bad:
+                # ★ 2026-11-07 ✓ **穿的是谁**：逐个件问 `SBD.seg_hit` ✓（= `body_face_bad` 内部
+                #   用的**同一个**函数 ✓ ⇒ 不是第二把尺子 ✓；只是把"哪一件"问出来 ✓）
+                _who = []
+                for _t, _shp in BODYFACES.items():
+                    if SBD.seg_hit(_u[0], _u[1], _shp,
+                                   tuple(BODYFACES_PINS.get(_t, ())),
+                                   pin_r=SBD.PIN_R, eps=SBD.EPS):
+                        _who.append("%s(脚%d)" % (_t, len(BODYFACES_PINS.get(_t, ()))))
+                print("      ↳ 穿体段 %-9s (%.3f,%.3f)→(%.3f,%.3f) ✓ 长 %.2f ✓ ｜ 穿 %s"
+                      % (_u[2], _u[0][0], _u[0][1], _u[1][0], _u[1][1],
+                         math.dist(_u[0], _u[1]),
+                         ", ".join(_who) if _who else "**无人** ✗（两把尺子不一致 ✗）"))
+                # ★★★ 2026-11-07 ✓ **B：这一段是谁加的** ✓ —— 直接回查 `segs` 里装着它的那条
+                #   （`segs` 是**写文件时用的同一张表** ✓ ⇒ 不是另立一份账 ✗）
+                #   ✗ 不许靠猜"大概是轨/大概是支线" ✗（本仓老账 ✓）。
+                _src = None
+                for _s9 in segs:
+                    _p9 = _s9.get("path") or []
+                    for _i9 in range(len(_p9) - 1):
+                        if (abs(_p9[_i9][0] - _u[0][0]) < 1e-6
+                                and abs(_p9[_i9][1] - _u[0][1]) < 1e-6
+                                and abs(_p9[_i9 + 1][0] - _u[1][0]) < 1e-6
+                                and abs(_p9[_i9 + 1][1] - _u[1][1]) < 1e-6):
+                            _src = _s9
+                            break
+                    if _src is not None:
+                        break
+                if _src is None:
+                    print("         ↑ 来源：**不在 `segs` 里** ✗（单独 `used.append` 的 ✓）"
+                          "｜ append 来自 **第 %d 行** ✓"
+                          % getattr(used, "src", {}).get(
+                              (round(_u[0][0], 4), round(_u[0][1], 4),
+                               round(_u[1][0], 4), round(_u[1][1], 4)), 0))
+                else:
+                    print("         ↑ 来源 `segs`（append 第 %d 行 ✓）：fixed=%s ｜ net=%s ｜ "
+                          "from=%s ｜ to=%s ｜ mine=%s ｜ a=(%.2f,%.2f) b=(%.2f,%.2f) ｜ 折点 %d ✓"
+                          % (getattr(used, "src", {}).get(
+                              (round(_u[0][0], 4), round(_u[0][1], 4),
+                               round(_u[1][0], 4), round(_u[1][1], 4)), 0),
+                             _src.get("fixed"), _src.get("net"),
+                             _src.get("from"), _src.get("to"),
+                             sorted(_src.get("mine") or []),
+                             _src["a"][0], _src["a"][1], _src["b"][0], _src["b"][1],
+                             len(_src.get("path") or [])))
         for rnd in range(RIP_ROUNDS):
             nimp, ntry = 0, 0
             snap = [(s, list(s["path"]), s.get("to")) for s in allseg]
