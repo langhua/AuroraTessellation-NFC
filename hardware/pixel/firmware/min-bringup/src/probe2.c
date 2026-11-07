@@ -42,6 +42,10 @@ int main(void)
     RCC_APB2PCENR |= RCC_APB2EN_IOPC | RCC_APB2EN_SPI1 | RCC_APB2EN_AFIO;
     (void)RCC_APB2PCENR;
 
+    /* ★ 时钟使能后要等一下再访问外设：刚使能就立刻读写，寄存器可能读回 0，
+     *   会让探针给出假的“写不进去” ✗（2026-11-07） */
+    delay_ms(2);
+
     /* ── 2. PC6 = 复用推挽 50 MHz（= SPI1_MOSI）── */
     GPIOC_CFGLR = (GPIOC_CFGLR & ~(0xFu << GPIO_CFG_SHIFT(PIN)))
                 | (GPIO_CFG_AF_PP_50M << GPIO_CFG_SHIFT(PIN));
@@ -50,6 +54,9 @@ int main(void)
     SPI1_CTLR1 = 0;
     SPI1_CTLR1 = SPI_CTLR1_MSTR | SPI_CTLR1_SSM | SPI_CTLR1_SSI | SPI_CTLR1_BR_DIV4;
     SPI1_CTLR1 |= SPI_CTLR1_SPE;
+
+    /* 同上：等外设真的跑起来再读回 */
+    delay_ms(2);
 
     /* ── 4. 读回判定 A：寄存器到底写进去没有 ── */
     uint32_t rd = SPI1_CTLR1;
