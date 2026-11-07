@@ -60,7 +60,17 @@ $(BUILD)/$(TARGET)-probe.hex: src/startup.S src/probe.c $(HDRS)
 	"$(OBJCOPY)" -O ihex $(BUILD)/$(TARGET)-probe.elf $(BUILD)/$(TARGET)-probe.hex
 	@"$(SIZE)" $(BUILD)/$(TARGET)-probe.elf
 
+# ── 自检报告版（2026-11-07 ✓）：芯片自己试 SPI，再用 PC6 闪码报结论 ──
+# 闪 1 下 = SPI1 寄存器写不进（没时钟/基址错）｜2 下 = 寄存器 OK 但引脚仍是高｜3 下 = 引脚被拉低（SPI 在驱动）
+probe2: $(BUILD)/$(TARGET)-probe2.hex
+
+$(BUILD)/$(TARGET)-probe2.hex: src/startup.S src/probe2.c $(HDRS)
+	$(MKDIR)
+	"$(CC)" $(CFLAGS) $(LDFLAGS) -Wl,-Map=$(BUILD)/$(TARGET)-probe2.map -o $(BUILD)/$(TARGET)-probe2.elf src/startup.S src/probe2.c -lgcc
+	"$(OBJCOPY)" -O ihex $(BUILD)/$(TARGET)-probe2.elf $(BUILD)/$(TARGET)-probe2.hex
+	@"$(SIZE)" $(BUILD)/$(TARGET)-probe2.elf
+
 clean:
 	$(RMDIR)
 
-.PHONY: all clean probe
+.PHONY: all clean probe probe2

@@ -30,6 +30,7 @@
 #define RCC_APB2PCENR  REG32(RCC_BASE + 0x18)
 
 /* RCC_APB2PCENR 位（ch32v00x_rcc.h：RCC_APB2Periph_*） */
+#define RCC_APB2EN_AFIO    0x00000001u
 #define RCC_APB2EN_IOPA    0x00000004u
 #define RCC_APB2EN_IOPC    0x00000010u
 #define RCC_APB2EN_IOPD    0x00000020u
@@ -45,7 +46,8 @@
 #define GPIOD_CFGLR    REG32(GPIOD_BASE + 0x00)
 
 /* 位设置/清除寄存器（CH32V00x：BSHR 0x10 置位、BCR 0x14 清零）——
- * 只给 src/probe.c（万用表探针版）用：PC6 当普通输出翻 1 Hz ✓ */
+ * 只给 src/probe.c（探针版）用：PC6 当普通输出 ✓ */
+#define GPIOC_INDR     REG32(GPIOC_BASE + 0x08)
 #define GPIOC_BSHR     REG32(GPIOC_BASE + 0x10)
 #define GPIOC_BCR      REG32(GPIOC_BASE + 0x14)
 
