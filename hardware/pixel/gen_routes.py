@@ -237,8 +237,56 @@ def merge_collinear(wires, keep):
     return out
 
 
-def declared_layers(text):
-    r"""⇒ `{(modelIndex, connectorId): 该 connector 在 pcbView 里声明的 layer}` ✓
+_VIEWS = ("breadboardView", "schematicView", "pcbView")
+
+
+def part_pad_layers(path):
+    r"""⇒ `{(moduleIdRef 或 fzp 文件名主干 ✓, connectorId): 'copperX'}` ✓
+
+    来源 = 包里**嵌入的** `part.*.fzp` ✓ 的
+      `<connector id=…><views><pcbView><p layer="copperX"/></pcbView></views></connector>` ✓
+
+    ★★ 为什么需要它 ✗✓（2026-11-09 实测 ✓）：**背面件**的实例里那个 connector 条目声明的层是
+      **翻面后的物理层**（`copper0` ✓），而 `<connect layer=…>` 指向该脚时要写的是
+      **件自己声明的层**（`copper1` ✓）—— 拿 Fritzing 自己的**另存版**逐字对照 ✓：
+      `U1` 的 **12 条**被它从 `copper0` 改成 `copper1` ✓，而其余背面件仍留 `copper0` ✓
+      ⇒ 差别就在**实例里有没有那个 connector 条目** ✓（Fritzing 只给"有连接"的脚写条目 ✓）。
+    """
+    out = {}
+    try:
+        z = zipfile.ZipFile(path)
+    except Exception:
+        return out
+    try:
+        for n in z.namelist():
+            if not (n.startswith("part.") and n.endswith(".fzp")):
+                continue
+            txt = z.read(n).decode("utf-8-sig", "replace")
+            keys = [n[len("part."):-len(".fzp")]]
+            mid = re.search(r'moduleId="([^"]*)"', txt)
+            if mid:
+                keys.append(mid.group(1))
+            for m in re.finditer(r"(?ms)<connector\b([^>]*)>(.*?)</connector>", txt):
+                cid = re.search(r'\bid="([^"]*)"', m.group(1))
+                if not cid:
+                    continue
+                pv = re.search(r"(?ms)<pcbView>(.*?)</pcbView>", m.group(2))
+                if not pv:
+                    continue
+                lay = [l for l in re.findall(r'<p\b[^>]*\blayer="([^"]*)"', pv.group(1))
+                       if l.startswith("copper")]
+                if not lay:
+                    continue
+                for k in keys:
+                    out[(k, cid.group(1))] = lay[0]
+    finally:
+        z.close()
+    return out
+
+
+def declared_layers(text, part_layers=None):
+    r"""⇒ 三个视图各自 `{(modelIndex, connectorId): 该 connector 声明的 layer}` ✓
+    ＋ `"__mref__"`（modelIndex → moduleIdRef ✓）＋ `"__part__"`（**件**声明的层 ✓）
 
     ★★ 为什么必须用它 ✗✓（2026-09-30 实测 ✓）：`pcb_check.collect` 报的层是**推导**出来的
       （背面件要翻面 ✓），与文件里 connector 那行**声明的字面值不总一样** ✗ ——
@@ -248,12 +296,16 @@ def declared_layers(text):
       （`_work/dl` 系列对照 ✓：重存后的文件里 **266 处全部对得上** ✓）。
       ⇒ 照抄**文件声明值** ✓ 才是对的口径 ✓（仓规：拿 Fritzing 自己的产物当权威 ✓）。
     """
-    out = {"breadboardView": {}, "schematicView": {}, "pcbView": {}}
+    out = {v: {} for v in _VIEWS}
+    out["__mref__"], out["__part__"] = {}, dict(part_layers or {})
     for b in re.findall(r'(?ms)^[ \t]*<instance\b.*?\n[ \t]*</instance>', text):
         mi = re.search(r'modelIndex="(\d+)"', b)
         if not mi:
             continue
-        for view in out:
+        mref = re.search(r'moduleIdRef="([^"]*)"', b)
+        if mref:
+            out["__mref__"][mi.group(1)] = mref.group(1)
+        for view in _VIEWS:
             m = re.search(r'(?ms)<%s\b[^>]*>.*?</%s>' % (view, view), b)
             if not m:
                 continue
@@ -264,15 +316,22 @@ def declared_layers(text):
 
 
 def decl_layer(decl, mi, cid):
-    r"""取**文件里声明的层** ✓ ⇒ 精确查不到时退回"该实例 pcbView 里唯一那个铜层" ✓
+    r"""取**文件里声明的层** ✓ ⇒ 兜底 ①「件自己声明的层」✓ ⇒ 兜底 ②"该实例里唯一那个铜层"✓
 
-    ★ 为什么需要兜底 ✗✓（实测 ✓）：`U1.connector20`（EPAD）原来**没有条目** ✗
+    ★ 为什么需要兜底 ② ✗✓（实测 ✓）：`U1.connector20`（EPAD）原来**没有条目** ✗
       ⇒ 精确查不到 ✗ ⇒ 退回推导层 `copper0` ✗，可它同块 20 个 connector **都声明 `copper1`** ✓
       ⇒ 线那侧就与（我们新建的）条目**对不上** ✗（实测 2 处 ✓）。
+    ★★ 为什么需要兜底 ① ✗✓（2026-11-09 实测 ✓）：实例里**根本没有**这个 connector 条目时
+      （Fritzing 只给"有连接"的脚写条目 ✓），要写的是**件自己声明的层** ✓ ——
+      证据 = Fritzing 另存版把 `U1` 那 12 条从 `copper0` 改成 `copper1` ✓（见 `part_pad_layers` ✓）。
     """
     d = decl.get("pcbView", {}).get((mi, cid))
     if d:
         return d
+    _mref = (decl.get("__mref__") or {}).get(mi)
+    p = (decl.get("__part__") or {}).get((_mref, cid)) if _mref else None
+    if p:
+        return p
     lays = {l for (m, _c), l in decl.get("pcbView", {}).items()
             if m == mi and "copper" in (l or "")}
     return lays.pop() if len(lays) == 1 else None
@@ -457,8 +516,9 @@ def _seg_hit(ax, ay, bx, by, cx, cy, dx2, dy2):
     return ((d1 > 0) != (d2 > 0)) and ((d3 > 0) != (d4 > 0))
 
 
-def build_xml(text, res, model, pads, *, color_map=None, mil_of=None, net_pads=None):
-    """把布线结果变成 XML 实例片段 ✓ ⇒ `(xml, stats)`"""
+def build_xml(text, res, model, pads, *, color_map=None, mil_of=None, net_pads=None,
+              part_layers=None):
+    """把布线结果变成 XML 实例片段 ✓ ⇒ `(xml, stats, edits)`"""
     # ★★ 焊盘 → 网名 ✓（2026-10-01 加 ✓，给下面那道硬闸门用 ✓）
     pad2net = {}
     for _n, _lst in (net_pads or {}).items():
@@ -472,7 +532,8 @@ def build_xml(text, res, model, pads, *, color_map=None, mil_of=None, net_pads=N
     for q in model["pads"]:
         for lay in PC.pad_layers(q):
             pad_at[key(q["c"][0], q["c"][1], lay)] = q
-    decl = declared_layers(text)      # ★ 目标 connector 在文件里声明的层 ✓（见函数注释 ✓）
+    # ★ 目标 connector 在文件里声明的层 ✓（见函数注释 ✓）；`part_layers` = **件**声明的层 ✓
+    decl = declared_layers(text, part_layers)
     # ★★ 细间距**缩宽区** ✓（2026-10-01 用户定 ✓）：zones = 每个细间距盘框外扩 1.5 mm ✓
     zones = RT.neck_zones(pads)
     wire_at = {}
@@ -1865,7 +1926,8 @@ def main(argv):
                  "；".join("%s.%s" % (t, c) for (t, c) in
                            [(k[0], k[1]) for n2 in res for k in net_pads.get(n2, ())
                             if not res[n2].get("ok")][:4]), len(_stubs)))
-    xml, stats, edits = build_xml(text, res, model, pads, mil_of=mil_of, net_pads=net_pads)
+    xml, stats, edits = build_xml(text, res, model, pads, mil_of=mil_of, net_pads=net_pads,
+                                  part_layers=part_pad_layers(base))
     # ★★ 2026-10-06 补 ✓：**每张网的每只脚都要挂上声明** ✓（见 `fill_net_decls` ✓）——
     #   ✗ 不补的话，**没布通的那只脚**在 PCB 视图里 0 条声明 ✗ ⇒ Fritzing **不把它算进那张网** ✗
     #     ⇒ 剩下两只连着 ⇒ 它就说「**布线完成**」✗✗（v70 / v71 实测 ✓）。
