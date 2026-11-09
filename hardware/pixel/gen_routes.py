@@ -322,6 +322,62 @@ def junction_vias(wires, model, vias, *, r_via=0.30, pad_gap=0.55,
     return adds, skips
 
 
+def pull_to_via(wires, vias, model, tol_mm=0.35):
+    r"""把**空中汇聚点**整体挪到**同一张网最近的过孔**上 ✓（只挪 ≤ `tol_mm` 的 ✓）
+
+    ★ 为什么这么做 ✓（2026-11-10 用户「继续改」✓）：光\"在分叉处补过孔\"只治得了旁边空的点 ✗ ——
+      实测还剩 3 个点，其中一个离**已有过孔只有 0.10 mm**、另一个 0.20 mm ✗ ⇒ 那里再打一颗就是短路 ✓。
+      正解是**把分叉挪过去** ✓：该点上所有线的端点一起搬到过孔中心 ✓ ⇒
+      分叉落在过孔上 ✓、那条 0.1～0.2 mm 的小段变成**零长**被丢掉 ✓（本来也只是它把两者连起来 ✓）。
+    ★ 代价 ✓：被拽的那几根线会**微微斜一点**（≤0.35 mm / 线长 ⇒ 长线 <1° ✓）；
+      判据（`pcb_check`）仍然会独立复核 ✓ —— 这里只是"选不选得上" ✓。
+    ★ 只挪**同一张网**的 ✓（跨网的过孔绝不碰 ✗ = 短路 ✓）。
+    """
+    SK = 25.4 / 90.0
+    tol_u = tol_mm / SK
+
+    def kk(p):
+        return (round(p[0], 3), round(p[1], 3))
+
+    pad_pts = {kk(q["c"]) for q in (model.get("pads") or ())}
+    via_pts = {kk(v[1]) for v in vias}
+    ends = {}
+    for (net, lay, a, b, _mil) in wires:
+        for p in (a, b):
+            ends.setdefault(kk(p), []).append(net)
+    move, moved, fails = {}, [], []
+    for k, nets in sorted(ends.items()):
+        if len(nets) < 3 or k in pad_pts or k in via_pts:
+            continue
+        if len(set(nets)) != 1:
+            fails.append((k, "跨网"))
+            continue
+        net = nets[0]
+        p = (k[0], k[1])
+        best = None
+        for (n2, pv) in vias:
+            if n2 != net:
+                continue
+            d = math.hypot(pv[0] - p[0], pv[1] - p[1])
+            if d <= tol_u and (best is None or d < best[0]):
+                best = (d, pv)
+        if best is None:
+            fails.append((p, "网 %s 附近 %.2f mm 内没有自己的过孔" % (net, tol_mm)))
+            continue
+        move[k] = best[1]
+        moved.append((net, p, best[1], best[0] * SK))
+    if not move:
+        return wires, moved, fails
+    out = []
+    for (net, lay, a, b, mil) in wires:
+        a2 = move.get(kk(a), a)
+        b2 = move.get(kk(b), b)
+        if math.hypot(b2[0] - a2[0], b2[1] - a2[1]) * SK < 0.02:
+            continue                       # 挪完变零长 ⇒ 丢 ✓（例：原来那 0.1～0.2 mm 的连接段 ✓）
+        out.append((net, lay, a2, b2, mil))
+    return out, moved, fails
+
+
 _VIEWS = ("breadboardView", "schematicView", "pcbView")
 
 
@@ -785,15 +841,34 @@ def build_xml(text, res, model, pads, *, color_map=None, mil_of=None, net_pads=N
             print("       ✗ 消失：(%.3f, %.3f) 层 %s" % k)
     # ★★ 去重 ✓（2026-11-09 加 ✓，见 `dedupe_exact` ✓）—— 必须在**建声明之前**做 ✗
     #   （否则后面 `wire_at` 会拿到两根一模一样的线、且声明互相指错 ✓）。
+    # ★ `vias` 要在这里就建好 ✓ —— 下面 `pull_to_via` 要用它 ✓（2026-11-10 上移 ✓）。
+    vias = [(net, v) for net in sorted(res) for v in res[net]["vias"]]
     _raw0 = len(raw)
     raw, _dd = dedupe_exact(raw)
     if _dd:
         print("   ★ 去掉**几何完全重复**的走线 %d 条 ✓（%d ⇒ %d ✓）" % (_dd, _raw0, len(raw)))
+    # ★★ 空中汇聚点 ⇒ **整体挪到同网最近的过孔**上 ✓（2026-11-10 ✓，见 `pull_to_via` ✓）
+    #   必须在 `merge_collinear` **之前** ✓（挪完可能就变零长/重复 ⇒ 后面照样清 ✓）。
+    _pv, _moved, _pfail = pull_to_via(raw, vias, model)
+    if _moved:
+        raw = _pv
+        print("   ★ 空中汇聚点**挪到过孔**上 %d 个 ✓：%s"
+              % (len(_moved), "、".join("%s@(%.3f,%.3f)→(%.3f,%.3f) 挪 %.2f mm"
+                                      % (n, p[0] * 25.4 / 90.0, p[1] * 25.4 / 90.0,
+                                         v[0] * 25.4 / 90.0, v[1] * 25.4 / 90.0, d)
+                                      for (n, p, v, d) in _moved)))
+        _r2, _d2 = dedupe_exact(raw)
+        if _d2:
+            print("   ★ 挪完又出现重复 ⇒ 再删 %d 条 ✓" % _d2)
+        raw = _r2
+    for (p, why) in _pfail:
+        if isinstance(p, tuple) and len(p) == 2 and isinstance(p[0], (int, float)):
+            print("   · 空中汇聚点没能挪 (%.3f, %.3f) mm：%s"
+                  % (p[0] * 25.4 / 90.0, p[1] * 25.4 / 90.0, why))
     wires = raw if NO_MERGE else merge_collinear(raw, keep)
     _stage("④合并后", wires)
     stats_raw = len(raw)
     stats_neck = sum(1 for w in wires if w[4] == RT.NECK_MIL)
-    vias = [(net, v) for net in sorted(res) for v in res[net]["vias"]]
     for i, (net, lay, a, b, _mil) in enumerate(wires):
         for k, p in ((0, a), (1, b)):
             wire_at.setdefault(key(p[0], p[1], lay), []).append((i, k))
