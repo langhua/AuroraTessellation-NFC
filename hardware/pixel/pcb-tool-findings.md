@@ -564,15 +564,24 @@ py -3.13 _work\route_wrap.py gen <place.fzz> <out.fzz> --nets=pixel_nets.py \
 
 ⇒ 所以只能**加板**：+3.5 mm 加在**南侧**（那里离 `U1` 最远 ✓）。
 
-### 3. 改板尺寸必须**三处同改**（否则又是"两个声音" ✗）
+### 3. 改板尺寸必须**四处同改**（否则又是"两个声音" ✗）
 
 | 位置 | 作用 |
 |---|---|
 | `<board … width="3cm" height="2.85cm">` | **判据/布线器从这里读板框** ✓ |
-| 板件 `<property name="shape">` 里那份**外形 svg** | **Fritzing 真正画的是它** ✓ |
+| 板件实例 `<property name="width" value="30"/>` / `height`（**mm 数**） | ★★ **Fritzing 画板用的是这两个** ✗✗ |
+| 板件 `<property name="shape">` 里那份**外形 svg** | 外形轮廓 / 圆角靠它 ✓ |
 | `originalWidth` / `originalHeight` | Fritzing 自己的记账 ✓ |
 
-工具 = `_work/set_board_size.py`（带自检：改完用 `pcb_check.collect()` 量板框，必须与目标宽高一致 ✓）。
+工具 = `_work/set_board_size.py`（带自检：改完用 `pcb_check.collect()` 量板框，必须与目标宽高一致 ✓；
+另**读回文件**复核那四个属性 ✓）。
+
+★★ **v97 就是漏了第二处** ✗（2026-10-26 用户截图：Fritzing 里板子仍是 30×25 ✓）：
+实测 v97 的 `shape` 已是 **28.5**、`originalHeight` 也是 **28.5**、`<board height="2.85cm">` 也改了 ✓
+—— **只有实例的 `height` 还是 `25.000000000000004`** ✗ ⇒ Fritzing 画的仍是 30×25 ✓。
+⇒ 这一条**能把"到底哪个才是 Fritzing 的尺子"单向判开** ✓：三处新、一处旧 ⇒ 画出来旧 ✓
+⇒ **实例 width/height 才是它的尺子** ✓（`originalHeight` 不是 ✗、`shape` 只决定轮廓/圆角 ✗）。
+⇒ 修法 = 用修好的工具把 v97 过一遍 ⇒ **v98**（四个数全是 30 / 28.5 ✓，走线一字未动 ✓）。
 ✗ 只改第一处 ⇒ 我们量 28.5、Fritzing 画 25 ✗。
 
 跟边（新下边 32.972）：
