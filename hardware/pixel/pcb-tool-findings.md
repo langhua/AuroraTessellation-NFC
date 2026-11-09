@@ -313,6 +313,74 @@ py -3.13 gen_routes.py _work\v58_u270.fzz _work\u270_routed.fzz \
 3. **手接最后 3 根** ✓（`COIL_B`・`DATA_OUT`・`GND` ✓）—— 你在 Fritzing 里自己放那几颗
    过孔/走线（你知道线圈哪儿真能穿 ✗）✓。
 
+---
+
+## 2026-11-09 声明写法两处修正 ＋ **状态栏为什么必然说「布线完成」**
+
+### 1. `<connect layer>` 要写「**件自己声明的层**」✓
+
+拿 Fritzing **自己另存**我们文件的那份对出来的 ✓：它把 12 条指向 `U1`
+（`mi=90011078`）的声明从 `copper0` 改成 **`copper1`** ✓ —— 我们写的是
+**翻面后的物理层** ✗，它认的是**件自己声明的层** ✓。
+
+| 查找顺序 | 来源 | 何时用 |
+|---|---|---|
+| ① | 实例 pcbView 里那个 connector 条目 | 有就用 |
+| ② | 包内 `part.*.fzp` 的 `<connector><views><pcbView><p layer=…>` | 实例里**没有**条目时（Fritzing 只给"有连接"的脚写条目） |
+| ③ | 该实例 pcbView 里唯一那个铜层 | 老兜底 |
+
+验证：`v97 → v99` 逐行**只有这 12 行**不同，字节数 548963 = 548963 ✓
+几何/布线/网一个没动 ✓。
+
+### 2. 声明要**两侧都写** ✓（补 71 条反向 `<connect>`）
+
+Fritzing 另存我们的文件时，声明 263 → **334** ✓，多出的 **71** 条**全是"另一半"** ✓：
+`件 → 线` **45**（焊盘回指走线）、`线 → 线` **26**（相邻两段互指）。
+⇒ 缺的是**对称性** ✓，拓扑一条不缺 ✓。写回器加了 `symmetrize_decls()`，
+写进去的 `layer` = **源自己那一层** ✓（Fritzing 里每条 connect 带的都是目标的层
+⇒ 反向那条自然带源的层 ✓：它 `线 → 孔` 写 `copper0`、`孔 → 线` 写 `copper0trace` ✓）。
+
+验证：`v100` 的声明按「声明方 → 目标」分九类，与 Fritzing 另存版**逐类相同** ✓
+（线→线 138/54、线→件 41/16、件→线 40/5、线→孔 20、孔→线 10/10，共 334）。
+
+### 3. ★★ 状态栏「布线完成」= **Fritzing 算法本身看不见「孤立的脚」** ✗
+
+源码（`F:\build-fritzing\fritzing-app\src`，可逐行复查 ✓）：
+
+| 位置 | 代码 | 含义 |
+|---|---|---|
+| `sketch/sketchwidget.cpp:7003` | `collectEqualPotential(connectorItems, true, ViewGeometry::RatsnestFlag)` | 「一张网」= **靠铜连起来的那一片** |
+| `sketch/sketchwidget.cpp:7040` | `if (partConnectorItems.count() <= 1) continue;` | **只有 1 只脚的分组直接丢弃**，根本不进统计 |
+| `utils/graphutils.cpp:503` | `if (!gotUserConnection) return false;` | 一片里没有别家件的脚 ⇒ 整张网不数 |
+| `mainwindow/mainwindow.cpp:2290-2292` | `netCount == netRoutedCount` ⇒ `tr("Routing completed")` | 数出来的全通 ⇒ 打这句 |
+
+套到我们这张图（`v100`）✓：
+
+| 铜块 | 脚数 | Fritzing 怎么处理 |
+|---|---|---|
+| 5V・GND・BR+・COIL_A・COIL_B・DATA_IN・DATA_OUT・DATA_OUT_C・SWIO | 2～9 | 内部连通 ⇒ 计 1 张「已通」 ✓ |
+| `LED_DIN` 块1（TP2＋U1.12）、`RC` 块1（C1＋R1＋U1.18＋U1.19） | 2 / 4 | 计 1 张「已通」 ✓ |
+| `R3.1`・`J1.2`・`R2.0`・`LED2.2`・`D4.1` | **各 1** | **丢弃** ✗ |
+
+⇒ 它数出 **11 张网 / 11 张已通** ⇒ **「Routing completed」** ✓。
+⇒ ★ **这不是文件写法能修的** ✗：Fritzing 自己另存出来的那份**一模一样** ✓。
+⇒ 验收口径照旧：**别信状态栏，信铜** ✓（`pcb_check` ⑤/⑪ ＋ `conn_desc` 分块 ✓）。
+
+### 4. 当前 9/12 的真实原因：4 只脚被**口袋**围住（实测 ✓）
+
+`--why` 量出来的可达区（栅格 0.1 mm，8 mil 线宽、净距 0.15 mm）：
+
+| 脚 | 起点层可达区 | 围住它的东西 |
+|---|---|---|
+| `R3.connector1` | **3.5 × 2.4 mm** | 线:GND 44 格・`R3.connector0`・`U1.connector9/10`・过孔:5V・`D4.connector1` |
+| `U1.connector12` | **4.4 × 3.0 mm** | 线:5V 40 格・`U1.connector14/23/27/29`・`D4.connector0` |
+| `U1.connector18`（RC） | 同上族 | U1 邻脚＋5V/RC 线 |
+| LED2/D4 的对端 | — | 目标侧另有 131 / 124 格的小口袋 |
+
+⇒ 先布的 GND/5V 把这些脚**圈死** ✗。已试：`--via-at-pad`（无变化，9/12 一样）✓；
+下一步 = **把断的这几张网先布**（次序杠杆）或**细栅格**，二者都要单独一次验证 ✓。
+
+
 
 
 
