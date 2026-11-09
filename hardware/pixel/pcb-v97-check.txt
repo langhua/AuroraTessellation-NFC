@@ -1,0 +1,32 @@
+（网表：pixel_nets.py ✓）
+== pixel-pcb-v97.fzz（包内 _round_out.fz）==
+   焊盘 65 个 ✓（16 个件）｜走线 140 条 ✓｜过孔 27 个 ✓｜板框 (31.83,4.47)-(61.83,32.97) mm
+  · ⑤ 同 `<bus>` 的脚按 Fritzing 口径并组 **10** 条边 ✓（件内同电位 ✓）
+  · ⑤ 同 `<bus>` 的 9 只件内脚**继承**了同 bus 的网名 ✓（网表不列件内脚 ✓）
+  · 过孔 #0 @(54.63,18.27) mm 挨到 copper0/copper1 ✓
+  · 过孔 #1 @(60.13,30.27) mm 挨到 copper0/copper1 ✓
+  · 过孔 #2 @(45.13,16.77) mm 挨到 copper0/copper1 ✓
+  · 过孔 #3 @(45.13,18.17) mm 挨到 copper0/copper1 ✓
+  · 过孔 #4 @(45.13,29.87) mm 挨到 copper0/copper1 ✓
+  · 过孔 #5 @(45.13,31.27) mm 挨到 copper0/copper1 ✓
+  · 过孔 #6 @(42.13,29.87) mm 挨到 copper0/copper1 ✓
+  · 过孔 #7 @(42.13,31.27) mm 挨到 copper0/copper1 ✓
+  · 过孔 #8 @(58.03,27.37) mm 挨到 copper0/copper1 ✓
+  · 过孔 #9 @(58.03,31.27) mm 挨到 copper0/copper1 ✓
+  · 过孔 #10 @(43.03,15.07) mm 挨到 copper0/copper1 ✓
+  · 过孔 #11 @(44.83,13.47) mm 挨到 copper0/copper1 ✓
+  · 过孔 #12 @(56.03,12.87) mm 挨到 copper0/copper1 ✓
+  · 过孔 #13 @(61.03,12.87) mm 挨到 copper0/copper1 ✓
+  · 过孔 #14 @(59.43,28.17) mm 挨到 copper0/copper1 ✓
+  · 过孔 #15 @(57.33,19.97) mm 挨到 copper0/copper1 ✓
+  · 过孔 #16 @(61.03,22.97) mm 挨到 copper0/copper1 ✓
+  · 过孔 #17 @(58.63,14.27) mm 挨到 copper0/copper1 ✓
+  · 过孔 #18 @(44.23,18.77) mm 挨到 copper0/copper1 ✓
+  · 过孔 #19 @(45.83,19.17) mm 挨到 copper0/copper1 ✓
+  · 过孔 #20 @(44.23,18.17) mm 挨到 copper0/copper1 ✓
+  · 过孔 #21 @(46.43,19.17) mm 挨到 copper0/copper1 ✓
+  ⚠️ L1: connector0：`.fzp` 声明 `both`、svg 嵌套看着是 `copper0` ⇒ **按声明** ✓
+  ⚠️ L1: connector1：`.fzp` 声明 `both`、svg 嵌套看着是 `copper0` ⇒ **按声明** ✓
+  ⚠️ C2: <desc id=desc2> 认不出中心 ✗
+  ⚠️ C2: （这件在**背面** ⇒ 按 Fritzing 的口径做了 **x 镜像** ✓ 轴 = 画布中线 ✓）
+判定：✓ 全过
