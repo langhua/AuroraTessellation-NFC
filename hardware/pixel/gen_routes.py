@@ -388,6 +388,62 @@ def _dangling_idx(wires, vias, model, tol):
     return None
 
 
+def merge_via_into_tht_pad(wires, vias, model, max_mm=2.0):
+    r"""过孔旁边若有**同网的通孔焊盘**（THT ✓ 两层本来就通 ✓）⇒ **把换层挪到焊盘上，过孔删掉** ✓
+
+    ★ 用户 2026-11-10 问 ✓：「**TP3 和 Via54 是不是可以合并？**」✓ —— 一量就明白 ✓：
+      · `TP3` 是 `NetLabel-Pad`，焊盘 **1.98×1.98 mm、孔 Ø1.47、层 `both`** ✓ ⇒ **本来就是通孔** ✓；
+        它身上已经接着 copper1（#75）和 copper0（#76）✓ ⇒ **它自己就能换层** ✓；
+      · `Via54` 在 1.73 mm 外 ✓，干的正是"铜0 → 铜1"这件事 ✓ ⇒ **多余** ✗。
+    ★ 做法 ✓：把**落在过孔上的所有线端搬到那颗焊盘中心** ✓ ⇒ 删过孔 ✓ ⇒
+      零长线丢掉（原来那根 `焊盘→过孔` 的铜0 小段 ✓）⇒ 再去重 ✓ ⇒ 悬空小段级联删 ✓。
+    ★ 门槛 ✓：同网（**那颗焊盘上已经接着同一张网的线** ✓ 不靠猜 ✓）、**通孔**（`layer == both` 或带孔 ✓）、
+      距离 ≤ `max_mm` ✓。
+    """
+    SK = 25.4 / 90.0
+    tol = 0.001 / SK
+
+    def hit(p, q):
+        return abs(p[0] - q[0]) <= tol and abs(p[1] - q[1]) <= tol
+
+    pads = model.get("pads") or []
+    mer = []
+    for _ in range(100):
+        done = False
+        for i, (net, pv) in enumerate(vias):
+            cand = None
+            for q in pads:
+                if not (q.get("thr") or q.get("layer") == "both" or q.get("hole_mm")):
+                    continue
+                d = math.hypot(q["c"][0] - pv[0], q["c"][1] - pv[1]) * SK
+                if d > max_mm:
+                    continue
+                # ★ 这颗焊盘上必须**已经有同一张网**的线接着 ✓（不靠网表猜 ✓）
+                if not any(n2 == net for (n2, _l, a, b, _m) in wires
+                           for e in (a, b) if hit(e, q["c"])):
+                    continue
+                if cand is None or d < cand[0]:
+                    cand = (d, q)
+            if cand is None:
+                continue
+            d, q = cand
+            out = []
+            for (n2, lay, a, b, mil) in wires:
+                a2 = q["c"] if hit(a, pv) else a
+                b2 = q["c"] if hit(b, pv) else b
+                if math.hypot(b2[0] - a2[0], b2[1] - a2[1]) * SK < 0.02:
+                    continue
+                out.append((n2, lay, a2, b2, mil))
+            wires = out
+            vias = vias[:i] + vias[i + 1:]
+            mer.append((net, pv, q["c"], d, "%s.%s" % (q["title"], q["cid"])))
+            done = True
+            break
+        if not done:
+            break
+    return wires, vias, mer
+
+
 def prune_dead_vias(wires, vias, model, tol_mm=0.001):
     r"""删掉**白钻孔**（只有一层有端点 = 没在换层 ✓）✔ 必要时连它那根死端小段一起删 ✓
 
@@ -1044,6 +1100,20 @@ def build_xml(text, res, model, pads, *, color_map=None, mil_of=None, net_pads=N
                                           % (l, a[0] * 25.4 / 90.0, a[1] * 25.4 / 90.0,
                                              b[0] * 25.4 / 90.0, b[1] * 25.4 / 90.0)
                                           for (l, a, b) in _gone)))
+    # ★★ 过孔旁边有**同网通孔焊盘** ⇒ 换层挪到焊盘上、**过孔删掉** ✓（2026-11-10 ✓，见
+    #   `merge_via_into_tht_pad` ✓ —— 起因 = 用户问「TP3 和 Via54 是不是可以合并？」✓）。
+    _w5, _v5, _mp = merge_via_into_tht_pad(wires, vias, model)
+    wires, vias = _w5, _v5
+    if _mp:
+        print("   ★ 过孔**并进同网通孔焊盘** %d 颗 ✓：%s"
+              % (len(_mp), "、".join("%s@(%.3f,%.3f) → 焊盘 %s@(%.3f,%.3f) 相距 %.2f mm"
+                                     % (n, pv[0] * 25.4 / 90.0, pv[1] * 25.4 / 90.0, who,
+                                        pc[0] * 25.4 / 90.0, pc[1] * 25.4 / 90.0, d)
+                                     for (n, pv, pc, d, who) in _mp)))
+        wires, _d5 = dedupe_exact(wires)
+        wires, _g5 = drop_dangling(wires, vias, model, 0.001 / (25.4 / 90.0))
+        if _g5:
+            print("   ★ 并完的**悬空小段**再删 %d 根 ✓" % len(_g5))
     # ★★ 删**白钻孔** ✓（2026-11-10 用户定 ✓，见 `prune_dead_vias` ✓）——
     #   过孔只许用来**换层** ✓；同一层上几根线分叉 = 普通 T 形接头 ✓，不需要孔 ✗。
     #   ★ 必须在 `wire_at` / `via_at` 建表**之前** ✓（删了线，表也要少一条 ✓）。
