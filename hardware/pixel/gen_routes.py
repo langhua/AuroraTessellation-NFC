@@ -1484,6 +1484,22 @@ def main(argv):
     _er = next((a.split("=", 1)[1] for a in argv if a.startswith("--escape-r=")), None)
     if _er is not None:
         RT.ESCAPE_R_MM = float(_er)
+    # ★★ `--escape-wall` ✓（2026-11-09 加 ✓）：**不许切断别人的脚口** ✓ = 扇出车道的保留 ✓
+    #   判据是**直接量的** ✓（库里 `trapped_pins` ✓）：把这一段线**试放上去** ✓，再对
+    #   "还没布完的网"的脚泛洪 ⇒ 从"能连上"变成"连不上" ✗ ⇒ 就是这段线切的 ⇒ 禁掉这条走廊重搜 ✓。
+    #   ✗ 为什么不用"影子加价"那条路（`--escape-cost` ✓）：库里的实测记录写明 ——
+    #     围住脚的那道墙**通常落在 0.45 mm 影子圈之外** ✗（半径扫到 2.0 mm 也罚不到它 ✓）。
+    #   本板要它的**实测理由** ✓（`--why` 量出来的 ✓）：`U1.connector7`（脚号 8 = PC1）的
+    #     起点可达只有 **188 格**（全板 93978 格 ✓），封住它的是 `5V` 那根**先布**的横线
+    #     （边界上 ×15 格 ✓）⇒ QFN 上排 5 只脚的**垂直出线车道**被别人先占了 ✗。
+    if "--escape-wall" in argv:
+        RT.ESCAPE_WALL = True
+        print("   [脚口闸门] 开 ✓（不许切断别人的脚口 ✓；改道 ≤ %d 次 ✓、看 %.0f mm 以内 ✓）"
+              % (RT.ESCAPE_WALL_TRIES, RT.ESCAPE_WALL_WATCH_MM))
+    if "--escape-protect" in argv:      # 只保护**还没布完**的网的脚 ✓
+        RT.ESCAPE_PROTECT = True
+    if "--escape-penalty" in argv:      # 候选解打分多一维（被封成口袋的脚数 ✓）
+        RT.ESCAPE_PENALTY = True
 
     def width_of(net):
         return (mil_pow if net in power else mil_sig) * RT.MIL_MM
@@ -1493,6 +1509,11 @@ def main(argv):
 
     model = PC.collect(base)
     r = model["board"]
+    # ★★ 2026-11-09 加 ✓：把板件的**圆角半径**传给布线器 ✓ —— 板边留白要按圆角算 ✓，
+    #   否则铜会画进被切掉的四个角里 ✗（判据 ② 那边同口径 ✓，见 `pcb_check._in_board` ✓）。
+    RT.BOARD_R_MM = model.get("board_r_mm") or 0.0
+    if RT.BOARD_R_MM:
+        print("   [板形] 圆角 R = %.2f mm ✓（板边留白按圆角算 ✓）" % RT.BOARD_R_MM)
     pads = RT.pad_index(model)
     net_pads, unresolved = RT.resolve_nets(model, data.NETS)
     # ★★★ 2026-10-03 修 ✗✓（**一行**修掉 4 张网布不通的真凶 ✓）：
