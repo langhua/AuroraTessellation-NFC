@@ -1071,6 +1071,87 @@ def add_backrefs(text, edits):
     return text, n, miss, why, built
 
 
+_INST_RE = re.compile(r"(?ms)^[ \t]*<instance\b.*?\n[ \t]*</instance>")
+_PV_RE = re.compile(r"(?ms)<pcbView\b[^>]*>.*?</pcbView>")
+_CONN_RE = re.compile(r'(?ms)<connector\b([^>]*)>(.*?)\n([ \t]*)</connector>')
+_CX_RE = re.compile(r"<connect\b([^>]*)/>")
+
+
+def symmetrize_decls(text):
+    r"""把 PCB 的 `<connect>` 改成**两侧都写** ✓ —— Fritzing 自己就是这么存的 ✓
+
+    ★★ 为什么（2026-11-09 **拿 Fritzing 的另存版量出来的** ✓）：让它另存我们的
+      `pcb_v97.fzz`，声明从 **263** 变成 **334** ✓，多出的 **71** 条**全是"另一半"** ✓：
+        · `件 → 线` **45**（焊盘回指走线 ✓）
+        · `线 → 线` **26**（相邻两段互指 ✓）
+      ⇒ 缺的是**对称性** ✓，**拓扑一条都不缺** ✓（所以连通性判据一直是对的 ✓）。
+
+    ★ 写进去的 `layer` = **源自己那一层** ✓（Fritzing 里每条 `<connect>` 带的都是
+      **目标**的层 ⇒ 反向那条自然就带源的层 ✓：实测它 `线 → 孔` 写 `copper0`
+      （= 孔的层 ✓）、`孔 → 线` 写 `copper0trace`（= 线的层 ✓）✓）。
+
+    ★ 目标实例里**没有那个 connector 块**时**不补** ✓ —— 照 Fritzing 的口径 ✓：
+      `U1` 的 pcbView 一个 connector 块都没有 ✓，它另存之后**仍然没有** ✓
+      （那 12 条就只有单边 ✓）。✗ 别自己造块 ✗ —— 那会和它的产物不一样 ✓。
+
+    幂等 ✓（已有反向的就跳过 ✓）。返回 `(新文本, 补了几条)` ✓。
+    """
+    nodes, edges = {}, []
+    for m in _INST_RE.finditer(text):
+        blk = m.group(0)
+        mi = re.search(r'modelIndex="([^"]*)"', blk.split(">")[0])
+        if not mi:
+            continue
+        mi = mi.group(1)
+        pv = _PV_RE.search(blk)
+        if not pv:
+            continue
+        base = m.start() + pv.start()
+        seg, conns = pv.group(0), {}
+        for c in _CONN_RE.finditer(seg):
+            cid = re.search(r'connectorId="([^"]*)"', c.group(1))
+            if not cid:
+                continue
+            cid = cid.group(1)
+            lay = re.search(r'\blayer="([^"]*)"', c.group(1))
+            inner = c.group(2)
+            conns[cid] = dict(lay=lay.group(1) if lay else "",
+                              inner_end=base + c.end(2),
+                              ind=c.group(3),
+                              has=("<connects>" in inner))
+            for cc in _CX_RE.finditer(inner):
+                d = dict(re.findall(r'([\w-]+)="([^"]*)"', cc.group(1)))
+                edges.append((mi, cid, d.get("modelIndex", ""),
+                              d.get("connectorId", ""), d.get("layer", "")))
+        nodes[mi] = conns
+
+    have = {(a, b, c, d) for (a, b, c, d, _l) in edges}
+    ins = []
+    for (smi, scid, dmi, dcid, lay) in edges:
+        if not lay.startswith("copper"):
+            continue
+        if (dmi, dcid, smi, scid) in have:
+            continue
+        cb = (nodes.get(dmi) or {}).get(dcid)
+        if not cb:
+            continue                    # 目标没块 ⇒ 照 Fritzing 不补 ✓
+        slay = ((nodes.get(smi) or {}).get(scid) or {}).get("lay") or lay
+        tag = '                        <connect connectorId="%s" modelIndex="%s" ' \
+              'layer="%s"/>\n' % (scid, smi, slay)
+        if cb["has"]:
+            ins.append((cb["inner_end"] - len("</connects>"), tag + cb["ind"]))
+        else:
+            ins.append((cb["inner_end"],
+                        "%s<connects>\n%s%s</connects>\n" % (cb["ind"], tag, cb["ind"])))
+        have.add((dmi, dcid, smi, scid))
+
+    ins.sort(key=lambda x: -x[0])       # ★ 必须按偏移**真正降序**插 ✓（同偏移按出现次序 ✓）
+    out = text
+    for off, s in ins:
+        out = out[:off] + s + out[off:]
+    return out, len(ins)
+
+
 PCB_DECL_RE = re.compile(
     r"[ \t]*<connect\b[^>]*\blayer=\"copper[01]trace\"[^>]*/>[ \t]*\r?\n?")
 
@@ -1213,6 +1294,13 @@ def write(base, out, xml, edits=()):
         #   （例：裸露焊盘 EPAD 以前既没插面包板也没接原理图 ⇒ Fritzing 不给它写实例条目 ✓）
         #   ⇒ 这类**合法** ✓，只报数字 ✓、不挡写文件 ✓（`_work/layer_rule.txt` ✓）。
         print("   · 其中少数目标没有 pcbView 条目 ⇒ 合法 ✓（Fritzing 自己也有 108 处 ✓）")
+    # ★★ 补**反向声明** ✓（2026-11-09 ✓，见 `symmetrize_decls` ✓）：
+    #   我们只写"走线那侧"和"焊盘那侧"的各一半 ✗ ⇒ 与 Fritzing 另存版差 71 条 ✗
+    #   （`件 → 线` 45 ＋ `线 → 线` 26 ✓）。必须排在 `add_backrefs` **之后** ✓
+    #   （先让它按 `edits` 写焊盘侧 ✓，再统一补齐对称 ✓）、`prune_dangling` **之前** ✓。
+    text2, n_sym = symmetrize_decls(text2)
+    if n_sym:
+        print("   ★ 补**反向声明** %d 条 ✓（两侧都写 ✓，照 Fritzing 自己的存法 ✓）" % n_sym)
     # ★★ 清 **悬空声明** ✓（2026-10-06 修 P1 根因 ✓，见 `prune_dangling` ✓）：
     #   ✗ 必须排在 `add_backrefs` **之后** ✗ —— 否则会把自己刚补的回指也删掉 ✗。
     text2, n_dang, n_odd = prune_dangling(text2)
