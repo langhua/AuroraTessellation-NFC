@@ -240,6 +240,31 @@ def merge_collinear(wires, keep):
 _VIEWS = ("breadboardView", "schematicView", "pcbView")
 
 
+def dedupe_exact(wires):
+    r"""删掉**几何完全重复**的走线 ✓（同网 / 同层 / 同线宽 / 两端点无向相同）
+
+    ★ 为什么会重复 ✗（2026-11-09 实测 v98 ✓）：布线树把**同一条边加了两遍**（往往方向相反 ✓）——
+      实测 `Wire…` #88/#89 两端声明**正好互反** ✓ ⇒ 纯冗余铜 ✓（Fritzing 的走线是**无向**的 ✓）。
+      v98：140 条里有 **8 对**重复 ✓，而且它们**全都挂在 8 个“空中汇聚点”上** ✓。
+    ★ 为什么在这里删是安全的 ✓：同一段铜删一份 ⇒ **铜的形状不变** ✓、**连通不变** ✓
+      （留下的那份声明照旧 ✓，且本步在**建声明之前** ✓）。
+    ★ `mils` 不同的**不并** ✗（`NECK_MIL` 缩宽段与满宽段是**两种铜** ✓，并了就把缩宽作废 ✗）。
+    ★ 判据与 `pcb_check` / 探针**同源** ✓：按 `key()`（3 位小数）比端点 ✓。
+    """
+    seen = set()
+    out, dropped = [], 0
+    for (net, lay, a, b, mil) in wires:
+        ka = key(a[0], a[1], lay)
+        kb = key(b[0], b[1], lay)
+        kk = (net, lay, mil) + tuple(sorted((ka, kb)))
+        if kk in seen:
+            dropped += 1
+            continue
+        seen.add(kk)
+        out.append((net, lay, a, b, mil))
+    return out, dropped
+
+
 def part_pad_layers(path):
     r"""⇒ `{(moduleIdRef 或 fzp 文件名主干 ✓, connectorId): 'copperX'}` ✓
 
@@ -673,6 +698,12 @@ def build_xml(text, res, model, pads, *, color_map=None, mil_of=None, net_pads=N
               % (len(e_res), len(e_out), len(gone), len(add)))
         for k in gone[:8]:
             print("       ✗ 消失：(%.3f, %.3f) 层 %s" % k)
+    # ★★ 去重 ✓（2026-11-09 加 ✓，见 `dedupe_exact` ✓）—— 必须在**建声明之前**做 ✗
+    #   （否则后面 `wire_at` 会拿到两根一模一样的线、且声明互相指错 ✓）。
+    _raw0 = len(raw)
+    raw, _dd = dedupe_exact(raw)
+    if _dd:
+        print("   ★ 去掉**几何完全重复**的走线 %d 条 ✓（%d ⇒ %d ✓）" % (_dd, _raw0, len(raw)))
     wires = raw if NO_MERGE else merge_collinear(raw, keep)
     _stage("④合并后", wires)
     stats_raw = len(raw)
