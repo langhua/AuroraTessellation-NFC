@@ -237,89 +237,126 @@ def merge_collinear(wires, keep):
     return out
 
 
-def junction_vias(wires, model, vias, *, r_via=0.30, pad_gap=0.55,
-                  via_gap=0.85, edge_gap=0.20, via_clear=0.102):
-    r"""给**空中汇聚点**补一颗过孔 ✓ ⇒ 每个分叉都落在**实体**（焊盘/过孔）上 ✓
+def split_at_vias(wires, vias, tol_mm=0.001):
+    r"""过孔处**把"中段穿过"的线切开** ✓ ⇒ 让这颗孔**真的在换层** ✓（⑬ 过 ✓）
 
-    ★ 为什么 ⼀（2026-11-09 用户定 ✓）：同一点上有 ≥3 根线的端点、而它**既不是焊盘也不是过孔**
-      时，Fritzing 里就是一个"悬空的分叉点" ✓ —— 既看不出来、也不好查 ✗。
-    ★ 为什么不靠 `merge_collinear` ✗：它**故意不跨汇聚点合并** ✓（Fritzing 的 `<connect>`
-      只认**端↔端** ✓ —— 跨过去那条分支就断了 ✗）⇒ 这个点**必然**留着 3 个端点 ✓。
-    ★ 门槛（只要**选不选得上** ✓；真正的对错还是交给 `pcb_check` 判 ✗ 不是自证 ✓）：
-      · 与任何**焊盘**铜边 ≥ `pad_gap`（mm ✓，= 布线器的 `VIA_PAD_KEEPOUT_MM` ✓）；
-      · 与任何**已有过孔**中心 ≥ `2*r_via + VIA_SAFE` ≈ 0.85 mm ✓；
-      · 距**板边** ≥ `r_via + edge_gap` ✓（太靠边就不打 ✓）。
-    ★ 跨网的汇聚点**绝不补** ✗（那是真短路 ✓，要在布线器那边修 ✗）。
+    ★ 为什么必须有这一步 ✗（2026-11-10 实测 v103 ✓）：
+      去重 / 合并共线会把"两段在过孔处相接"合成**一根横穿的线** ✓ —— 铜一点没变 ✓，
+      但 Fritzing 只认 **端↔端** ✓ ⇒ 它不再认为那颗孔接上了 copper1 ✗（⑬ 报白钻孔 ✓）；
+      而**几何**判据（⑤）依旧算通 ✓ ⇒ 两套语义分叉 ✗ —— 正是 §13 说的"两个声音" ✓。
+      ★ 实测代价：v103 一删孔就 **GND 断成 2 块** ✗（`Via55` 是**载流**的 ✓，不是白钻孔 ✓）。
+    ★ 做法 ✓：某颗孔在某一层上**没有任何端点**、却有一条**同网**的线从它中间穿过 ✓
+      ⇒ 在那一点把它**切成两段**（`a→孔心` ＋ `孔心→b`）✓ ⇒ 孔两层都有端点 ✓。
+    ★ 只切**同网**的线 ✓（跨网穿过去是短路 ✗，由 `pcb_check` ④ 管 ✓）。
     """
     SK = 25.4 / 90.0
-    rv_u = r_via / SK
+    tol = tol_mm / SK
+    W = list(wires)
+    splits = []
+    for (net, pv) in vias:
+        for lay in ("copper0", "copper1"):
+            if any(abs(e[0] - pv[0]) <= tol and abs(e[1] - pv[1]) <= tol
+                   for (n2, l2, a, b, _m) in W if l2 == lay for e in (a, b)):
+                continue                        # 这层已经有端点了 ✓
+            for wi in range(len(W)):
+                n2, l2, a, b, mil = W[wi]
+                if l2 != lay or n2 != net:
+                    continue
+                vx, vy = b[0] - a[0], b[1] - a[1]
+                L2 = vx * vx + vy * vy
+                if L2 <= 0:
+                    continue
+                t = ((pv[0] - a[0]) * vx + (pv[1] - a[1]) * vy) / L2
+                if not (0.0 < t < 1.0):
+                    continue                    # 端点重合/在延长线上 ⇒ 不算"穿过" ✓
+                dd = abs((pv[0] - a[0]) * vy - (pv[1] - a[1]) * vx) / (L2 ** 0.5)
+                if dd > tol:
+                    continue
+                # ★ 切在**孔心**上（不用投影点 ✓ —— 端口必须精确重合 ✓）
+                W[wi] = (n2, l2, a, pv, mil)
+                W.append((n2, l2, pv, b, mil))
+                splits.append((net, pv, lay))
+                break
+    return W, splits
 
-    def kk(p):
-        return (round(p[0], 3), round(p[1], 3))
 
-    def box_gap_u(p, box):
-        x0, y0, x1, y1 = box
-        dx = max(x0 - p[0], 0.0, p[0] - x1)
-        dy = max(y0 - p[1], 0.0, p[1] - y1)
-        return math.hypot(dx, dy)
+def prune_dead_vias(wires, vias, model, tol_mm=0.001):
+    r"""删掉**白钻孔**（只有一层有端点 = 没在换层 ✓）✔ 必要时连它那根死端小段一起删 ✓
 
-    ends = {}
-    for (net, lay, a, b, _mil) in wires:
-        for p in (a, b):
-            ends.setdefault(kk(p), []).append((net, lay, p))
-    pad_pts = {kk(q["c"]) for q in (model.get("pads") or ())}
-    via_pts = {kk(v[1]) for v in vias}
+    ★ 用户 2026-11-10 点名 ✓：「via58 有用吗？」✓ —— 实测那颗孔 copper0 有 1 个端点、
+      copper1 有 **0** 个 ✗（copper1 那条线只是**中段穿过**它 ✗，Fritzing 不把中段当连接 ✓）。
+    ★ 规矩 ✓：**过孔的唯一职责是换层** ✓；同一层上几根线在一个点分叉 = **普通 T 形接头** ✓，
+      不需要孔 ✗。机器守 = `pcb_check` 的 **⑬** ✓。
+    ★ 三种情形分开处理 ✓（很关键 ✗ —— 一律连坐删线会把连通弄断 ✗）：
+      · 单层端点数 **≥ 2** ⇒ 只删孔 ✓（那些线本来就端点重合 ✓，删孔不影响连通 ✓）；
+      · 单层端点数 **= 1** ⇒ 连那根**死端小段**一起删 ✓，但**先看它的另一头**：
+        另一头是**焊盘** ⇒ 不删、只报告 ✗（删了那只脚就没线了 ✗）；
+        另一头是过孔 / 多根线汇聚点 ⇒ 删 ✓（那里本来就有别的路 ✓）。
+      · 端点数 **= 0** ⇒ 孤立孔，只删孔 ✓。
+    """
+    SK = 25.4 / 90.0
+    tol = tol_mm / SK
 
-    def seg_dist(p, a, b):
-        vx, vy = b[0] - a[0], b[1] - a[1]
-        wx, wy = p[0] - a[0], p[1] - a[1]
-        L2 = vx * vx + vy * vy
-        t = 0.0 if L2 <= 0 else max(0.0, min(1.0, (wx * vx + wy * vy) / L2))
-        return math.hypot(p[0] - (a[0] + t * vx), p[1] - (a[1] + t * vy))
+    def hit(p, q):
+        return abs(p[0] - q[0]) <= tol and abs(p[1] - q[1]) <= tol
 
-    adds, skips = [], []
-    for k, lst in sorted(ends.items()):
-        if len(lst) < 3 or k in pad_pts or k in via_pts:
-            continue
-        p = lst[0][2]
-        nets = {n for (n, _l, _p) in lst}
-        if len(nets) != 1:
-            skips.append((p, "跨网 %s ⚠" % "/".join(sorted(nets))))
-            continue
-        # 焊盘铜边
-        g = min(box_gap_u(p, q["box"]) for q in (model.get("pads") or ())) if model.get("pads") \
-            else 1e9
-        if (g - rv_u) * SK < pad_gap:
-            skips.append((p, "离焊盘太近 %.2f mm" % ((g - rv_u) * SK)))
-            continue
-        # 已有过孔
-        dv = min(((math.hypot(v[1][0] - p[0], v[1][1] - p[1])) * SK for v in vias),
-                 default=1e9)
-        if dv < via_gap:
-            skips.append((p, "离已有过孔 %.2f mm（< %.2f）" % (dv, via_gap)))
-            continue
-        # 别的网的走线 ✓（★ 2026-11-09 补 ✗：v100 第一版漏了这条 ⇒ 实打出一颗把 GND
-        #   压到 DATA_OUT 线上的过孔（净距 -0.10 mm ✓）⇒ **判据当场抓住** ✓）
-        net_here = lst[0][0]
-        bad = None
-        for (n2, _l2, a2, b2, m2) in wires:
-            if n2 == net_here:
+    pad_pts = [q["c"] for q in (model.get("pads") or ())]
+    W, V = list(wires), list(vias)
+    dv, dw, left = [], [], []
+    skip = set()                     # 判定"必须留着"的孔（按坐标记 ✓）
+    for _ in range(500):
+        cnt = [{"copper0": 0, "copper1": 0} for _ in V]
+        who = [[] for _ in V]
+        for wi, (net, lay, a, b, _mil) in enumerate(W):
+            for p in (a, b):
+                for i, (n2, pv) in enumerate(V):
+                    if hit(p, pv):
+                        cnt[i][lay] = cnt[i].get(lay, 0) + 1
+                        who[i].append((wi, lay))
+        dead = None
+        for i in range(len(V)):
+            if (round(V[i][1][0], 4), round(V[i][1][1], 4)) in skip:
                 continue
-            need = (r_via + (m2 or 8.0) * 0.0254 / 2.0 + via_clear) / SK
-            d2 = seg_dist(p, a2, b2)
-            if d2 < need and (bad is None or d2 - need < bad[0]):
-                bad = (d2 - need, n2)
-        if bad is not None:
-            skips.append((p, "离别的网 `%s` 的线 %.2f mm" % (bad[1], bad[0] * SK)))
-            continue
-        # 板边
-        bx0, by0, bx1, by1 = model["board"]
-        e = min(p[0] - bx0, bx1 - p[0], p[1] - by0, by1 - p[1]) * SK - r_via
-        if e < edge_gap:
-            skips.append((p, "离板边 %.2f mm" % e))
-            continue
-        adds.append((lst[0][0], p))
-    return adds, skips
+            if cnt[i]["copper0"] and cnt[i]["copper1"]:
+                continue
+            dead = i
+            break
+        if dead is None:
+            break
+        net, pv = V[dead]
+        n_ends = who[dead]
+        layers_hit = sorted({l for (_wi, l) in n_ends})
+        drop_w = []
+        if len(n_ends) == 1:
+            wi = n_ends[0][0]
+            far = W[wi][3] if hit(W[wi][2], pv) else W[wi][2]
+            if any(hit(far, q) for q in pad_pts):
+                # ✗ 另一头是焊盘 ⇒ 删了小段那只脚就没线了 ✗ ⇒ 孔与线都留着，只报告 ✓
+                skip.add((round(pv[0], 4), round(pv[1], 4)))
+                left.append((pv, "白钻孔，但它那根小段另一头是**焊盘** ⇒ 删了那只脚就断了 ✗ 故保留"))
+                continue
+            drop_w.append(wi)
+        dv.append((net, pv, len(n_ends), layers_hit))
+        V.pop(dead)
+        for wi in sorted(set(drop_w), reverse=True):
+            dw.append((W[wi][0], W[wi][1], W[wi][2], W[wi][3]))
+            W.pop(wi)
+    return W, V, dv, dw, left
+
+
+def _junction_vias_retired():
+    r"""★ **已停用（2026-11-10 用户定 ✓）** —— 只留教训，不再调用 ✗
+
+    v101 曾用「在分叉处补一颗过孔」来消掉"空中汇聚点" ✓，但用户一句「via58 有用吗？」点破了 ✗：
+      **过孔的唯一职责是换层** ✓ —— 同一层上几根线在一个点分叉 = 普通 T 形接头 ✓，不需要孔 ✗；
+      那样补的孔在 copper1 上一个端点都没有 ✓ ⇒ 纯白钻孔 ✗（`pcb_check` ⑬ 会判 ✗）。
+    ⇒ 现在改用 `prune_dead_vias()` ✓，并且**不再新增**任何"为了好看"的孔 ✓。
+    ★ 原实现里的那套净距门槛（焊盘 0.55 / 已有过孔 0.85 / 别的网走线 0.102 / 板边 0.30 ✓）
+      仍然有效 ✓ —— 什么时候真要在分叉处打孔（换层），直接拿来用 ✓。
+
+    （原函数体已删 ✗：留着会被人误用 ✗。要复原看 git 历史 ✓。）
+    """
+    raise NotImplementedError("已停用：过孔只许用来换层 ✓ 见 prune_dead_vias() ✓")
 
 
 def pull_to_via(wires, vias, model, tol_mm=0.35):
@@ -867,23 +904,42 @@ def build_xml(text, res, model, pads, *, color_map=None, mil_of=None, net_pads=N
                   % (p[0] * 25.4 / 90.0, p[1] * 25.4 / 90.0, why))
     wires = raw if NO_MERGE else merge_collinear(raw, keep)
     _stage("④合并后", wires)
+    # ★★ 过孔处**把"中段穿过"的线切开** ✓（2026-11-10 ✓，见 `split_at_vias` ✓）——
+    #   合并共线会把"在孔处相接"的两段并成一根横穿的线 ✓，而 Fritzing 只认**端↔端** ✗
+    #   ⇒ 那颗孔在它眼里就**没换层** ✓（⑬ 报白钻孔 ✓），可几何上又是通的 ✓ = 两个声音 ✗。
+    #   ★ 必须在 `prune_dead_vias` **之前** ✓（切开之后它们才算真的换层 ✓）。
+    _w3, _splits = split_at_vias(wires, vias)
+    if _splits:
+        print("   ★ **过孔处切开** %d 处 ✓（线原来只是中段穿过 ⇒ Fritzing 不认 ✓）：%s"
+              % (len(_splits), "、".join("%s@(%.3f,%.3f)/%s"
+                                       % (n, p[0] * 25.4 / 90.0, p[1] * 25.4 / 90.0, l)
+                                       for (n, p, l) in _splits)))
+    wires = _w3
+    # ★★ 删**白钻孔** ✓（2026-11-10 用户定 ✓，见 `prune_dead_vias` ✓）——
+    #   过孔只许用来**换层** ✓；同一层上几根线分叉 = 普通 T 形接头 ✓，不需要孔 ✗。
+    #   ★ 必须在 `wire_at` / `via_at` 建表**之前** ✓（删了线，表也要少一条 ✓）。
+    _w2, _v2, _dv, _dw, _dleft = prune_dead_vias(wires, vias, model)
+    if _dv:
+        print("   ★ 删掉**白钻孔** %d 颗 ✓：%s"
+              % (len(_dv), "、".join("%s@(%.3f,%.3f)（端点 %d 个，只在 %s）"
+                                   % (n, p[0] * 25.4 / 90.0, p[1] * 25.4 / 90.0, c,
+                                      "/".join(ls) or "两层都没有")
+                                   for (n, p, c, ls) in _dv)))
+    if _dw:
+        print("   ★ 连同它们的**死端小段**删掉 %d 根 ✓：%s"
+              % (len(_dw), "、".join("%s %s (%.2f,%.2f)→(%.2f,%.2f)"
+                                   % (n, l, a[0] * 25.4 / 90.0, a[1] * 25.4 / 90.0,
+                                      b[0] * 25.4 / 90.0, b[1] * 25.4 / 90.0)
+                                   for (n, l, a, b) in _dw)))
+    for (p, why) in _dleft:
+        print("   · 保留 @(%.3f, %.3f) mm：%s"
+              % (p[0] * 25.4 / 90.0, p[1] * 25.4 / 90.0, why))
+    wires, vias = _w2, _v2
     stats_raw = len(raw)
     stats_neck = sum(1 for w in wires if w[4] == RT.NECK_MIL)
     for i, (net, lay, a, b, _mil) in enumerate(wires):
         for k, p in ((0, a), (1, b)):
             wire_at.setdefault(key(p[0], p[1], lay), []).append((i, k))
-    # ★★ 空中汇聚点 ⇒ 补过孔 ✓（2026-11-09 第二步 ✓，见 `junction_vias` ✓）
-    #   必须在 `via_at` 建表**之前**完成 ✗（不然那些线仍会互相指、不指到过孔 ✓）。
-    _jv, _skip = junction_vias(wires, model, vias)
-    if _jv:
-        vias.extend(_jv)
-        print("   ★ 空中汇聚点**补过孔** %d 颗 ✓：%s"
-              % (len(_jv), "、".join("%s@(%.3f,%.3f)"
-                                   % (n, p[0] * 25.4 / 90.0, p[1] * 25.4 / 90.0)
-                                   for (n, p) in _jv)))
-    for (p, why) in _skip:
-        print("   · 空中汇聚点跳过 (%.3f, %.3f) mm：%s"
-              % (p[0] * 25.4 / 90.0, p[1] * 25.4 / 90.0, why))
     # ── 1b. ★★ **文件里已有的线 / 过孔**也要当"能接的对象" ✓（2026-10-02 补 ✗）──────
     #   起因（用户 2026-10-02 ✓）：要把**剩下的孤脚接到他手画的总线**上 ✓ ⇒ 新线的另一头
     #     落在**已有线**上 ✗ —— ✗ 旧版只认"本次新写的线" ✗ ⇒ 那端**写不出 `<connect>`** ✗
