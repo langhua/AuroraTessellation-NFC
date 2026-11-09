@@ -581,24 +581,29 @@ def build_xml(text, res, model, pads, *, color_map=None, mil_of=None, net_pads=N
         for _k in _lst:
             pad_net[_k] = _n
     pad_rep = {}
-    reps = []
+    reps = {}                       # ★ **按网**一张表 ✓（net → [(x,y), …] ✓）
     for q in model["pads"]:
         r = (q["c"][0], q["c"][1])
-        reps.append(r)
         pad_rep[(round(r[0], 6), round(r[1], 6))] = (q["title"], q["cid"])
+        _n0 = pad_net.get((q["title"], q["cid"]))
+        if _n0 is not None:
+            reps.setdefault(_n0, []).append(r)
     for net in sorted(res):
         for v in res[net]["vias"]:
-            reps.append((v[0], v[1]))
+            reps.setdefault(net, []).append((v[0], v[1]))
 
-    def _snap(p, net=None):
-        for r in reps:
+    def _snap(p, net):
+        # ★★ 2026-11-09 修 ✗：吸附表必须**严格按网** ✓ ——
+        #   ✗ 旧版只把“**焊盘**心”按网筛 ✗，**过孔心**与“已被吸附的普通端点”仍然
+        #     跨网共用一张表 ✗ ⇒ 别网的端点被吸到本网的过孔/端点上 ✗ ⇒
+        #     两张网并成一块铜 ✓（实测 v121：`5V` ∪ `DATA_IN_C` 被并，
+        #     `pcb_check` ⑤ 报“粘上了别的脚” ✗，而路由器自检与跳网自检都是 0 ✗）。
+        mine = reps.setdefault(net, [])
+        for r in mine:
             if abs(p[0] - r[0]) > SNAP_U or abs(p[1] - r[1]) > SNAP_U:
                 continue
-            k2 = pad_rep.get((round(r[0], 6), round(r[1], 6)))
-            if k2 is not None and net is not None and pad_net.get(k2) != net:
-                continue                   # ✗ 别的网的盘心 ⇒ **不许吸** ✓（不然就是短路 ✗）
             return r
-        reps.append(p)
+        mine.append(p)
         return p
 
     snapped = []                                   # (net, lay, a, b) ✓（已归并 ✓）
