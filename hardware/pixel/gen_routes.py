@@ -237,6 +237,91 @@ def merge_collinear(wires, keep):
     return out
 
 
+def junction_vias(wires, model, vias, *, r_via=0.30, pad_gap=0.55,
+                  via_gap=0.85, edge_gap=0.20, via_clear=0.102):
+    r"""给**空中汇聚点**补一颗过孔 ✓ ⇒ 每个分叉都落在**实体**（焊盘/过孔）上 ✓
+
+    ★ 为什么 ⼀（2026-11-09 用户定 ✓）：同一点上有 ≥3 根线的端点、而它**既不是焊盘也不是过孔**
+      时，Fritzing 里就是一个"悬空的分叉点" ✓ —— 既看不出来、也不好查 ✗。
+    ★ 为什么不靠 `merge_collinear` ✗：它**故意不跨汇聚点合并** ✓（Fritzing 的 `<connect>`
+      只认**端↔端** ✓ —— 跨过去那条分支就断了 ✗）⇒ 这个点**必然**留着 3 个端点 ✓。
+    ★ 门槛（只要**选不选得上** ✓；真正的对错还是交给 `pcb_check` 判 ✗ 不是自证 ✓）：
+      · 与任何**焊盘**铜边 ≥ `pad_gap`（mm ✓，= 布线器的 `VIA_PAD_KEEPOUT_MM` ✓）；
+      · 与任何**已有过孔**中心 ≥ `2*r_via + VIA_SAFE` ≈ 0.85 mm ✓；
+      · 距**板边** ≥ `r_via + edge_gap` ✓（太靠边就不打 ✓）。
+    ★ 跨网的汇聚点**绝不补** ✗（那是真短路 ✓，要在布线器那边修 ✗）。
+    """
+    SK = 25.4 / 90.0
+    rv_u = r_via / SK
+
+    def kk(p):
+        return (round(p[0], 3), round(p[1], 3))
+
+    def box_gap_u(p, box):
+        x0, y0, x1, y1 = box
+        dx = max(x0 - p[0], 0.0, p[0] - x1)
+        dy = max(y0 - p[1], 0.0, p[1] - y1)
+        return math.hypot(dx, dy)
+
+    ends = {}
+    for (net, lay, a, b, _mil) in wires:
+        for p in (a, b):
+            ends.setdefault(kk(p), []).append((net, lay, p))
+    pad_pts = {kk(q["c"]) for q in (model.get("pads") or ())}
+    via_pts = {kk(v[1]) for v in vias}
+
+    def seg_dist(p, a, b):
+        vx, vy = b[0] - a[0], b[1] - a[1]
+        wx, wy = p[0] - a[0], p[1] - a[1]
+        L2 = vx * vx + vy * vy
+        t = 0.0 if L2 <= 0 else max(0.0, min(1.0, (wx * vx + wy * vy) / L2))
+        return math.hypot(p[0] - (a[0] + t * vx), p[1] - (a[1] + t * vy))
+
+    adds, skips = [], []
+    for k, lst in sorted(ends.items()):
+        if len(lst) < 3 or k in pad_pts or k in via_pts:
+            continue
+        p = lst[0][2]
+        nets = {n for (n, _l, _p) in lst}
+        if len(nets) != 1:
+            skips.append((p, "跨网 %s ⚠" % "/".join(sorted(nets))))
+            continue
+        # 焊盘铜边
+        g = min(box_gap_u(p, q["box"]) for q in (model.get("pads") or ())) if model.get("pads") \
+            else 1e9
+        if (g - rv_u) * SK < pad_gap:
+            skips.append((p, "离焊盘太近 %.2f mm" % ((g - rv_u) * SK)))
+            continue
+        # 已有过孔
+        dv = min(((math.hypot(v[1][0] - p[0], v[1][1] - p[1])) * SK for v in vias),
+                 default=1e9)
+        if dv < via_gap:
+            skips.append((p, "离已有过孔 %.2f mm（< %.2f）" % (dv, via_gap)))
+            continue
+        # 别的网的走线 ✓（★ 2026-11-09 补 ✗：v100 第一版漏了这条 ⇒ 实打出一颗把 GND
+        #   压到 DATA_OUT 线上的过孔（净距 -0.10 mm ✓）⇒ **判据当场抓住** ✓）
+        net_here = lst[0][0]
+        bad = None
+        for (n2, _l2, a2, b2, m2) in wires:
+            if n2 == net_here:
+                continue
+            need = (r_via + (m2 or 8.0) * 0.0254 / 2.0 + via_clear) / SK
+            d2 = seg_dist(p, a2, b2)
+            if d2 < need and (bad is None or d2 - need < bad[0]):
+                bad = (d2 - need, n2)
+        if bad is not None:
+            skips.append((p, "离别的网 `%s` 的线 %.2f mm" % (bad[1], bad[0] * SK)))
+            continue
+        # 板边
+        bx0, by0, bx1, by1 = model["board"]
+        e = min(p[0] - bx0, bx1 - p[0], p[1] - by0, by1 - p[1]) * SK - r_via
+        if e < edge_gap:
+            skips.append((p, "离板边 %.2f mm" % e))
+            continue
+        adds.append((lst[0][0], p))
+    return adds, skips
+
+
 _VIEWS = ("breadboardView", "schematicView", "pcbView")
 
 
@@ -712,6 +797,18 @@ def build_xml(text, res, model, pads, *, color_map=None, mil_of=None, net_pads=N
     for i, (net, lay, a, b, _mil) in enumerate(wires):
         for k, p in ((0, a), (1, b)):
             wire_at.setdefault(key(p[0], p[1], lay), []).append((i, k))
+    # ★★ 空中汇聚点 ⇒ 补过孔 ✓（2026-11-09 第二步 ✓，见 `junction_vias` ✓）
+    #   必须在 `via_at` 建表**之前**完成 ✗（不然那些线仍会互相指、不指到过孔 ✓）。
+    _jv, _skip = junction_vias(wires, model, vias)
+    if _jv:
+        vias.extend(_jv)
+        print("   ★ 空中汇聚点**补过孔** %d 颗 ✓：%s"
+              % (len(_jv), "、".join("%s@(%.3f,%.3f)"
+                                   % (n, p[0] * 25.4 / 90.0, p[1] * 25.4 / 90.0)
+                                   for (n, p) in _jv)))
+    for (p, why) in _skip:
+        print("   · 空中汇聚点跳过 (%.3f, %.3f) mm：%s"
+              % (p[0] * 25.4 / 90.0, p[1] * 25.4 / 90.0, why))
     # ── 1b. ★★ **文件里已有的线 / 过孔**也要当"能接的对象" ✓（2026-10-02 补 ✗）──────
     #   起因（用户 2026-10-02 ✓）：要把**剩下的孤脚接到他手画的总线**上 ✓ ⇒ 新线的另一头
     #     落在**已有线**上 ✗ —— ✗ 旧版只认"本次新写的线" ✗ ⇒ 那端**写不出 `<connect>`** ✗
