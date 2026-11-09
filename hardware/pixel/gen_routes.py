@@ -280,6 +280,114 @@ def split_at_vias(wires, vias, tol_mm=0.001):
     return W, splits
 
 
+def merge_close_vias(wires, vias, model, max_mm=0.70):
+    r"""把**紧挨着的两颗同网过孔并成一颗** ✓（中心距 ≤ `max_mm`）
+
+    ★ 用户 2026-11-10 问 ✓：「**Via58 和 Via60 是不是可以合并？**」✓ —— 量出来的答案：**可以 ✓**
+      · 两颗都是 0.3/0.15 的孔 ⇒ 铜盘 Ø**0.60** ✓，中心距 **0.600 mm** ⇒ **铜盘正好相切** ✗
+        ⇒ 物理上本来就是**一坨铜** ✓，两颗钻在重复做同一件事 ✓；
+      · 它们之间还**并着两根线**（copper0 一根 0.60、copper1 一根 0.60 ✓）⇒ 一个**空回路** ✗。
+    ★ 做法 ✓：把 A 上**所有线的端点搬到 B** ✓ ⇒ 删 A ✓ ⇒ **零长线丢掉** ✓ ⇒ 再去重 ✓
+      （和 `pull_to_via` 同一套动作 ✓，只是对象从"分叉点"换成"另一颗孔" ✓）。
+    ★ 只并**同一张网**的 ✓（跨网并 = 短路 ✗）；并完两边都有端点 ⇒ 剩下的那颗仍然真换层 ✓（⑬ 过 ✓）。
+    """
+    SK = 25.4 / 90.0
+    tol = 0.001 / SK
+
+    def hit(p, q):
+        return abs(p[0] - q[0]) <= tol and abs(p[1] - q[1]) <= tol
+
+    mer = []
+    changed = True
+    while changed:
+        changed = False
+        for i in range(len(vias)):
+            for j in range(i + 1, len(vias)):
+                n1, p1 = vias[i]
+                n2, p2 = vias[j]
+                if n1 != n2:
+                    continue
+                d = math.hypot(p1[0] - p2[0], p1[1] - p2[1]) * SK
+                if d > max_mm:
+                    continue
+                out = []
+                for (net, lay, a, b, mil) in wires:
+                    a2 = p2 if hit(a, p1) else a
+                    b2 = p2 if hit(b, p1) else b
+                    if math.hypot(b2[0] - a2[0], b2[1] - a2[1]) * SK < 0.02:
+                        continue                       # 搬到一起了 ⇒ 零长 ⇒ 丢 ✓
+                    out.append((net, lay, a2, b2, mil))
+                vrest = vias[:i] + vias[i + 1:]
+                # ★★ 自检改口径 ✓（2026-11-10 v105/v106 实测 ✗）：
+                #   第一版是"并完**不许**留悬空端点 ⇒ 否则不并" ✗ —— 实测两对都被判"可以并" ✓，
+                #   可是并完在 `(44.426, 18.172)` 留下**一根 0.2 mm 的孤段** ✗（判据 ① 抓住 ✓）：
+                #   那根段原来是三角形的一边 ✓，另两边合并/去重后它就**无处可去**了 ✓。
+                #   ⇒ 正确做法不是"不并" ✗，而是并完**级联删掉悬空小段** ✓（这种段本来就载不了东西 ✓）。
+                wires = out
+                vias = vrest
+                mer.append((n1, p1, p2, d))
+                changed = True
+                break
+            if changed:
+                break
+    return wires, vias, mer
+
+
+def drop_dangling(wires, vias, model, tol):
+    r"""级联删掉**悬空小段** ✓（有任何一端既不挨焊盘/过孔、也不挨别的线 ✓ ⇒ 那段载不了东西 ✗）
+
+    ★ 为什么需要 ✗：合并 / 去重 / 端点归并会**改变拓扑** ✓ ⇒ 原来靠"三角形两条边"站住的小段
+      会变成孤段 ✗（实测：`(44.226,18.172)→(44.426,18.172)` 的 0.2 mm 段 ✓）。
+    ★ 只删**真的悬空**的 ✓（另一端当然还在原处 ✓）⇒ **不能**删掉任何载流的铜 ✓。
+    """
+    W = list(wires)
+    gone = []
+    for _ in range(400):
+        hit_ = _dangling_idx(W, vias, model, tol)
+        if hit_ is None:
+            break
+        i, _p = hit_
+        gone.append((W[i][1], W[i][2], W[i][3]))
+        W.pop(i)
+    return W, gone
+
+
+def _dangling_idx(wires, vias, model, tol):
+    r"""返回**第一条悬空走线** `(下标, (x,y,层))` ✓；全都有归属 ⇒ `None` ✓
+
+    「有归属」= 落在焊盘上 ✓、落在过孔上 ✓、与**别的线的端点**重合 ✓、压在**别的线的段**上 ✓
+    （最后一条含"中段穿过" ✓ —— 那是铜上真挨着 ✓，只是 Fritzing 不认 ✓，由 ⑬/切开那一步管 ✓）。
+    """
+    SK = 25.4 / 90.0
+    pads = [q["c"] for q in (model.get("pads") or ())]
+    for i, (net, lay, a, b, _mil) in enumerate(wires):
+        for p in (a, b):
+            if any(abs(p[0] - q[0]) <= tol * 20 and abs(p[1] - q[1]) <= tol * 20 for q in pads):
+                continue
+            if any(abs(p[0] - v[1][0]) <= tol and abs(p[1] - v[1][1]) <= tol for v in vias):
+                continue
+            ok = False
+            for j, (n2, l2, a2, b2, _m2) in enumerate(wires):
+                if l2 != lay or j == i:
+                    continue
+                if (abs(p[0] - a2[0]) <= tol and abs(p[1] - a2[1]) <= tol) or \
+                   (abs(p[0] - b2[0]) <= tol and abs(p[1] - b2[1]) <= tol):
+                    ok = True
+                    break
+                vx, vy = b2[0] - a2[0], b2[1] - a2[1]
+                L2 = vx * vx + vy * vy
+                if L2 <= 0:
+                    continue
+                t = ((p[0] - a2[0]) * vx + (p[1] - a2[1]) * vy) / L2
+                if -1e-9 <= t <= 1 + 1e-9 and \
+                        abs((p[0] - a2[0]) * vy - (p[1] - a2[1]) * vx) / (L2 ** 0.5) <= tol:
+                    ok = True
+                    break
+            if not ok:
+                return (i, (p[0] * SK, p[1] * SK, lay))
+    return None
+
+
 def prune_dead_vias(wires, vias, model, tol_mm=0.001):
     r"""删掉**白钻孔**（只有一层有端点 = 没在换层 ✓）✔ 必要时连它那根死端小段一起删 ✓
 
@@ -915,6 +1023,27 @@ def build_xml(text, res, model, pads, *, color_map=None, mil_of=None, net_pads=N
                                        % (n, p[0] * 25.4 / 90.0, p[1] * 25.4 / 90.0, l)
                                        for (n, p, l) in _splits)))
     wires = _w3
+    # ★★ 紧挨着的**同网过孔并成一颗** ✓（2026-11-10 ✓，见 `merge_close_vias` ✓）——
+    #   两颗 0.3/0.15 的孔铜盘 Ø0.60 ⇒ 中心距 <0.7 mm 时**盘已相切** ✓ = 一坨铜 ✓，两颗钻白搭 ✓。
+    _w4, _v4, _mer = merge_close_vias(wires, vias, model)
+    wires, vias = _w4, _v4
+    if _mer:
+        print("   ★ **同网过孔合并** %d 对 ✓：%s"
+              % (len(_mer), "、".join("%s@(%.3f,%.3f)+(%.3f,%.3f) 相距 %.2f mm"
+                                     % (n, p1[0] * 25.4 / 90.0, p1[1] * 25.4 / 90.0,
+                                        p2[0] * 25.4 / 90.0, p2[1] * 25.4 / 90.0, d)
+                                     for (n, p1, p2, d) in _mer)))
+        wires, _d4 = dedupe_exact(wires)
+        if _d4:
+            print("   ★ 合并后出现重复 ⇒ 再删 %d 条 ✓" % _d4)
+        # ★ 合并会留下**孤段** ✓（原来是三角形的一边 ✓）⇒ 级联删掉 ✓
+        wires, _gone = drop_dangling(wires, vias, model, 0.001 / (25.4 / 90.0))
+        if _gone:
+            print("   ★ 合并后**悬空小段**删掉 %d 根 ✓：%s"
+                  % (len(_gone), "、".join("%s (%.2f,%.2f)→(%.2f,%.2f)"
+                                          % (l, a[0] * 25.4 / 90.0, a[1] * 25.4 / 90.0,
+                                             b[0] * 25.4 / 90.0, b[1] * 25.4 / 90.0)
+                                          for (l, a, b) in _gone)))
     # ★★ 删**白钻孔** ✓（2026-11-10 用户定 ✓，见 `prune_dead_vias` ✓）——
     #   过孔只许用来**换层** ✓；同一层上几根线分叉 = 普通 T 形接头 ✓，不需要孔 ✗。
     #   ★ 必须在 `wire_at` / `via_at` 建表**之前** ✓（删了线，表也要少一条 ✓）。
