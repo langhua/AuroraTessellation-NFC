@@ -34,18 +34,43 @@ static void delay_ms(uint32_t ms)
     }
 }
 
-/* ───────────────────────── 初始化 ───────────────────────── */
+/* ─────────────── RC 节点的「放电脚」`PD5`（与 `PD6` 同一节点）───────────────
+ * ★★ 2026-11-10 实测修（用户报「上电白一下、然后常亮红」✓）：
+ *   `RC` 节点对地只有 `C1`（隔直 ✗）与 `D3`（反偏 ✗）⇒ **没有直流通路** ✗
+ *   ⇒ `D4`（1N5819）的**反向漏电**把 `C1` 慢慢充到接近 5 V ✗
+ *   ⇒ ADC 读到 ≥ 2 V ⇒ 灯停在「红档」✗（而“白一下”= 刚上电时 C1 还是 0 ✓）。
+ *   设计里早留了这根脚（`v0.1.2` 把 `PD5` 引到同一节点 ✓ 当**开漏放电** ✓）⇒ 固件必须真的用它 ✓：
+ *     ① 空闲 / 测前：`PD5` = **开漏输出 0** ⇒ 把节点钳在 0（不漂）✓；
+ *     ② 要读数：先放电 2 ms（把 `C1` 放净 ✓）⇒ **释放成模拟输入**（高阻 ✓）
+ *        ⇒ 等 3 ms（≈ 3τ，`τ = R1·C1 = 10k × 100n = 1 ms` ✓）⇒ 读到的是包络 ✓。
+ *   ⚠ `PD5` 用**开漏**而非推挽：节点可能被 `R1` 抬到 >VDD，开漏只拉低、不会反向注流 ✓。
+ */
+#define RC_PIN 5
+
+static void rc_low(void)
+{
+    GPIOD_BCR = (1u << RC_PIN);                 /* 先把输出寄存器置 0 ✓（开漏才会拉低 ✓）*/
+    GPIOD_CFGLR = (GPIOD_CFGLR & ~(0xFu << GPIO_CFG_SHIFT(RC_PIN)))
+                | ((uint32_t)GPIO_CFG_OUT_OD_2M << GPIO_CFG_SHIFT(RC_PIN));
+}
+
+static void rc_release(void)
+{
+    GPIOD_CFGLR = (GPIOD_CFGLR & ~(0xFu << GPIO_CFG_SHIFT(RC_PIN)))
+                | ((uint32_t)GPIO_CFG_ANALOG << GPIO_CFG_SHIFT(RC_PIN));
+}
+
+/* ──────────────────────── 初始化 ──────────────────────── */
 static void adc_init(void)
 {
     RCC_APB2PCENR |= RCC_APB2EN_IOPD | RCC_APB2EN_ADC1;
     delay_ms(1);
 
-    /* PD6（A6，包络输入）与 PD5（A5，与 PD6 同节点）都设成**模拟输入**：
-     * 节点电压可能高于 VDD，模拟输入不带施密特、不注入电流，最安全。 */
+    /* PD6（A6，包络输入）设成**模拟输入**；节点电压可能高于 VDD，模拟输入不带施密特、不注入电流，最安全 ✓
+     * ★ PD5 **不再**当模拟输入 ✗（那样没人放电 ⇒ 节点被 D4 漏电充到 5 V ✗，见上面那段 ✓）*/
     GPIOD_CFGLR = (GPIOD_CFGLR & ~(0xFu << GPIO_CFG_SHIFT(6)))
-                | (GPIO_CFG_ANALOG << GPIO_CFG_SHIFT(6));
-    GPIOD_CFGLR = (GPIOD_CFGLR & ~(0xFu << GPIO_CFG_SHIFT(5)))
-                | (GPIO_CFG_ANALOG << GPIO_CFG_SHIFT(5));
+                | ((uint32_t)GPIO_CFG_ANALOG << GPIO_CFG_SHIFT(6));
+    rc_low();                                   /* 放电脚先钳低 ✓ */
 
     /* 采样时间取最长（241 周期 @12 MHz ≈ 20 µs）：R1 = 10 kΩ 源阻抗偏高，采样窗给足 */
     ADC1_SAMPTR2 = (ADC1_SAMPTR2 & ~(7u << 18)) | (ADC_SMPT_241CYCLES << 18);
@@ -161,8 +186,13 @@ int main(void)
     ws_rgb(ALIVE_LV, ALIVE_LV, ALIVE_LV);
 
     for (;;) {
-        /* 每圈开头采样：离上一次 LED 刷新（`ws_latch` 之后）已过 ≥500 ms
-         * ⇒ 刷新瞬间 VDD 的那一下跌落早没了（节点 τ = R1·C1 = 1 ms）✓ */
+        /* 每圈：先放电 2 ms ⇒ 释放 ⇒ 等 3 ms（≈3τ，τ = R1·C1 = 1 ms）⇒ 采样
+         * ⇒ 读到的就是此刻的包络 ✓，而不是被 D4 漏电抬上去的假高电平 ✗ */
+        rc_low();
+        delay_ms(2);
+        rc_release();
+        delay_ms(3);
+
         uint16_t code = adc_sample12();
         uint32_t mv   = code_to_mv(code);
 

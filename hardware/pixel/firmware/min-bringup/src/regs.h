@@ -45,6 +45,11 @@
 #define GPIOC_CFGLR    REG32(GPIOC_BASE + 0x00)
 #define GPIOD_CFGLR    REG32(GPIOD_BASE + 0x00)
 
+/* ★ 2026-11-10 ✓：PD5（RC 节点的**放电脚**）需要 OUTDR/BSHR/BCR —— 与 GPIOC 同一套偏移 ✓ */
+#define GPIOD_OUTDR    REG32(GPIOD_BASE + 0x0C)
+#define GPIOD_BSHR     REG32(GPIOD_BASE + 0x10)
+#define GPIOD_BCR      REG32(GPIOD_BASE + 0x14)
+
 /* 位设置/清除寄存器（CH32V00x：BSHR 0x10 置位、BCR 0x14 清零）——
  * 只给 src/probe.c（探针版）用：PC6 当普通输出 ✓ */
 #define GPIOC_INDR     REG32(GPIOC_BASE + 0x08)
@@ -55,6 +60,7 @@
 #define GPIO_CFG_SHIFT(pin)   (4u * (pin))
 /* 常用组合（MODE: 00=输入 10=输出2MHz 11=输出50MHz；CNF 在输入时: 00=模拟 01=浮空 10=上下拉；在输出时: 00=推挽 10=复用推挽） */
 #define GPIO_CFG_ANALOG       0x0u   /* MODE=00 CNF=00 ⇒ 模拟输入 */
+#define GPIO_CFG_OUT_OD_2M    0x6u   /* MODE=10 CNF=01 ⇒ **开漏**输出 2 MHz（PD5 放电用 ✓）*/
 #define GPIO_CFG_OUT_PP_2M    0x2u   /* MODE=10 CNF=00 ⇒ 推挽输出 2 MHz */
 #define GPIO_CFG_OUT_PP_50M   0x3u   /* MODE=11 CNF=00 ⇒ 推挽输出 50 MHz */
 #define GPIO_CFG_AF_PP_50M    0xBu   /* MODE=11 CNF=10 ⇒ 复用推挽 50 MHz */
