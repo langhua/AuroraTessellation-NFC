@@ -80,11 +80,22 @@ $(BUILD)/$(TARGET)-probe3.hex: src/startup.S src/probe3.c src/ws2812_gpio.c $(HD
 	"$(OBJCOPY)" -O ihex $(BUILD)/$(TARGET)-probe3.elf $(BUILD)/$(TARGET)-probe3.hex
 	@"$(SIZE)" $(BUILD)/$(TARGET)-probe3.elf
 
+# ── ★ `PD5` 放电脚“看得见”版（2026-11-10 ✓）──
+# 用途：读数在 0.1–2.5 V 之间大幅游走时，用万用表一次判死：
+#   `PD5` 做 0.7 s 拉低 / 1.3 s 高阻的慢方波 ⇒ 表笔搭 `PD6`：
+#   0 V ↔ 漂着的电平 交替 = 放电正常 ✓；一直不动 = `PD5` 没接到节点 ✗
+probe4: $(BUILD)/$(TARGET)-probe4.hex
+
+$(BUILD)/$(TARGET)-probe4.hex: src/startup.S src/probe4.c src/ws2812_gpio.c $(HDRS)
+	$(MKDIR)
+	"$(CC)" $(CFLAGS) $(LDFLAGS) -Wl,-Map=$(BUILD)/$(TARGET)-probe4.map -o $(BUILD)/$(TARGET)-probe4.elf src/startup.S src/probe4.c src/ws2812_gpio.c -lgcc
+	"$(OBJCOPY)" -O ihex $(BUILD)/$(TARGET)-probe4.elf $(BUILD)/$(TARGET)-probe4.hex
+	@"$(SIZE)" $(BUILD)/$(TARGET)-probe4.elf
+
 clean:
 	$(RMDIR)
-
 # 一次把正常固件 + 全部探针都编出来（★ `make clean` 会删掉整个 build/，
 # 包括探针 hex —— 所以清过之后请用 make probes 重编）
-probes: all probe probe2 probe3
+probes: all probe probe2 probe3 probe4
 
-.PHONY: all clean probe probe2 probe3 probes
+.PHONY: all clean probe probe2 probe3 probe4 probes
