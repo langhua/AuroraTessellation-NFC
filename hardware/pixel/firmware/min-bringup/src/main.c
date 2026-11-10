@@ -152,6 +152,16 @@ static uint8_t scale8(uint8_t c, uint8_t lv)
     return (uint8_t)(((uint16_t)c * lv) >> 8);
 }
 
+/* ───────────────────── 一次「放电→积分→采样」───────────────────── */
+static uint16_t rc_read(void)
+{
+    rc_low();
+    delay_ms(2);            /* 把 C1 放净 ✓（PD5 开漏拉低，百 µs 就够，给 2 ms 保险 ✓）*/
+    rc_release();           /* 高阻 ⇒ 节点经 R1 向 BR+ 充电 ✓ */
+    delay_ms(3);            /* 3τ（τ = R1·C1 = 1 ms）✓ */
+    return adc_sample12();
+}
+
 /* 「活着但还没读数」的**暖白**：R>G>B ⇒ 一看就是暖白，不会和「蓝档」混 ✓
  * ★ 2026-11-10 改（用户：`(40,40,40)` 盯着看能分出蓝灯/绿灯、容易跟蓝档混 ✓）
  * ★ 亮度与原来相当（均值 ≈ 39/255 ≈ 15%，暗但看得见 ✓）
@@ -159,6 +169,15 @@ static uint8_t scale8(uint8_t c, uint8_t lv)
 #define ALIVE_R 52u
 #define ALIVE_G 40u
 #define ALIVE_B 24u
+
+/* ★★ 2026-11-10 加 **零点标定 ＋ 门限** ✓（用户实测：板子放着不动，读数会慢慢漂 0.1–0.5 V ✗）
+ * 漂移的绝对量打不过“相对量”：**上电时先量一次当前电平当零点**（此时应无场 ✓），
+ * 之后只有**高出零点 ≥ `NOISE_MV`** 才算信号 ✓ ⇒ 剩下的慢漂/噪声一律落在暖白区 ✓。
+ * ⚠ 前提是**上电那一刻没有场**（台架上是这样 ✓）；要重新标定就断电重启 ✓。
+ */
+#define NOISE_MV   120u     /* 门限：小于这个差值 = 噪声/漂移 ⇒ 暖白 ✓ */
+#define BASE_N      16u     /* 零点取 16 次的平均（≈16×0.5 s？不 —— 这里是连采 16 次 ≈ 0.1 s ✓）*/
+
 
 /* ───────────────────────── main ───────────────────────── */
 int main(void)
@@ -186,22 +205,27 @@ int main(void)
     ws_rgb(120, 0, 120);
     delay_ms(120);
 
+    /* ⑤ **零点标定**：连采 16 次取平均 —— 此刻应无场 ✓ ⇒ 把当前电平当 0 ✓ */
+    uint32_t acc = 0;
+    for (uint8_t i = 0; i < BASE_N; i++) {
+        acc += rc_read();
+    }
+    uint16_t base_code = (uint16_t)(acc / BASE_N);
+
     /* ④ 常亮暖白 = 活着、在循环里等读数 */
     ws_rgb(ALIVE_R, ALIVE_G, ALIVE_B);
 
     for (;;) {
-        /* 每圈：先放电 2 ms ⇒ 释放 ⇒ 等 3 ms（≈3τ，τ = R1·C1 = 1 ms）⇒ 采样
-         * ⇒ 读到的就是此刻的包络 ✓，而不是被 D4 漏电抬上去的假高电平 ✗ */
-        rc_low();
-        delay_ms(2);
-        rc_release();
-        delay_ms(3);
+        uint16_t code = rc_read();
 
-        uint16_t code = adc_sample12();
-        uint32_t mv   = code_to_mv(code);
+        /* 只算**高出零点**的部分 ✓（慢漂/噪声都在零点附近 ⇒ 当作 0 ✓）*/
+        uint32_t mv = 0;
+        if (code > base_code) {
+            mv = code_to_mv((uint16_t)(code - base_code));
+        }
 
-        if (mv < 20u) {
-            /* 读数≈0：保持常亮暖白（不闪、不灭 ⇒ 不会看漏）*/
+        if (mv < NOISE_MV) {
+            /* 无信号：常亮暖白（不闪、不灭 ⇒ 不会看漏 ✓）*/
             ws_rgb(ALIVE_R, ALIVE_G, ALIVE_B);
         } else {
             rgb_t   c  = band_color(mv);
