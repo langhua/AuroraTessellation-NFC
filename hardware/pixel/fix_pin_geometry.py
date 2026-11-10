@@ -18,6 +18,11 @@ M = <transform m11..m32>（**含 m31/m32 平移** ✓ —— 第一版漏了它 
 import re
 import sys
 import zipfile
+import xml.etree.ElementTree as ET
+
+# ★ 几何/孔位**调库里的同一份实现** ✓（✗ 不另造一套 ✗）—— `bb_compare.hole_xy` 要板位偏移 ✓
+sys.path.insert(0, r"F:\git\fritzing-parts-langhua\tools")
+import bb_compare as BC                     # noqa: E402
 
 ROW_Y = {"Z": 9.0, "Y": 18.0, "J": 45.0, "I": 54.0, "H": 63.0, "G": 72.0, "F": 81.0,
          "E": 108.0, "D": 117.0, "C": 126.0, "B": 135.0, "A": 144.0,
@@ -25,11 +30,12 @@ ROW_Y = {"Z": 9.0, "Y": 18.0, "J": 45.0, "I": 54.0, "H": 63.0, "G": 72.0, "F": 8
 COL = 9.0
 SK_MM = 25.4 / 90.0
 ID = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+OFF = (0.0, 0.0)      # ★ 这张图自己的板位偏移 ✓（2026-11-10 加 ✓：v106 是 +9/+18）
 
 
 def hole_xy(h):
     m = re.fullmatch(r"pin(\d+)([A-Z])", h)
-    return (int(m.group(1)) * COL, ROW_Y[m.group(2)])
+    return (int(m.group(1)) * COL + OFF[0], ROW_Y[m.group(2)] + OFF[1])
 
 
 def num(v):
@@ -100,7 +106,13 @@ def main(argv):
     text = z.read(name).decode("utf-8")
     items = [(i, z.read(i.filename)) for i in z.infolist()]
 
+    # ★ 板位偏移 ✓（板子被挪过：孔位整体平移 ✓ ⇒ 写死 (0,0) 会把脚修到错位置 ✗）
+    global OFF
+    OFF = BC.board_off_root(ET.fromstring(text))
+    print("[板位] 偏移 (%+.3f, %+.3f) 单位 ✓" % OFF)
+
     n_fix = 0
+    skipped = []           # ★ 接线点由部件 svg 决定、草图里没有几何的脚 ✓（本工具不动 ✗）
     for m in list(re.finditer(r'<instance [^>]*>.*?</instance>', text, re.S)):
         blk = m.group(0)
         # ★★ 2026-11-10 修 ✗：原来是 `if 'layer="breadboardWire"' in blk` ⇒
@@ -124,6 +136,16 @@ def main(argv):
             holes = re.findall(r'connectorId="(pin\d+[A-Z])"[^>]*layer="breadboardbreadboard"', cm.group(0))
             if len(holes) != 1:
                 continue
+            # ★★ 2026-11-10 修 ✗：**`geometry=(0,0)` 且没有 `<leg>` 的脚，本工具不许动** ✗
+            #   为什么 ✗：这种脚的接线点由**部件 svg 里的 `connectorNpin`** 决定 ✓
+            #   （`bb_precheck` 的 `anch[cid]` ✓），草图里没有它的位置 ✓ ⇒
+            #   本工具若"从几何原点补一条腿" ⇒ 会画出一根 20–27 mm 的**假腿** ✗
+            #   （实测 v106：`L1`/`U1`/`D3`/`J1`/`J2` 全被拉出一把灰扇 ✗，渲染图一眼就看出来 ✗）。
+            cg0 = re.search(r'<geometry x="([-\d.]+)" y="([-\d.]+)"', cm.group(0))
+            if cg0 and abs(float(cg0.group(1))) < 1e-9 and abs(float(cg0.group(2))) < 1e-9 \
+                    and "<leg>" not in cm.group(0):
+                skipped.append("%s.%s→%s" % (ttl, cm.group(0).split('"')[1], holes[0]))
+                continue
             new, cur = rebuild(cm.group(0), loc, mtx, hole_xy(holes[0]))
             if cur is None or cur <= tol:
                 continue
@@ -142,6 +164,9 @@ def main(argv):
             zi.external_attr = info.external_attr
             zo.writestr(zi, data)
     print("✓ 写出 %s（补/改 %d 只脚的腿 ✓）" % (out, n_fix))
+    if skipped:
+        print("  · 跳过 %d 只脚（`geometry=(0,0)` 且无 `<leg>` ⇒ 接线点看部件 svg ✓）：%s"
+              % (len(skipped), ", ".join(skipped[:8])))
     return 0
 
 
