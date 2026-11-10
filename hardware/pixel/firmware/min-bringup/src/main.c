@@ -152,9 +152,13 @@ static uint8_t scale8(uint8_t c, uint8_t lv)
     return (uint8_t)(((uint16_t)c * lv) >> 8);
 }
 
-/* 「活着但还没读数」的常亮暗白：40/255 ≈ 16%
- * 全黑 = 没跑起来 / 灯这路坏；暗白常亮 = MCU + SPI + 灯三样全对 ✓ */
-#define ALIVE_LV 40u
+/* 「活着但还没读数」的**暖白**：R>G>B ⇒ 一看就是暖白，不会和「蓝档」混 ✓
+ * ★ 2026-11-10 改（用户：`(40,40,40)` 盯着看能分出蓝灯/绿灯、容易跟蓝档混 ✓）
+ * ★ 亮度与原来相当（均值 ≈ 39/255 ≈ 15%，暗但看得见 ✓）
+ * 全黑 = 没跑起来 / 灯这路坏；**暖白常亮 = MCU + 灯 + ADC 三样全对** ✓ */
+#define ALIVE_R 52u
+#define ALIVE_G 40u
+#define ALIVE_B 24u
 
 /* ───────────────────────── main ───────────────────────── */
 int main(void)
@@ -182,8 +186,8 @@ int main(void)
     ws_rgb(120, 0, 120);
     delay_ms(120);
 
-    /* ④ 常亮暗白 = 活着、在循环里等读数 */
-    ws_rgb(ALIVE_LV, ALIVE_LV, ALIVE_LV);
+    /* ④ 常亮暖白 = 活着、在循环里等读数 */
+    ws_rgb(ALIVE_R, ALIVE_G, ALIVE_B);
 
     for (;;) {
         /* 每圈：先放电 2 ms ⇒ 释放 ⇒ 等 3 ms（≈3τ，τ = R1·C1 = 1 ms）⇒ 采样
@@ -197,8 +201,8 @@ int main(void)
         uint32_t mv   = code_to_mv(code);
 
         if (mv < 20u) {
-            /* 读数≈0：保持常亮暗白（不闪、不灭 ⇒ 不会看漏） */
-            ws_rgb(ALIVE_LV, ALIVE_LV, ALIVE_LV);
+            /* 读数≈0：保持常亮暖白（不闪、不灭 ⇒ 不会看漏）*/
+            ws_rgb(ALIVE_R, ALIVE_G, ALIVE_B);
         } else {
             rgb_t   c  = band_color(mv);
             uint8_t lv = level_of(mv);
