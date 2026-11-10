@@ -53,7 +53,12 @@ PLAN = [
     #   `bb_probe` 会把它们记成「该件不在本视图 ⇒ 不适用」✓（v104 实测就是这样 ✓）。
 ]
 NEW_MI0 = 90018001
-# ★ 源草图里没有的件 ⇒ 用**同一个件**的实例克隆 ✓（同 moduleId ⇒ 脚型/属性名一致 ✓）
+# ★★ 2026-11-10 ✓（用户定「方案乙：接受平移」✓）：`U1` **整体右移 1 列**（= 9 sketch 单位 ✓）
+#   为什么 ✗：`U1` 骑中缝、又几乎占满中缝那一段 ⇒ `RC`（`PD5`/`PD6` 在**下半区**、
+#     `R1`/`C1` 在**上半区**）过不去 ⇒ 布线器报「2 块不连通」✓（§10.4 ✓）。
+#   ⇒ 让出一列（列 17 空出来 ✓）给跨中缝那条线走 ✓。
+#   ★ 平移只动**面包板视图**的 `x` 与插孔号（列号 +1 ✓）；另两个视图不动 ✓。
+SHIFT = {"U1": (9.0, 1)}# ★ 源草图里没有的件 ⇒ 用**同一个件**的实例克隆 ✓（同 moduleId ⇒ 脚型/属性名一致 ✓）
 SRC_ALIAS = {"R5": "R2"}
 # ★ 克隆后要改的属性值 ✓（`R5` = 100 Ω，与板上 `R3`/`R4` 同值 ✓）
 PROP_OVERRIDE = {"R5": {"resistance": "100"}}
@@ -186,6 +191,28 @@ def num(v):
     return "0" if s in ("-0", "") else s
 
 
+def apply_shift(text, title, dx, dcols):
+    """把某个**已存在**的件在面包板视图里整体平移 ✓（`x` ＋ 插孔号列号 ✓，别的视图不动 ✓）"""
+    blk = get_instance(text, title)
+    if blk is None:
+        raise SystemExit("要平移的件 %s 不在骨架里 ✗" % title)
+    bb = bb_block(blk)
+    if bb is None:
+        raise SystemExit("%s 没有面包板视图 ✗" % title)
+    nb = re.sub(r'(<geometry\s+z="[^"]*"\s+x=")([-\d.]+)(")',
+                lambda m: m.group(1) + num(float(m.group(2)) + dx) + m.group(3), bb, count=1)
+    if nb == bb:
+        raise SystemExit("%s 的 x 没改成 ✗" % title)
+
+    def bump(m):
+        return 'connectorId="pin%d%s"' % (int(m.group(1)) + dcols, m.group(2))
+
+    nb2 = re.sub(r'connectorId="pin(\d+)([A-Z])"', bump, nb)
+    n = len(re.findall(r'connectorId="pin\d+[A-Z]"', nb))
+    print("  平移 %s：x %+.0f 单位、插孔列号 %+d（改了 %d 个孔 ✓）" % (title, dx, dcols, n))
+    return text.replace(bb, nb2)
+
+
 def main(argv):
     dry = "--dry" in argv
     zb = zipfile.ZipFile(BASE)
@@ -256,6 +283,10 @@ def main(argv):
     # 插到 `<instances>` 末尾（导线后面放零件也不影响 ✓ Fritzing 按 modelIndex 认 ✓）
     host_end = btext.rindex("</instances>")
     new_text = btext[:host_end] + "".join("            " + a + "\n" for a in add) + btext[host_end:]
+
+    # ★ 平移（方案乙 ✓）
+    for ttl, (dx, dc) in SHIFT.items():
+        new_text = apply_shift(new_text, ttl, dx, dc)
 
     # 自检：XML 能解析、新件数对得上 ✓
     r = ET.fromstring(new_text)
