@@ -58,7 +58,20 @@ NEW_MI0 = 90018001
 #     `R1`/`C1` 在**上半区**）过不去 ⇒ 布线器报「2 块不连通」✓（§10.4 ✓）。
 #   ⇒ 让出一列（列 17 空出来 ✓）给跨中缝那条线走 ✓。
 #   ★ 平移只动**面包板视图**的 `x` 与插孔号（列号 +1 ✓）；另两个视图不动 ✓。
-SHIFT = {"U1": (9.0, 1)}# ★ 源草图里没有的件 ⇒ 用**同一个件**的实例克隆 ✓（同 moduleId ⇒ 脚型/属性名一致 ✓）
+SHIFT = {"U1": (9.0, 1)}
+# ★★ 2026-11-10 ✓（用户定「方案乙''」✓）：`R1` ＋ `C1`（`RC` 的另一半成员 ✓）**平移到下半区** ✓
+#   为什么 ✗：布线器**没有跨中缝的动作**（`RAIL_PAIR` 只有 GND/5V ✓，§10.5 ✓）
+#     ⇒ 一张信号网只要有两只脚分属上下两半就布不通 ✗ ⇒ `RC` 必须**全部落在同一半** ✓。
+#   ★ 落点选在 `U1`（已右移 1 列 ⇒ 占列 18..28）**右边空白**处 ✓：
+#     `R1`：`pin11J→pin29E`、`pin16I→pin34D`（保持它原来的"5 列 × 1 行"腿型 ✓）；
+#     `C1`：`pin16J→pin16E`、`pin17J→pin17E`（保持"同排隔 1 列" ✓，列 17 已让出 ✓）。
+#   ★ 只改面包板视图的 `x/y` ＋ 插孔号 ✓；腿不动（整件平移 ⇒ 腿照样落在孔心 ✓）。
+MOVE = {
+    # ★★ 2026-11-10 ✗ **撤回**：把 `R1`/`C1` 挪到下半区之后，`BR+`（`D3` 在上半区）反而断了 ✗，
+    #   而且 `RC` 仍不通 ⇒ 说明"跨中缝布不通"这个结论**是错的** ✗（见 §10.5 更正 ✓：
+    #   `COIL_A` 真的跨过去了 —— `pin1B`（下）→ `pin12I`（上）✓）。
+    #   ⇒ 摆回原位 ✓，改用"给布线器更多选择"的办法试（`--near-hole` 等 ✓）。
+}# ★ 源草图里没有的件 ⇒ 用**同一个件**的实例克隆 ✓（同 moduleId ⇒ 脚型/属性名一致 ✓）
 SRC_ALIAS = {"R5": "R2"}
 # ★ 克隆后要改的属性值 ✓（`R5` = 100 Ω，与板上 `R3`/`R4` 同值 ✓）
 PROP_OVERRIDE = {"R5": {"resistance": "100"}}
@@ -213,6 +226,39 @@ def apply_shift(text, title, dx, dcols):
     return text.replace(bb, nb2)
 
 
+def move_part(text, title, mapping):
+    """把一件在面包板视图里**整体平移**到指定的新孔位 ✓（`mapping` = 旧孔 → 新孔 ✓）
+
+    平移量由**第一对**孔算出 ✓（其余每一对都必须与它一致 ⇒ 自检 ✓，
+    ✗ 不一致就是"不是平移" ⇒ 直接报错 ✗）。
+    """
+    blk = get_instance(text, title)
+    if blk is None:
+        raise SystemExit("要平移的件 %s 不在骨架里 ✗" % title)
+    bb = bb_block(blk)
+    if bb is None:
+        raise SystemExit("%s 没有面包板视图 ✗" % title)
+    for old in mapping:
+        if bb.count('connectorId="%s"' % old) != 1:
+            raise SystemExit("%s 里孔 %s 出现 %d 次 ✗" % (title, old, bb.count('connectorId="%s"' % old)))
+    d = None
+    for old, new in mapping.items():
+        dd = (hole_xy(new)[0] - hole_xy(old)[0], hole_xy(new)[1] - hole_xy(old)[1])
+        if d is None:
+            d = dd
+        elif abs(d[0] - dd[0]) > 1e-9 or abs(d[1] - dd[1]) > 1e-9:
+            raise SystemExit("%s 的映射不是平移 ✗（%s 差 %s，%s 差 %s）"
+                             % (title, old, d, new, dd))
+    nb = bb
+    for old, new in mapping.items():
+        nb = nb.replace('connectorId="%s"' % old, 'connectorId="%s"' % new)
+    nb = re.sub(r'(<geometry\s+z="[^"]*"\s+x=")([-\d.]+)("\s+y=")([-\d.]+)(")',
+                lambda m: (m.group(1) + num(float(m.group(2)) + d[0]) + m.group(3)
+                           + num(float(m.group(4)) + d[1]) + m.group(5)), nb, count=1)
+    print("  平移 %s：%s ⇒ 位移 (%+.0f, %+.0f) 单位 ✓" % (title, mapping, d[0], d[1]))
+    return text.replace(bb, nb)
+
+
 def main(argv):
     dry = "--dry" in argv
     zb = zipfile.ZipFile(BASE)
@@ -287,6 +333,9 @@ def main(argv):
     # ★ 平移（方案乙 ✓）
     for ttl, (dx, dc) in SHIFT.items():
         new_text = apply_shift(new_text, ttl, dx, dc)
+    # ★ 平移 R1/C1 到下半区（方案乙'' ✓）
+    for ttl, mp in MOVE.items():
+        new_text = move_part(new_text, ttl, mp)
 
     # 自检：XML 能解析、新件数对得上 ✓
     r = ET.fromstring(new_text)
