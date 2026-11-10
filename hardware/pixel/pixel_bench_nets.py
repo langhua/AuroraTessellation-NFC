@@ -39,12 +39,22 @@ NETS["LED_DIN_L"] = [("R5", "#2"), ("LED2", "DI")]
 NETS["5V"].append(("C3", "+"))
 NETS["GND"].append(("C3", "-"))
 
+# ── ③ R6（1 MΩ）= **`BR+` → `GND` 的直流泄放** ✓（2026-11-10 ✓）─────────────────
+#   为什么 ✗（实测 ✓，见 `data-acquisition.md` §10.10）：`BR+`（`D3` 两阴极 ＋ `R1` 上端）
+#   对地**没有直流通路**（`D3` 反偏、`C1` 隔直）⇒ 电平由泄漏平衡决定
+#   ⇒ 无信号时读数在 0.1–0.5 V 之间**分钟级漂移** ⇒ 灯在「浅蓝 ↔ 绿」之间自己跳 ✗。
+#   ★ 必须加在 **`BR+`** 上 ✗ 加在 `RC` 上没用（`R1` 会把它重新拉向 `BR+` ✓）。
+#   ★ 取值 1 MΩ：`50 nA × 1 MΩ = 50 mV` ⇒ 落在暖白/无信号区 ✓；太小会把包络拉低 ✗。
+NETS["BR+"].append(("R6", "#1"))
+NETS["GND"].append(("R6", "#2"))
+
 # ── 增量后的期望表（`check_netlist` / `bb_probe` 用 ✓）────────────────────────────
 EXPECT = {k: set(v) for k, v in _BOARD_EXPECT.items()}
 EXPECT["LED_DIN"] = (EXPECT["LED_DIN"] - {"LED2.connector2"}) | {"R5.connector0"}
 EXPECT["LED_DIN_L"] = {"R5.connector1", "LED2.connector2"}
 EXPECT["5V"] = EXPECT["5V"] | {"C3.connector1"}
-EXPECT["GND"] = EXPECT["GND"] | {"C3.connector0"}
+EXPECT["GND"] = EXPECT["GND"] | {"C3.connector0"} | {"R6.connector1"}
+EXPECT["BR+"] = EXPECT["BR+"] | {"R6.connector0"}
 
 # ── 颜色 ✓（只能取官方配色表 ✓，`breadboardView` 那节 ✓；见 `pixel_nets.py` 的说明 ✓）──
 #   ★ `LED_DIN_L` 与 `LED_DIN` **同色** ✓：它们是**同一根信号**、只隔一个串阻 ✓
