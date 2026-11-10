@@ -19,13 +19,7 @@
 #define WS_CODE_0 0xC0u
 #define WS_CODE_1 0xF8u
 
-static void delay_ms(uint32_t ms)
-{
-    uint32_t n = ms * 2000u;
-    while (n--) {
-        __asm__ volatile("nop");
-    }
-}
+/* `delay_ms()` 在 `regs.h`（SysTick 计数）✓ */
 
 static void ws_spi_send_byte(uint8_t b)
 {

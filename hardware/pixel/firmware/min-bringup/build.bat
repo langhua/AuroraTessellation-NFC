@@ -22,4 +22,5 @@ if errorlevel 1 (
   echo [ERR] 找不到 make（GNU make）。装一个，或直接在 MounRiver Studio 里建工程编译。
   exit /b 1
 )
-make TC_DIR="%TC%" PREFIX=%PFX%
+rem 无参数 = 只编正常固件；写 probes = 连四个探针一起编（build\min-bringup-probe4.hex 等）
+make TC_DIR="%TC%" PREFIX=%PFX% %*

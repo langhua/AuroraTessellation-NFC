@@ -65,6 +65,47 @@
 #define GPIO_CFG_OUT_PP_50M   0x3u   /* MODE=11 CNF=00 ⇒ 推挽输出 50 MHz */
 #define GPIO_CFG_AF_PP_50M    0xBu   /* MODE=11 CNF=10 ⇒ 复用推挽 50 MHz */
 
+/* ── SysTick（QingKe V2 核心自带，基址 0xE000F000；结构照 ch32v00x.h 的 SysTick_Type）──
+ *   CTLR  bit0 = STRE（计数使能）、bit1 = STCLK（0 = HCLK，1 = HCLK/8）
+ *   SR    bit0 = CNTIF（到比较值标志）
+ *   CNTL  = 当前计数值（**向上计数**）
+ * ★ 本机不配 PLL ⇒ HCLK = HSI = 24 MHz ⇒ **1 ms = 24000 个计数** ✓
+ */
+#define SYSTICK_CTLR   REG32(0xE000F000u)
+#define SYSTICK_SR     REG32(0xE000F004u)
+#define SYSTICK_CNTL   REG32(0xE000F008u)
+
+/* ── 毫秒延时（唯一实现，`main.c` / `ws2812_gpio.c` / 各 probe 共用）──
+ * ★★ 2026-11-10 改：原来是 `ms × 2000` 次空循环，反汇编一看每圈 **3 条指令**
+ *   （`c.nop` / `c.addi` / `c.bne`，见 `_dis` 里 `delay_ms` 的 `10c..110`）
+ *   ⇒ 一圈 ≈ 5 个周期（分支占用 3）⇒ 2000 圈只有 **0.4 ms** ⇒ 所有“毫秒”都短了 2–3 倍 ✗。
+ *   后果（用户实测）：标定呼吸写在纸上是 0.7 s、实际只有 ~0.25 s ⇒ 看着像“卡在紫色” ✗。
+ *   现在**以 SysTick 计数为准**，不再依赖“一条指令几个周期”这种估计 ✓。
+ * ★ 兜底：万一计数不动（理论上不会），退回空循环 —— **绝不把程序卡死** ✓。
+ */
+static inline void delay_ms(uint32_t ms)
+{
+    uint32_t ticks = ms * 24000u;   /* 24 MHz ⇒ 24000/ms ✓ */
+    uint32_t t0;
+    uint32_t guard = 4000u;
+
+    SYSTICK_CTLR = 1u;              /* STRE=1、STCLK=0 ⇒ 计数时钟 = HCLK ✓ */
+    t0 = SYSTICK_CNTL;
+    while (SYSTICK_CNTL == t0 && --guard) {
+        __asm__ volatile("nop");
+    }
+    if (guard == 0u) {              /* 计数不动 ⇒ 空循环兜底 */
+        uint32_t n = ms * 4800u;
+        while (n--) {
+            __asm__ volatile("nop");
+        }
+        return;
+    }
+    t0 = SYSTICK_CNTL;
+    while ((uint32_t)(SYSTICK_CNTL - t0) < ticks) {
+    }
+}
+
 /* ── ADC1（结构照 ADC_TypeDef：STATR 0x00、CTLR1 0x04、CTLR2 0x08、
  *        SAMPTR1 0x0C、SAMPTR2 0x10、IOFR1..4 0x14..0x20、WDHTR 0x24、WDLTR 0x28、
  *        RSQR1 0x2C? —— 按 ch32v00x_adc.c 的实际用法，先把偏移核对成下表）──

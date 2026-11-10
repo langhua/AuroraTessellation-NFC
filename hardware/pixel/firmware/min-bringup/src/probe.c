@@ -19,13 +19,7 @@
  */
 #include "regs.h"
 
-static void delay_ms(uint32_t ms)
-{
-    uint32_t n = ms * 2000u;   /* 24 MHz 下约 12 周期/圈（与 main.c 同一口径） */
-    while (n--) {
-        __asm__ volatile("nop");
-    }
-}
+/* `delay_ms()` 在 `regs.h`（SysTick 计数）✓ —— 本文件不再自带一份 ✗ */
 
 int main(void)
 {

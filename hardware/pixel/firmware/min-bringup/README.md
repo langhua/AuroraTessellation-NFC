@@ -66,7 +66,7 @@
 
 | 步 | 做什么 |
 |---|---|
-| 上电 | 紫闪后**连采 16 次取平均**作为零点 `base_code`（此刻应无场 ✓）；**标定期间灯做一次紫色呼吸**（紫→暗→紫，约 0.7 s）⇒ 一眼看出"在标定"，不是"卡住" ✓ |
+| 上电 | 紫闪后**连采 16 次取平均**作为零点 `base_code`（此刻应无场 ✓）；**标定期间灯做一次紫色呼吸**（亮 → 全暗 → 亮，约 2 s）⇒ 一眼看出"在标定"，不是"卡住" ✓ |
 | 循环 | 只算 `code − base_code`；差值 < **`NOISE_MV`（120 mV）** ⇒ 当作无信号 ⇒ **暖白** ✓ |
 | 含义 | 颜色反映的是**高出零点的量** ✓ ⇒ 漂移不再翻色，但**换场/重上电**要重新标定 ✓ |
 
@@ -137,6 +137,7 @@
 
 ```bat
 build.bat            ← 推荐：自动找 MounRiver Studio 2 自带的 RISC-V gcc
+build.bat probes     ← 正常固件 + 全部探针（含 build\min-bringup-probe4.hex）
 make                 ← 工具链已在 PATH 时
 make probe           ← 万用表探针版：PC6 当普通输出翻 1 Hz（build/min-bringup-probe.hex）
 make clean
@@ -147,7 +148,10 @@ make clean
 | 文件 | 用途 |
 |---|---|
 | `min-bringup.hex` | **WCH-LinkUtility 直接烧这个** ✓ |
+| `min-bringup-probe4.hex` | `PD5` 放电脚探针（`build.bat probes` 才编）—— 表笔搭 `PD6`，看 0 V ↔ 漂着的电平交替 ✓ |
 | `min-bringup.bin` / `.elf` / `.map` | 备份 / 看符号 |
+
+> ★ **探针 hex 不是默认产物**：只有 `build.bat probes` / `make probes` 才会编出来 ✗
 
 常量都在 `Makefile` 里，通常不用改：`TC_DIR`（工具链）、`PREFIX`（GCC12 = `riscv-wch-elf-`、
 GCC15 = `riscv32-wch-elf-`）。`-march=rv32ec -mabi=ilp32e` 是 CH32V003 那颗核的唯一正确组合 ✓。
@@ -162,7 +166,7 @@ GCC15 = `riscv32-wch-elf-`）。`-march=rv32ec -mabi=ilp32e` 是 CH32V003 那颗
 1. **芯片先上电**再点连接；`WCH-LinkE` 拨到 **RISC-V**；
 2. ✗ **不要同时接两个 5 V 源** ✗（LinkE 的 `5V0` 与 J1/J2 那条 5 V 只选一个）。
 
-烧完应当看到：**红 → 绿 → 蓝 各闪一下 → 灭 → 紫闪一下 → 常亮暖白**；
+烧完应当看到：**红 → 绿 → 蓝 各闪一下 → 灭 → 紫闪一下 → 紫色呼吸一次（≈2 s）→ 常亮暖白**；
 拿 NFC（手机处于找卡状态）靠近线圈就逐档变蓝/青/绿/橙/红。
 
 ## 6. 怎么验证「编译出来的东西是对的」

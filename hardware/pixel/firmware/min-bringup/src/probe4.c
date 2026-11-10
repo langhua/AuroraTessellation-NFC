@@ -15,14 +15,7 @@
 #include "regs.h"
 #include "ws2812.h"
 
-#define LOOPS_PER_MS 2000u
-static void delay_ms(uint32_t ms)
-{
-    uint32_t n = ms * LOOPS_PER_MS;
-    while (n--) {
-        __asm__ volatile("nop");
-    }
-}
+/* `delay_ms()` 在 `regs.h`（SysTick 计数）✓ —— 本文件不再自带一份 ✗ */
 
 /* ★ 与 main.c 的 rc_low / rc_release **同一套写法** ✓（`PD5`，开漏拉低 ⇒ 高阻）*/
 #define RC_PIN 5

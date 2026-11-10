@@ -25,13 +25,7 @@
 
 #define PIN 6u
 
-static void delay_ms(uint32_t ms)
-{
-    uint32_t n = ms * 2000u;
-    while (n--) {
-        __asm__ volatile("nop");
-    }
-}
+/* `delay_ms()` 在 `regs.h`（SysTick 计数）✓ */
 
 static void pin_low(void)  { GPIOC_BCR  = (1u << PIN); }
 static void pin_high(void) { GPIOC_BSHR = (1u << PIN); }

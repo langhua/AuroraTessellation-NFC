@@ -28,13 +28,7 @@
 #define NOP4   NOP2; NOP2
 #define NOP8   NOP4; NOP4
 
-static void delay_ms(uint32_t ms)
-{
-    uint32_t n = ms * 2000u;
-    while (n--) {
-        __asm__ volatile("nop");
-    }
-}
+/* `delay_ms()` 在 `regs.h` 里（SysTick 计数 ⇒ 真正 1 ms ✓）；本文件只用它做锁存延时 ✓ */
 
 void ws_init(void)
 {
