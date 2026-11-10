@@ -205,10 +205,21 @@ int main(void)
     ws_rgb(120, 0, 120);
     delay_ms(120);
 
-    /* ⑤ **零点标定**：连采 16 次取平均 —— 此刻应无场 ✓ ⇒ 把当前电平当 0 ✓ */
+    /* ⑤ **零点标定**：连采 `BASE_N` 次取平均 —— 此刻应无场 ✓ ⇒ 把当前电平当 0 ✓
+     * ★ 2026-11-10 用户定 ✓：标定期间灯做**一次呼吸**（紫 → 暗 → 紫）
+     *   ⇒ 一眼看出"正在标定"，而不是"卡在某个颜色上了" ✗（原来标定时灯一直停在紫上 ✓）
+     *   呼吸与采样同步：一次采样一步 ⇒ 16 步 = 一个来回（总长约 0.7 s ✓）
+     */
     uint32_t acc = 0;
     for (uint8_t i = 0; i < BASE_N; i++) {
         acc += rc_read();
+
+        uint8_t half = (uint8_t)(BASE_N / 2u);
+        uint8_t k    = (i < half) ? i : (uint8_t)(BASE_N - 1u - i);   /* 0 → half → 0 ✓ */
+        uint8_t lv   = (uint8_t)(16u + (uint8_t)(k * 36u / half));    /* 16 → 52 ✓ */
+        uint8_t c    = (uint8_t)((120u * lv) / 52u);                  /* 紫，按 lv 缩放 ✓ */
+        ws_rgb(c, 0, c);
+        delay_ms(40);                                                 /* 让呼吸看得见 ✓ */
     }
     uint16_t base_code = (uint16_t)(acc / BASE_N);
 
